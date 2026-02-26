@@ -295,3 +295,65 @@ def reposition_device(device_id: int, body: RepositionRequest, db: Session = Dep
     device.rack_unit = target
     db.commit()
     return {"ok": True, "rack_unit": device.rack_unit}
+
+
+# ─── Callout endpoints ────────────────────────────────────────────────────────
+
+class CalloutCreate(BaseModel):
+    device_id: int
+    text:      str
+    color:     str = "yellow"   # yellow|blue|red|green
+
+
+class CalloutUpdate(BaseModel):
+    text:  Optional[str] = None
+    color: Optional[str] = None
+
+
+def _callout_dict(c) -> dict:
+    return {"id": c.id, "device_id": c.device_id, "text": c.text, "color": c.color}
+
+
+@router.get("/callouts")
+def list_callouts(db: Session = Depends(get_db)):
+    from ..models import Callout
+    return [_callout_dict(c) for c in db.query(Callout).all()]
+
+
+@router.post("/callouts", dependencies=[Depends(require_admin)])
+def create_callout(body: CalloutCreate, db: Session = Depends(get_db)):
+    from ..models import Callout
+    existing = db.query(Callout).filter(Callout.device_id == body.device_id).first()
+    if existing:
+        raise HTTPException(400, "Callout already exists for this device")
+    c = Callout(device_id=body.device_id, text=body.text, color=body.color)
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+    return _callout_dict(c)
+
+
+@router.patch("/callouts/{cid}", dependencies=[Depends(require_admin)])
+def update_callout(cid: int, body: CalloutUpdate, db: Session = Depends(get_db)):
+    from ..models import Callout
+    c = db.query(Callout).filter(Callout.id == cid).first()
+    if not c:
+        raise HTTPException(404, "Callout not found")
+    if body.text is not None:
+        c.text = body.text
+    if body.color is not None:
+        c.color = body.color
+    db.commit()
+    db.refresh(c)
+    return _callout_dict(c)
+
+
+@router.delete("/callouts/{cid}", dependencies=[Depends(require_admin)])
+def delete_callout(cid: int, db: Session = Depends(get_db)):
+    from ..models import Callout
+    c = db.query(Callout).filter(Callout.id == cid).first()
+    if not c:
+        raise HTTPException(404, "Callout not found")
+    db.delete(c)
+    db.commit()
+    return {"ok": True}

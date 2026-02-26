@@ -3,16 +3,22 @@ import { api } from '../api/client'
 import { useRackStore } from '../store/useRackStore'
 
 interface ToolbarProps {
-  onManageRack?:  () => void
-  onHelp?:        () => void
-  onStats?:       () => void
-  onDownloadPNG?: () => void
-  searchQuery?:   string
-  onSearch?:      (q: string) => void
-  matchCount?:    number
+  onManageRack?:     () => void
+  onHelp?:           () => void
+  onStats?:          () => void
+  onDownloadPNG?:    () => void
+  searchQuery?:      string
+  onSearch?:         (q: string) => void
+  matchCount?:       number
+  calloutMode?:      boolean
+  onCalloutMode?:    () => void
 }
 
-export const Toolbar: React.FC<ToolbarProps> = ({ onManageRack, onHelp, onStats, onDownloadPNG, searchQuery = '', onSearch, matchCount }) => {
+export const Toolbar: React.FC<ToolbarProps> = ({
+  onManageRack, onHelp, onStats, onDownloadPNG,
+  searchQuery = '', onSearch, matchCount,
+  calloutMode, onCalloutMode,
+}) => {
   const {
     mode, isAdmin, setMode, setAdmin,
   } = useRackStore()
@@ -97,6 +103,21 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onManageRack, onHelp, onStats,
               ⚙ Стойка
             </button>
           </>
+        )}
+
+        {/* Callout mode toggle (admin only) */}
+        {isAdmin && (
+          <button
+            onClick={onCalloutMode}
+            className={`text-xs px-3 py-1.5 rounded border transition-colors ${
+              calloutMode
+                ? 'bg-purple-900 border-purple-600 text-purple-200'
+                : 'border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 bg-gray-800'
+            }`}
+            title="Режим аннотаций — добавить подписи к устройствам"
+          >
+            💬 Аннотации
+          </button>
         )}
 
         {/* Search box */}

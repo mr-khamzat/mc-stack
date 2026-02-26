@@ -9,7 +9,8 @@ import { Toolbar } from './components/Toolbar'
 import { RackManagerModal } from './components/RackManagerModal'
 import { HelpModal } from './components/HelpModal'
 import { StatsPanel } from './components/StatsPanel'
-import type { Port, RackDevice } from './types'
+import { CalloutModal } from './components/CalloutModal'
+import type { Port, RackDevice, Callout } from './types'
 
 export default function App() {
   const {
@@ -22,6 +23,8 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(false)
   const [showStats, setShowStats] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [calloutMode, setCalloutMode] = useState(false)
+  const [calloutTarget, setCalloutTarget] = useState<{ deviceId: number; existing?: Callout } | null>(null)
 
   const queryClient = useQueryClient()
 
@@ -40,6 +43,12 @@ export default function App() {
   const { data: rack = [], isLoading, isError } = useQuery<RackDevice[]>({
     queryKey: ['rack'],
     queryFn:  () => api.get('/rack').then(r => r.data),
+    refetchInterval: 60_000,
+  })
+
+  const { data: callouts = [] } = useQuery<Callout[]>({
+    queryKey: ['callouts'],
+    queryFn:  () => api.get('/callouts').then(r => r.data),
     refetchInterval: 60_000,
   })
 
@@ -98,6 +107,41 @@ export default function App() {
     }
   }
 
+  // ── Callout handlers ─────────────────────────────────────────────────────
+  const handleDeviceCalloutClick = (deviceId: number) => {
+    const existing = callouts.find(c => c.device_id === deviceId)
+    setCalloutTarget({ deviceId, existing })
+  }
+
+  const handleCalloutClick = (callout: Callout) => {
+    setCalloutTarget({ deviceId: callout.device_id, existing: callout })
+  }
+
+  const handleCalloutSave = async (text: string, color: string) => {
+    if (!calloutTarget) return
+    const { deviceId, existing } = calloutTarget
+    try {
+      if (existing) {
+        await api.patch(`/callouts/${existing.id}`, { text, color })
+      } else {
+        await api.post('/callouts', { device_id: deviceId, text, color })
+      }
+      queryClient.invalidateQueries({ queryKey: ['callouts'] })
+    } catch (err) {
+      console.error('Callout save failed', err)
+    }
+  }
+
+  const handleCalloutDelete = async () => {
+    if (!calloutTarget?.existing) return
+    try {
+      await api.delete(`/callouts/${calloutTarget.existing.id}`)
+      queryClient.invalidateQueries({ queryKey: ['callouts'] })
+    } catch (err) {
+      console.error('Callout delete failed', err)
+    }
+  }
+
   const handleSidePanelEdit = () => {
     if (selectedPort && selectedDevice) {
       setEditTarget({ port: selectedPort, device: selectedDevice })
@@ -146,6 +190,8 @@ export default function App() {
         searchQuery={searchQuery}
         onSearch={setSearchQuery}
         matchCount={searchQuery.trim() ? matchCount : undefined}
+        calloutMode={calloutMode}
+        onCalloutMode={() => setCalloutMode(v => !v)}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -165,10 +211,14 @@ export default function App() {
             <RackView
               devices={rack}
               editMode={mode === 'edit'}
+              calloutMode={calloutMode}
+              callouts={callouts}
               highlightPortIds={highlightPortIds}
               onPortClick={handlePortClick}
               onMove={handleMove}
               onReposition={handleReposition}
+              onDeviceCalloutClick={handleDeviceCalloutClick}
+              onCalloutClick={handleCalloutClick}
             />
           )}
         </div>
@@ -202,6 +252,20 @@ export default function App() {
       {showHelp && (
         <HelpModal onClose={() => setShowHelp(false)} />
       )}
+
+      {calloutTarget && (() => {
+        const device = rack.find(d => d.id === calloutTarget.deviceId)
+        if (!device) return null
+        return (
+          <CalloutModal
+            device={device}
+            existing={calloutTarget.existing}
+            onSave={handleCalloutSave}
+            onDelete={calloutTarget.existing ? handleCalloutDelete : undefined}
+            onClose={() => setCalloutTarget(null)}
+          />
+        )
+      })()}
 
       {showStats && (
         <StatsPanel devices={rack} onClose={() => setShowStats(false)} />

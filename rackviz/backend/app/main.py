@@ -2,7 +2,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import engine, Base, SessionLocal
-from .models import Device, Port, CustomDevice, PortHistory  # noqa: F401 — ensures tables are created
+from .models import Device, Port, CustomDevice, PortHistory, Callout  # noqa: F401 — ensures tables are created
 from .seed import seed_if_empty
 from .routers import auth, rack, mc
 

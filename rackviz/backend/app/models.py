@@ -61,6 +61,17 @@ class PortHistory(Base):
     changed_at = Column(DateTime, server_default=func.now())
 
 
+class Callout(Base):
+    """Floating annotation callout attached to a rack device."""
+    __tablename__ = "callouts"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    device_id  = Column(Integer, ForeignKey("devices.id", ondelete="CASCADE"), nullable=False, unique=True)
+    text       = Column(Text, nullable=False)
+    color      = Column(String, default="yellow")  # yellow|blue|red|green
+    created_at = Column(DateTime, server_default=func.now())
+
+
 class CustomDevice(Base):
     """Non-MC device manually added (router, switch, AP, printer, etc.)"""
     __tablename__ = "custom_devices"

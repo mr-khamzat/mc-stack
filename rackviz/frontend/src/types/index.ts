@@ -53,6 +53,13 @@ export interface WifiNeighbor {
   iface:    string
 }
 
+export interface Callout {
+  id:        number
+  device_id: number
+  text:      string
+  color:     string  // 'yellow' | 'blue' | 'red' | 'green'
+}
+
 export interface CustomDevice {
   id:          number
   name:        string
