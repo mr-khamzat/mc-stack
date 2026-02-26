@@ -36,6 +36,8 @@ class DeviceCreate(BaseModel):
     port_type:   str = "rj45"
     color:       str = "#2a2a2a"
     notes:       Optional[str] = None
+    brand:       Optional[str] = None
+    model:       Optional[str] = None
 
 
 class MoveRequest(BaseModel):
@@ -89,6 +91,8 @@ def _device_dict(d: Device, ports: list[Port]) -> dict:
         "port_type":   d.port_type,
         "color":       d.color,
         "notes":       d.notes,
+        "brand":       d.brand,
+        "model":       d.model,
         "ports":       [_port_dict(p) for p in sorted(ports, key=lambda x: x.port_number)],
     }
 
@@ -167,6 +171,15 @@ def move_device(device_id: int, body: MoveRequest, db: Session = Depends(get_db)
         return {"ok": True, "moved": False}
     db.commit()
     return {"ok": True, "moved": True}
+
+
+@router.delete("/rack/devices", dependencies=[Depends(require_admin)])
+def clear_all_devices(db: Session = Depends(get_db)):
+    """Delete every device (and cascade-delete their ports) — factory reset."""
+    count = db.query(Device).count()
+    db.query(Device).delete()
+    db.commit()
+    return {"ok": True, "deleted": count}
 
 
 @router.delete("/rack/devices/{device_id}", dependencies=[Depends(require_admin)])

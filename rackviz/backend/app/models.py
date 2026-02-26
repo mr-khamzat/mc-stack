@@ -15,6 +15,8 @@ class Device(Base):
     port_type   = Column(String, default="rj45")   # rj45|sfp|mixed
     color       = Column(String, default="#2a2a2a")
     notes       = Column(Text, nullable=True)       # free-text notes shown on device face
+    brand       = Column(String, nullable=True)     # TP-Link, Cisco, Keenetic, SNR, MikroTik…
+    model       = Column(String, nullable=True)     # TL-SG1024DE, Catalyst 2960-24T…
     created_at  = Column(DateTime, server_default=func.now())
 
 

@@ -44,6 +44,30 @@ const TYPE_BG: Record<string, string> = {
   other:       '#141414',
 }
 
+// Brand color overrides (left type stripe + badge)
+const BRAND_COLOR: Record<string, string> = {
+  'tp-link':   '#16a34a',
+  'keenetic':  '#d97706',
+  'cisco':     '#1d6fce',
+  'snr':       '#9333ea',
+  'mikrotik':  '#dc2626',
+  'd-link':    '#0891b2',
+  'zyxel':     '#065f46',
+  'asus':      '#0070b8',
+  'hyperline': '#92400e',
+  'panduit':   '#7c3aed',
+  'dell':      '#0076ce',
+  'hpe':       '#01a982',
+  'supermicro':'#7c3aed',
+  'ubiquiti':  '#0559c9',
+}
+
+/** Normalize brand string for color lookup */
+function brandKey(brand: string | null): string | null {
+  if (!brand) return null
+  return brand.toLowerCase().replace(/[^a-z]/g, '')
+}
+
 // Group gap between port clusters
 const GROUP_SIZE = 6
 const GROUP_GAP  = 7
@@ -116,7 +140,9 @@ export const RackUnit: React.FC<Props> = ({
     ? Math.ceil(device.ports.length / 2)
     : Math.min(device.ports.length, 24)
 
-  const typeColor = TYPE_COLOR[device.device_type] || '#555'
+  const bKey      = brandKey(device.brand)
+  const brandC    = bKey ? (BRAND_COLOR[bKey] ?? null) : null
+  const typeColor = brandC ?? TYPE_COLOR[device.device_type] ?? '#555'
   const bgColor   = TYPE_BG[device.device_type] || '#141414'
   const [typeShort, typeFull] = TYPE_LABEL[device.device_type] || ['?', 'Другое']
 
@@ -202,16 +228,41 @@ export const RackUnit: React.FC<Props> = ({
         {device.name}
       </text>
 
-      {/* ── Device type subtitle ─────────────────────────────────── */}
-      <text
-        x={NUM_W + 46}
-        y={h / 2 + (h > 44 ? 8 : 10)}
-        fill={typeColor + 'aa'}
-        fontSize={7.5} fontFamily="monospace"
-        clipPath={`url(#clip-${device.id})`}
-      >
-        {typeFull}{device.unit_size > 1 ? `  ·  ${device.unit_size}U  ·  ${device.port_count}p` : ''}
-      </text>
+      {/* ── Device type subtitle / brand + model ─────────────────── */}
+      {(device.brand || device.model) ? (
+        <g>
+          {device.brand && (
+            <>
+              <rect
+                x={NUM_W + 44} y={h / 2 + (h > 44 ? 2 : 4)}
+                width={Math.min(device.brand.length * 5 + 8, 58)} height={9} rx={2}
+                fill={typeColor + '25'} stroke={typeColor + '55'} strokeWidth={0.5}
+              />
+              <text x={NUM_W + 48} y={h / 2 + (h > 44 ? 9 : 11)}
+                fill={typeColor} fontSize={6.5} fontFamily="monospace" fontWeight="bold"
+              >{device.brand}</text>
+            </>
+          )}
+          {device.model && (
+            <text
+              x={device.brand ? NUM_W + 46 + Math.min(device.brand.length * 5 + 12, 62) : NUM_W + 46}
+              y={h / 2 + (h > 44 ? 9 : 11)}
+              fill="#6b7280" fontSize={7} fontFamily="monospace"
+              clipPath={`url(#clip-${device.id})`}
+            >{device.model}</text>
+          )}
+        </g>
+      ) : (
+        <text
+          x={NUM_W + 46}
+          y={h / 2 + (h > 44 ? 8 : 10)}
+          fill={typeColor + 'aa'}
+          fontSize={7.5} fontFamily="monospace"
+          clipPath={`url(#clip-${device.id})`}
+        >
+          {typeFull}{device.unit_size > 1 ? `  ·  ${device.unit_size}U  ·  ${device.port_count}p` : ''}
+        </text>
+      )}
 
       {/* ── Device notes (free-text annotation) ──────────────────── */}
       {device.notes && (
@@ -318,11 +369,20 @@ export const RackUnit: React.FC<Props> = ({
                   rx={0.5} fill={isOn ? (isOnline ? '#052e16' : '#450a0a') : '#111'}
                   stroke="#0a0a0a" strokeWidth={0.3}
                 />
-                {/* LED glow dot */}
+                {/* LED glow dot — animated pulse when online */}
                 <circle cx={lx} cy={1.5} r={1.2}
                   fill={isOn ? (isOnline ? '#22c55e' : '#ef4444') : '#1a1a1a'}
                   opacity={0.9}
-                />
+                >
+                  {isOn && isOnline && (
+                    <>
+                      <animate attributeName="opacity" values="0.9;0.35;0.9"
+                        dur="2.4s" repeatCount="indefinite" />
+                      <animate attributeName="r" values="1.2;1.7;1.2"
+                        dur="2.4s" repeatCount="indefinite" />
+                    </>
+                  )}
+                </circle>
               </g>
             )
           })}

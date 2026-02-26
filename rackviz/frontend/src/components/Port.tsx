@@ -129,11 +129,26 @@ export const PortCell: React.FC<Props> = ({
         <>
           <circle cx={x + PW - 2.5} cy={y + 2.5} r={1.8}
             fill={led} opacity={0.9}
-          />
-          {/* LED glow */}
+          >
+            {/* Pulse animation only for online MC ports */}
+            {port.source_type === 'mc' && port.mc_node_online === 1 && (
+              <>
+                <animate attributeName="opacity" values="0.9;0.4;0.9"
+                  dur="2.8s" repeatCount="indefinite" />
+                <animate attributeName="r" values="1.8;2.4;1.8"
+                  dur="2.8s" repeatCount="indefinite" />
+              </>
+            )}
+          </circle>
+          {/* LED glow halo */}
           <circle cx={x + PW - 2.5} cy={y + 2.5} r={3}
             fill={led} opacity={0.15}
-          />
+          >
+            {port.source_type === 'mc' && port.mc_node_online === 1 && (
+              <animate attributeName="opacity" values="0.15;0.5;0.15"
+                dur="2.8s" repeatCount="indefinite" />
+            )}
+          </circle>
         </>
       )}
 

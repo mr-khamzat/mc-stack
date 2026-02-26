@@ -31,6 +31,8 @@ export interface RackDevice {
   port_type:   PortType
   color:       string
   notes:       string | null
+  brand:       string | null
+  model:       string | null
   ports:       Port[]
 }
 
