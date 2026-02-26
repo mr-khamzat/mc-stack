@@ -1,0 +1,9 @@
+[
+  {
+    "agent_name": "ИмяАгентаМешЦентрал",
+    "location": "Название офиса",
+    "router_login": "admin",
+    "router_password": "пароль_роутера",
+    "snmp_community": "public"
+  }
+]

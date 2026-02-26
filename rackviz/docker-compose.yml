@@ -1,0 +1,49 @@
+version: '3.8'
+
+x-logging: &logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  rackviz-backend:
+    build: ./backend
+    image: rackviz-backend:latest
+    container_name: rackviz-backend
+    restart: always
+    env_file: .env
+    volumes:
+      - ./data:/app/data                             # SQLite database
+      - /opt/meshcentral:/meshcentral:ro             # meshctrl access (read-only)
+      - /opt/meshcentral-bot:/wifi_clients:ro        # wifi_clients.json from netmap
+    ports:
+      - "127.0.0.1:8502:8000"
+    networks:
+      - rackviz-net
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  rackviz-web:
+    build: ./frontend
+    image: rackviz-web:latest
+    container_name: rackviz-web
+    restart: always
+    ports:
+      - "127.0.0.1:8503:80"
+    networks:
+      - rackviz-net
+    depends_on:
+      rackviz-backend:
+        condition: service_healthy
+    logging: *logging
+
+networks:
+  rackviz-net:
+    name: rackviz-net
+    driver: bridge

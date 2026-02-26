@@ -1,0 +1,41 @@
+# Секретные файлы — НИКОГДА не коммитить!
+.env
+*.env
+bot/.env
+rackviz/.env
+admin.json
+wifi_clients.json
+keenetic_probes.json
+alerts_sent.json
+mute.json
+snapshots.json
+uptime.json
+history.json
+scripts.json
+printers.json
+
+# Данные и кеш
+rackviz/data/
+bot/public/netmap.html
+bot/__pycache__/
+bot/venv/
+**/__pycache__/
+*.pyc
+
+# Node / npm
+node_modules/
+frontend/node_modules/
+
+# Build artifacts
+frontend/dist/
+*.tar.gz
+*.zip
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,40 @@
+# nginx конфиг для MeshCentral Stack
+# Замени RACK_HTTP_PORT и SERVER_HOST на свои значения
+
+server {
+    listen RACK_HTTP_PORT;
+    server_name SERVER_HOST _;
+
+    # Netmap — авторизация через RackViz cookie
+    location = /netmap {
+        auth_request /rack/api/auth/check-cookie;
+        error_page 401 = @netmap_login;
+        alias /opt/meshcentral-bot/public/netmap.html;
+        default_type text/html;
+        add_header Cache-Control "no-cache";
+    }
+    location @netmap_login {
+        return 302 http://SERVER_HOST:RACK_HTTP_PORT/rack/?next=netmap;
+    }
+    location = /rack/api/auth/check-cookie {
+        internal;
+        proxy_pass         http://127.0.0.1:8502/api/auth/check-cookie;
+        proxy_pass_request_body off;
+        proxy_set_header   Content-Length "";
+        proxy_set_header   Cookie $http_cookie;
+    }
+
+    # RackViz
+    location ^~ /rack {
+        proxy_pass         http://127.0.0.1:8503;
+        proxy_http_version 1.1;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_read_timeout 60s;
+    }
+
+    location / {
+        return 200 'MeshCentral Stack OK. /rack — RackViz, /netmap — NetMap';
+        add_header Content-Type text/plain;
+    }
+}
