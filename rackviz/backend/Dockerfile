@@ -1,8 +1,11 @@
 FROM python:3.11-slim
 
-# Install Node.js 20 for meshctrl subprocess calls
+# Install Node.js 20 + WeasyPrint system dependencies (Pango, Cairo, fonts)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl ca-certificates \
+        libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \
+        libcairo2 libglib2.0-0 libharfbuzz0b \
+        fonts-freefont-ttf \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && apt-get clean && rm -rf /var/lib/apt/lists/*

@@ -5,6 +5,7 @@ from .database import engine, Base, SessionLocal
 from .models import Device, Port, CustomDevice, PortHistory, Callout  # noqa: F401 — ensures tables are created
 from .seed import seed_if_empty
 from .routers import auth, rack, mc
+from .routers import pdf_export
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(rack.router)
 app.include_router(mc.router)
+app.include_router(pdf_export.router)
 
 
 @app.on_event("startup")

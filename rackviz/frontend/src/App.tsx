@@ -142,6 +142,13 @@ export default function App() {
     }
   }
 
+  const handleDownloadPDF = () => {
+    const a = document.createElement('a')
+    a.href = '/rack/api/rack/export/pdf'
+    a.download = `rack_${new Date().toISOString().slice(0, 10)}.pdf`
+    a.click()
+  }
+
   const handleDownloadPNG = () => {
     const svg = document.querySelector<SVGSVGElement>('svg')
     if (!svg) return
@@ -181,6 +188,7 @@ export default function App() {
         onHelp={() => setShowHelp(true)}
         onStats={() => setShowStats(v => !v)}
         onDownloadPNG={handleDownloadPNG}
+        onDownloadPDF={handleDownloadPDF}
         searchQuery={searchQuery}
         onSearch={setSearchQuery}
         matchCount={searchQuery.trim() ? matchCount : undefined}

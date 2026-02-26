@@ -7,6 +7,7 @@ interface ToolbarProps {
   onHelp?:           () => void
   onStats?:          () => void
   onDownloadPNG?:    () => void
+  onDownloadPDF?:    () => void
   searchQuery?:      string
   onSearch?:         (q: string) => void
   matchCount?:       number
@@ -15,7 +16,7 @@ interface ToolbarProps {
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({
-  onManageRack, onHelp, onStats, onDownloadPNG,
+  onManageRack, onHelp, onStats, onDownloadPNG, onDownloadPDF,
   searchQuery = '', onSearch, matchCount,
   calloutMode, onCalloutMode,
 }) => {
@@ -164,6 +165,15 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           title="Скачать PNG"
         >
           🖼 PNG
+        </button>
+
+        {/* Download PDF */}
+        <button
+          onClick={onDownloadPDF}
+          className="text-xs text-gray-400 hover:text-white px-2.5 py-1.5 rounded border border-gray-700 hover:border-gray-500 bg-gray-800"
+          title="Скачать PDF документацию стойки"
+        >
+          📄 PDF
         </button>
 
         {/* Auth */}
