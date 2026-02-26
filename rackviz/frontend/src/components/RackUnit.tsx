@@ -214,20 +214,19 @@ export const RackUnit: React.FC<Props> = ({
       </text>
 
       {/* ── Device notes (free-text annotation) ──────────────────── */}
-      {device.notes && h >= 36 && (
+      {device.notes && (
         <g>
-          {/* Notes background pill */}
           <rect
-            x={NUM_W + 44} y={h / 2 + (h > 44 ? 13 : 14)}
+            x={NUM_W + 44} y={h - 14}
             width={Math.min(device.notes.length * 5.2 + 10, PORT_START - NUM_W - 56)}
-            height={10} rx={2}
+            height={9} rx={2}
             fill="#ffffff08" stroke="#ffffff15" strokeWidth={0.4}
           />
           <text
             x={NUM_W + 49}
-            y={h / 2 + (h > 44 ? 21 : 22)}
+            y={h - 7}
             fill="#9ca3af"
-            fontSize={6.5}
+            fontSize={6}
             fontStyle="italic"
             fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
             clipPath={`url(#clip-notes-${device.id})`}
