@@ -85,26 +85,20 @@ export default function App() {
     }
   }
 
-  // ── Device move (▲▼) ────────────────────────────────────────────────────
-  const handleMove = async (deviceId: number, direction: 'up' | 'down') => {
+  // ── Device reorder (DnD list-style, packs tight, no gaps) ───────────────
+  const handleReorder = async (orderedIds: number[]) => {
     try {
-      await api.post(`/rack/devices/${deviceId}/move`, { direction })
+      await api.post('/rack/devices/reorder', { device_ids: orderedIds })
       queryClient.invalidateQueries({ queryKey: ['rack'] })
     } catch (err) {
-      console.error('Move failed', err)
+      console.error('Reorder failed', err)
     }
   }
 
-  // ── Device drag-and-drop reposition ─────────────────────────────────────
-  const handleReposition = async (deviceId: number, rackUnit: number) => {
-    const device = rack.find(d => d.id === deviceId)
-    if (!device || device.rack_unit === rackUnit) return
-    try {
-      await api.post(`/rack/devices/${deviceId}/reposition`, { rack_unit: rackUnit })
-      queryClient.invalidateQueries({ queryKey: ['rack'] })
-    } catch (err: any) {
-      console.error('Reposition failed', err?.response?.data?.detail || err)
-    }
+  // ── Auto-compact: send current order → backend repacks from U1 ───────────
+  const handleCompact = async () => {
+    const ids = [...rack].sort((a, b) => a.rack_unit - b.rack_unit).map(d => d.id)
+    await handleReorder(ids)
   }
 
   // ── Callout handlers ─────────────────────────────────────────────────────
@@ -215,8 +209,8 @@ export default function App() {
               callouts={callouts}
               highlightPortIds={highlightPortIds}
               onPortClick={handlePortClick}
-              onMove={handleMove}
-              onReposition={handleReposition}
+              onReorder={handleReorder}
+              onCompact={handleCompact}
               onDeviceCalloutClick={handleDeviceCalloutClick}
               onCalloutClick={handleCalloutClick}
             />

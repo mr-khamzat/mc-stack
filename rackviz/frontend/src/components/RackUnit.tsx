@@ -112,25 +112,18 @@ interface Props {
   editMode:          boolean
   highlightPortIds?: Set<number>
   onPortClick:       (port: PortT, device: RackDevice) => void
-  onMove?:           (id: number, dir: 'up' | 'down') => void
   onDragStart?:      (deviceId: number, e: React.MouseEvent) => void
   isFirst:           boolean
   isLast:            boolean
-  isDragging?:       boolean
-  dragY?:            number
-  devOffsetY?:       number
 }
 
 export const RackUnit: React.FC<Props> = ({
   device, editMode, highlightPortIds,
-  onPortClick, onMove, onDragStart,
-  isFirst, isLast, isDragging, dragY, devOffsetY = 0,
+  onPortClick, onDragStart,
+  isFirst, isLast,
 }) => {
-  const h   = device.unit_size * U
-  // Use dragged Y if dragging, otherwise normal position
-  const y   = isDragging && dragY !== undefined
-    ? dragY - devOffsetY
-    : (device.rack_unit - 1) * U
+  const h = device.unit_size * U
+  const y = 0  // Y is controlled by parent <g transform>
 
   const isPP     = device.device_type === 'patch_panel'
   const isSrv    = device.device_type === 'server'
@@ -156,10 +149,7 @@ export const RackUnit: React.FC<Props> = ({
   const portOffsetY  = (h - portsBlockH - switchOffset) / 2 + switchOffset
 
   return (
-    <g
-      transform={`translate(0, ${y})`}
-      opacity={isDragging ? 0.45 : 1}
-    >
+    <g>
       {/* ── Device background ────────────────────────────────────── */}
       <rect
         x={NUM_W} y={1}
@@ -424,51 +414,28 @@ export const RackUnit: React.FC<Props> = ({
         })}
       </g>
 
-      {/* ── Edit mode: ▲▼ move buttons (only when not drag mode) ──── */}
-      {editMode && onMove && (
-        <>
-          {!isFirst && (
-            <g
-              onClick={(e) => { e.stopPropagation(); onMove(device.id, 'up') }}
-              style={{ cursor: 'pointer' }}
-            >
-              <rect x={RACK_W - 46} y={4} width={19} height={15} rx={3}
-                fill="#ffffff12" stroke="#ffffff22" strokeWidth={0.5} />
-              <text x={RACK_W - 36.5} y={14.5}
-                textAnchor="middle" fill="#aaa" fontSize={11} fontFamily="monospace">▲</text>
-            </g>
-          )}
-          {!isLast && (
-            <g
-              onClick={(e) => { e.stopPropagation(); onMove(device.id, 'down') }}
-              style={{ cursor: 'pointer' }}
-            >
-              <rect x={RACK_W - 25} y={4} width={19} height={15} rx={3}
-                fill="#ffffff12" stroke="#ffffff22" strokeWidth={0.5} />
-              <text x={RACK_W - 15.5} y={14.5}
-                textAnchor="middle" fill="#aaa" fontSize={11} fontFamily="monospace">▼</text>
-            </g>
-          )}
-        </>
-      )}
-
-      {/* ── Drag handle (edit mode) ───────────────────────────────── */}
+      {/* ── Edit mode: drag zone over name/badge area ────────────── */}
       {editMode && onDragStart && (
-        <g
-          style={{ cursor: 'grab' }}
-          onMouseDown={(e) => { e.stopPropagation(); onDragStart(device.id, e) }}
-        >
-          <rect x={RACK_W - 70} y={h / 2 - 8} width={16} height={16} rx={3}
-            fill="#ffffff08" stroke="#ffffff18" strokeWidth={0.5} />
-          {/* Drag dots */}
-          {[0, 3, 6].map(dy => (
-            [0, 4].map(dx => (
-              <circle key={`${dx}-${dy}`}
-                cx={RACK_W - 66 + dx} cy={h / 2 - 4 + dy}
-                r={0.8} fill="#555"
-              />
-            ))
-          ))}
+        <g>
+          {/* Wide invisible grab zone from left stripe to port area */}
+          <rect
+            x={NUM_W} y={0}
+            width={PORT_START - NUM_W - 2} height={h}
+            fill="transparent"
+            style={{ cursor: 'grab' }}
+            onMouseDown={(e) => { e.stopPropagation(); onDragStart(device.id, e) }}
+          />
+          {/* Subtle drag indicator dots in the type badge zone */}
+          <g style={{ pointerEvents: 'none' }}>
+            {[0, 3, 6].map(dy => (
+              [0, 4].map(dx => (
+                <circle key={`${dx}-${dy}`}
+                  cx={NUM_W + 4 + dx} cy={h / 2 - 3 + dy}
+                  r={0.7} fill="#444"
+                />
+              ))
+            ))}
+          </g>
         </g>
       )}
 

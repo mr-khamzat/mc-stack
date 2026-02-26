@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from ..database import get_db
 from ..models import Device, Port, CustomDevice, PortHistory
 from ..auth import require_admin
@@ -55,6 +55,10 @@ class CustomDeviceCreate(BaseModel):
 
 class RepositionRequest(BaseModel):
     rack_unit: int
+
+
+class ReorderRequest(BaseModel):
+    device_ids: List[int]   # IDs in desired top-to-bottom order
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -180,6 +184,22 @@ def clear_all_devices(db: Session = Depends(get_db)):
     db.query(Device).delete()
     db.commit()
     return {"ok": True, "deleted": count}
+
+
+@router.post("/rack/devices/reorder", dependencies=[Depends(require_admin)])
+def reorder_devices(body: ReorderRequest, db: Session = Depends(get_db)):
+    """Reorder devices and repack: recalculate rack_unit for each device
+    based on new order, packing tight from U1 (no gaps)."""
+    all_devs = {d.id: d for d in db.query(Device).all()}
+    current_u = 1
+    for dev_id in body.device_ids:
+        dev = all_devs.get(dev_id)
+        if dev is None:
+            continue
+        dev.rack_unit = current_u
+        current_u += dev.unit_size
+    db.commit()
+    return {"ok": True, "total_units": current_u - 1}
 
 
 @router.delete("/rack/devices/{device_id}", dependencies=[Depends(require_admin)])
