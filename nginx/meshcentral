@@ -1,0 +1,168 @@
+# MeshCentral Reverse Proxy — Nginx
+# HTTP/2, WebSocket, rate limiting, static caching
+
+# Rate limiting zones
+limit_req_zone $binary_remote_addr zone=mc_login:10m rate=5r/s;
+limit_req_zone $binary_remote_addr zone=mc_general:10m rate=30r/s;
+limit_conn_zone $binary_remote_addr zone=mc_conn:10m;
+
+# HTTP → HTTPS redirect
+server {
+    listen 80;
+    listen [::]:80;
+    server_name hub.office.mooo.com;
+
+    # ACME challenge for certbot renewal
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# HTTPS — main
+server {
+    listen 8443 ssl http2 proxy_protocol;
+    listen [::]:8443 ssl http2 proxy_protocol;
+    server_name hub.office.mooo.com;
+
+    # Реальный IP из PROXY protocol (приходит от nginx stream)
+    real_ip_header proxy_protocol;
+    set_real_ip_from 127.0.0.1;
+    set_real_ip_from ::1;
+
+    # TLS
+    ssl_certificate /etc/letsencrypt/live/hub.office.mooo.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/hub.office.mooo.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    # Security headers
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Rate limiting
+    limit_conn mc_conn 50;
+    limit_req zone=mc_general burst=50 nodelay;
+
+    # Live Network Map — auth via RackViz session cookie
+    location = /netmap {
+        auth_request /rack/api/auth/check-cookie;
+        error_page 401 = @netmap_login;
+
+        alias /opt/meshcentral-bot/public/netmap.html;
+        default_type text/html;
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+        add_header Pragma "no-cache" always;
+        add_header Expires "0" always;
+    }
+
+    # Public status page — no auth required
+    location = /status {
+        alias /opt/meshcentral-bot/public/status.html;
+        default_type text/html;
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+        add_header Pragma "no-cache" always;
+        add_header Expires "0" always;
+    }
+
+    # Redirect to RackViz login if not authenticated
+    location @netmap_login {
+        return 302 https://hub.office.mooo.com/rack/?next=netmap;
+    }
+
+    # Internal auth check endpoint (proxied to RackViz backend)
+    location = /rack/api/auth/check-cookie {
+        internal;
+        proxy_pass         http://127.0.0.1:8502/api/auth/check-cookie;
+        proxy_pass_request_body off;
+        proxy_set_header   Content-Length "";
+        proxy_set_header   Cookie $http_cookie;
+        proxy_set_header   X-Original-URI $request_uri;
+    }
+
+    # ── RackViz — server rack visualizer ─────────────────────────────────
+    # ^~ prevents regex location ~* (js|css...) from matching /rack/* assets
+    location ^~ /rack {
+        proxy_pass         http://127.0.0.1:8503;
+        proxy_http_version 1.1;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+        proxy_buffering    off;
+    }
+    # ─────────────────────────────────────────────────────────────────────
+
+    # Login endpoint stricter rate limit
+    location /login {
+        limit_req zone=mc_login burst=10 nodelay;
+        proxy_pass http://127.0.0.1:4430;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # WebSocket support (agents, remote desktop, terminal)
+    location / {
+        proxy_pass http://127.0.0.1:4430;
+        proxy_http_version 1.1;
+
+        # WebSocket
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # Headers
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Timeouts for long WebSocket connections
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+
+        # Buffering
+        proxy_buffering off;
+        proxy_request_buffering off;
+
+        # Max upload size
+        client_max_body_size 100m;
+    }
+
+    # Static assets caching
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        proxy_pass http://127.0.0.1:4430;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        expires 7d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # Agent download caching
+    location /meshagents {
+        proxy_pass http://127.0.0.1:4430;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        expires 1d;
+        add_header Cache-Control "public";
+    }
+}

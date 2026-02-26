@@ -58,11 +58,10 @@ from aiogram.fsm.context import FSMContext
 load_dotenv("/opt/meshcentral-bot/.env")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-MC_URL = os.getenv("MC_URL", "https://your-meshcentral.example.com")
+MC_URL = os.getenv("MC_URL", "https://hub.office.mooo.com")
 MC_DATA = os.getenv("MC_DATA", "/opt/meshcentral/meshcentral-data")
 MC_DIR = os.getenv("MC_DIR", "/opt/meshcentral")
-MC_WSS = os.getenv("MC_WSS", "wss://your-meshcentral.example.com:443")
-BACKUP_ZIP_PASSWORD = os.getenv("BACKUP_ZIP_PASSWORD", "changeme")
+MC_WSS = os.getenv("MC_WSS", "wss://hub.office.mooo.com:443")
 MESHCTRL = f"{MC_DIR}/node_modules/meshcentral/meshctrl.js"
 ADMIN_FILE = "/opt/meshcentral-bot/admin.json"
 DATA_DIR = Path("/opt/meshcentral-bot")
@@ -89,6 +88,15 @@ INK_ALERTS_FILE        = DATA_DIR / "ink_alerts.json"
 INK_WARN_PCT           = 20   # % threshold for low ink alert
 NETMAP_INTERVAL        = 60   # seconds
 WIFI_POLL_INTERVAL     = 300  # seconds (5 min)
+# ── New features ──
+HW_INVENTORY_FILE  = DATA_DIR / "hw_inventory.json"
+HW_INVENTORY_PS1   = DATA_DIR / "hw_inventory.ps1"
+TEMP_DATA_FILE     = DATA_DIR / "temp_data.json"
+TEMP_PROBE_PS1     = DATA_DIR / "temp_probe.ps1"
+STATUS_HTML_FILE   = DATA_DIR / "public" / "status.html"
+HW_POLL_INTERVAL   = 4 * 3600   # 4 hours
+TEMP_POLL_INTERVAL = 900         # 15 minutes
+TEMP_WARN_C        = 75          # °C alert threshold
 
 HEALTH_CHECK_INTERVAL = 60
 DEVICE_CHECK_INTERVAL = 45
@@ -97,9 +105,13 @@ DAILY_REPORT_HOUR = 9
 WEEKLY_DIGEST_HOUR = 10   # Sunday 10:00 UTC
 UPDATE_CHECK_HOUR = 11
 DB_CACHE_TTL = 60  # seconds — снижено для более актуального статуса
-SSL_DOMAINS = [d.strip() for d in os.getenv("SSL_DOMAINS", "").split(",") if d.strip()]
+SSL_DOMAINS = [d.strip() for d in os.getenv("SSL_DOMAINS", "hub.office.mooo.com,panelwin.mooo.com,subwin.mooo.com").split(",") if d.strip()]
 # HTTP services to monitor: "Name|url" pairs comma-separated in HTTP_SERVICES env var
-_HTTP_SERVICES_RAW = os.getenv("HTTP_SERVICES", "")
+_HTTP_SERVICES_RAW = os.getenv(
+    "HTTP_SERVICES",
+    "MeshCentral|https://hub.office.mooo.com,"
+    "Remnawave Panel|https://panelwin.mooo.com/api/"
+)
 HTTP_SERVICES: list[tuple[str, str]] = []
 for _item in _HTTP_SERVICES_RAW.split(","):
     _item = _item.strip()
@@ -139,6 +151,8 @@ _shutdown_event = asyncio.Event()
 _background_tasks: list[asyncio.Task] = []
 _wifi_clients: dict = {}  # {agent_name: {ok, router, updated, count, clients: [...]}}
 _snmp_data:    dict = {}  # {agent_name: {ok, router, updated, data: {...}, prev: {...}}}
+_hw_inventory: dict = {}  # {device_name: {hostname, cpu_name, ram_total_gb, disks, ...}}
+_temp_data:    dict = {}  # {device_name: {temps, cpu_load_pct, updated}}
 
 # ─── Keyboard ─────────────────────────────────────────────────────────
 
@@ -2085,6 +2099,13 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#0a1120;font-family
 #hdr{{background:linear-gradient(135deg,#0d1b2a,#172535);padding:8px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;border-bottom:1px solid #1e3a5f;position:relative;z-index:10}}
 #hdr h1{{font-size:14px;font-weight:700;color:#85c1e9}}
 .st{{font-size:11px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;color:#8fb3cc}}
+#srch{{background:#0a1628;border:1px solid #1e3a5f;border-radius:5px;color:#c8d6e5;padding:3px 8px;font-size:12px;width:160px;outline:none}}
+#srch:focus{{border-color:#3498db}}
+#srch-count{{font-size:10px;color:#4a7a99;min-width:60px}}
+.nd.nd-dim rect,.nd.nd-dim text,.nd.nd-dim circle{{opacity:0.18}}
+.nd.nd-dim{{pointer-events:none}}
+.nd.nd-match rect{{filter:drop-shadow(0 0 6px #f39c12) brightness(1.3)}}
+.nd.nd-match text{{fill:#fff!important}}
 .dot{{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:2px;vertical-align:middle}}
 .don{{background:#2ecc71}}.doff{{background:#e74c3c}}.dst{{background:#555}}
 .osbg{{background:#ffffff12;border-radius:3px;padding:0 5px;font-size:10px}}
@@ -2120,6 +2141,9 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#0a1120;font-family
     <span>|</span>
     <span>📍 {n_locs} лок.</span>
     <span>🕐 {now_str}</span>
+    <span>|</span>
+    <input id="srch" type="search" placeholder="🔍 Поиск устройства…" autocomplete="off">
+    <span id="srch-count"></span>
   </div>
 </div>
 <div id="wrap">
@@ -2254,6 +2278,58 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#0a1120;font-family
   document.getElementById('xbtn').onclick=function(){{panel.style.display='none';}};
   window.addEventListener('resize',fit);
   fit();
+  // ── Search ──
+  var srch=document.getElementById('srch');
+  var srchCount=document.getElementById('srch-count');
+  function doSearch(){{
+    var q=(srch.value||'').trim().toLowerCase();
+    var nodes=cvs.querySelectorAll('.nd');
+    if(!q){{
+      nodes.forEach(function(n){{n.classList.remove('nd-dim','nd-match');}});
+      srchCount.textContent='';
+      return;
+    }}
+    var matches=0;
+    nodes.forEach(function(n){{
+      var info={{}};
+      try{{info=JSON.parse(n.getAttribute('data-i'));}}catch(e){{}}
+      var name=(info.name||'').toLowerCase();
+      var grp=(info.group||'').toLowerCase();
+      var ip=(info.wan||info.lan||info.ip||'').toLowerCase();
+      var os2=(info.os||'').toLowerCase();
+      var hit=name.includes(q)||grp.includes(q)||ip.includes(q)||os2.includes(q);
+      if(hit){{n.classList.remove('nd-dim');n.classList.add('nd-match');matches++;}}
+      else{{n.classList.remove('nd-match');n.classList.add('nd-dim');}}
+    }});
+    srchCount.textContent=matches>0?matches+' найд.':'не найдено';
+    // auto-center on first match
+    var first=cvs.querySelector('.nd-match');
+    if(first){{
+      var r=first.getBoundingClientRect(),wr=wrap.getBoundingClientRect();
+      tx+=(wr.left+wr.width/2)-(r.left+r.width/2);
+      ty+=(wr.top+wr.height/2)-(r.top+r.height/2);
+      applyT();
+    }}
+  }}
+  srch.addEventListener('input',doSearch);
+  srch.addEventListener('keydown',function(e){{
+    if(e.key==='Escape'){{srch.value='';doSearch();srch.blur();}}
+    if(e.key==='Enter'){{
+      // jump to next match
+      var all=Array.from(cvs.querySelectorAll('.nd-match'));
+      if(all.length>0){{
+        var cur=cvs.querySelector('.nd-match.nd-current');
+        var idx=cur?all.indexOf(cur):‑1;
+        if(cur)cur.classList.remove('nd-current');
+        var next=all[(idx+1)%all.length];
+        next.classList.add('nd-current');
+        var r=next.getBoundingClientRect(),wr=wrap.getBoundingClientRect();
+        tx+=(wr.left+wr.width/2)-(r.left+r.width/2);
+        ty+=(wr.top+wr.height/2)-(r.top+r.height/2);
+        applyT();
+      }}
+    }}
+  }});
   {'// auto-refresh countdown' if web_mode else '// static mode'}
   {'''var badge=document.getElementById('reload-badge');
   badge.style.display='block';
@@ -3235,9 +3311,289 @@ async def wifi_poll_loop():
             pass
 
 
+# ─── Status page builder ─────────────────────────────────────────────
+
+def build_status_html(devices: list[dict]) -> str:
+    """Generate a public status page grouped by location."""
+    from collections import defaultdict
+    now_str = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for d in devices:
+        loc = d.get("group", "Без группы") or "Без группы"
+        groups[loc].append(d)
+
+    rows = ""
+    for loc in sorted(groups.keys()):
+        devs = groups[loc]
+        n_on  = sum(1 for d in devs if d.get("online"))
+        n_off = len(devs) - n_on
+        if n_on == len(devs):
+            cls, icon, label = "ok",   "●", "Все онлайн"
+        elif n_on == 0:
+            cls, icon, label = "down", "●", "Все офлайн"
+        else:
+            cls, icon, label = "warn", "●", f"{n_on}/{len(devs)} онлайн"
+        rows += (
+            f'<div class="card">'
+            f'<span class="dot {cls}">{icon}</span>'
+            f'<div class="info"><div class="loc">{loc}</div>'
+            f'<div class="sub">{label} &nbsp;·&nbsp; '
+            f'<span class="on">{n_on} ↑</span> '
+            f'<span class="off">{n_off} ↓</span></div></div>'
+            f'</div>\n'
+        )
+
+    n_total = len(devices)
+    n_online = sum(1 for d in devices if d.get("online"))
+    overall = "ok" if n_online == n_total else ("down" if n_online == 0 else "warn")
+    overall_label = (
+        "Все системы работают" if n_online == n_total
+        else f"Частичный сбой: {n_online}/{n_total} онлайн"
+        if n_online > 0 else "Нет связи с устройствами"
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="60">
+<title>Статус сети — MeshCentral</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+      background:#0a1120;color:#c8d6e5;min-height:100vh;padding:20px}}
+.hdr{{text-align:center;padding:24px 0 8px}}
+.hdr h1{{font-size:22px;color:#85c1e9;margin-bottom:6px}}
+.hdr .ts{{font-size:12px;color:#4a7a99}}
+.overall{{display:flex;align-items:center;justify-content:center;gap:10px;
+          margin:18px auto;padding:12px 24px;border-radius:8px;max-width:500px;
+          font-size:15px;font-weight:600}}
+.overall.ok  {{background:#0f2a1a;border:1px solid #2ecc71;color:#2ecc71}}
+.overall.warn{{background:#2a1f0a;border:1px solid #f39c12;color:#f39c12}}
+.overall.down{{background:#2a0a0a;border:1px solid #e74c3c;color:#e74c3c}}
+.cards{{max-width:600px;margin:0 auto;display:flex;flex-direction:column;gap:10px}}
+.card{{display:flex;align-items:center;gap:14px;padding:14px 18px;
+       border-radius:8px;background:#0f1e2e;border:1px solid #1e3a5f}}
+.dot{{font-size:22px;flex-shrink:0}}
+.dot.ok  {{color:#2ecc71}}
+.dot.warn{{color:#f39c12}}
+.dot.down{{color:#e74c3c}}
+.loc{{font-size:14px;font-weight:600;color:#aed6f1}}
+.sub{{font-size:12px;color:#6b8fa8;margin-top:3px}}
+.on {{color:#2ecc71}}.off{{color:#e74c3c}}
+.footer{{text-align:center;margin-top:30px;font-size:11px;color:#2a4a6a}}
+.footer a{{color:#3498db;text-decoration:none}}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <h1>🗺 Статус сети</h1>
+  <div class="ts">Обновлено: {now_str} &nbsp;·&nbsp; Обновляется каждые 60 сек</div>
+</div>
+<div class="overall {overall}">{overall_label}</div>
+<div class="cards">
+{rows}</div>
+<div class="footer">
+  MeshCentral &nbsp;·&nbsp; <a href="/netmap">Карта сети</a> &nbsp;·&nbsp; <a href="/rack">RackViz</a>
+</div>
+</body>
+</html>"""
+
+
+# ─── Availability heatmap (text) ─────────────────────────────────────
+
+def build_availability_heatmap(device_name: str) -> str:
+    """Build a 7-day per-hour text heatmap from uptime data."""
+    data = _load_json(UPTIME_FILE, {})
+    records = data.get(device_name, [])
+    if not records:
+        return f"Нет данных о доступности для «{device_name}»"
+
+    # bucket records by (date, hour)
+    from collections import defaultdict
+    buckets: dict[tuple, list[int]] = defaultdict(list)
+    for r in records:
+        try:
+            t = datetime.fromisoformat(r["t"])
+            buckets[(t.date(), t.hour)].append(1 if r["on"] else 0)
+        except Exception:
+            continue
+
+    now = datetime.now(timezone.utc)
+    lines = ["<pre>"]
+    lines.append(f"  Доступность: <b>{device_name}</b> (7 дней × 24ч)\n")
+    lines.append("  Чч: " + " ".join(f"{h:02d}" for h in range(0, 24, 2)) + "\n")
+
+    total_on = 0
+    total_buckets = 0
+    for day_offset in range(6, -1, -1):
+        day = (now - timedelta(days=day_offset)).date()
+        day_str = day.strftime("%d.%m")
+        cells = []
+        for hour in range(24):
+            vals = buckets.get((day, hour), [])
+            if not vals:
+                cells.append("·")
+            else:
+                pct = sum(vals) / len(vals)
+                total_on += sum(vals)
+                total_buckets += len(vals)
+                cells.append("█" if pct >= 0.8 else ("▒" if pct >= 0.4 else "░"))
+        lines.append(f"  {day_str}: " + " ".join(cells[h] for h in range(0, 24, 2)) + "\n")
+
+    uptime_pct = round(total_on / total_buckets * 100, 1) if total_buckets else 0
+    lines.append(f"\n  █ онлайн  ▒ частично  ░ офлайн  · нет данных")
+    lines.append(f"\n  Доступность за 7 дней: <b>{uptime_pct}%</b>")
+    lines.append("</pre>")
+    return "".join(lines)
+
+
+# ─── HW Inventory helpers ────────────────────────────────────────────
+
+def _hw_inventory_text(inv: dict, device_name: str) -> str:
+    if not inv:
+        return f"Нет данных HW для <b>{device_name}</b>"
+    lines = [f"💻 <b>{device_name}</b> — аппаратный инвентарь\n"]
+    lines.append(f"🏭 {inv.get('manufacturer','')} {inv.get('model','')}")
+    if inv.get('serial'): lines.append(f"🔢 Серийный: <code>{inv['serial']}</code>")
+    lines.append(f"\n🖥 ОС: {inv.get('os_name','')} {inv.get('os_arch','')}")
+    if inv.get('os_install'): lines.append(f"   Установлена: {inv['os_install']}")
+    if inv.get('last_boot'):  lines.append(f"   Последний старт: {inv['last_boot']}")
+    lines.append(f"\n⚡ CPU: {inv.get('cpu_name','?')}")
+    lines.append(f"   Ядра/Потоки: {inv.get('cpu_cores','?')}/{inv.get('cpu_threads','?')}"
+                 f" @ {inv.get('cpu_mhz','?')} МГц")
+    lines.append(f"\n🧠 RAM: {inv.get('ram_total_gb','?')} GB"
+                 f"  ({inv.get('ram_slots','?')} модулей)")
+    disks = inv.get('disks', [])
+    if disks:
+        lines.append("\n💾 Диски:")
+        for d in disks:
+            bar = "▓" * int(d.get('used_pct', 0) / 10) + "░" * (10 - int(d.get('used_pct', 0) / 10))
+            lines.append(f"   {d['letter']} [{d.get('dtype','?')}] "
+                         f"{d.get('size_gb','?')}GB — "
+                         f"свободно {d.get('free_gb','?')}GB [{bar}] {d.get('used_pct','?')}%")
+    if inv.get('gpu'): lines.append(f"\n🎮 GPU: {inv['gpu']}")
+    if inv.get('updated'): lines.append(f"\n🕐 Обновлено: {inv['updated']}")
+    return "\n".join(lines)
+
+
+async def _collect_hw_for_device(device_id: str, device_name: str):
+    """Run hw_inventory.ps1 on one device via meshctrl."""
+    global _hw_inventory
+    if not HW_INVENTORY_PS1.exists():
+        return
+    try:
+        script = HW_INVENTORY_PS1.read_text(encoding="utf-8")
+        raw = await mc_run_command(device_id, script, powershell=True, timeout=60)
+        if not raw:
+            return
+        # extract JSON from output
+        for line in reversed(raw.strip().splitlines()):
+            line = line.strip()
+            if line.startswith("{"):
+                inv = json.loads(line)
+                inv["updated"] = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M")
+                _hw_inventory[device_name] = inv
+                _save_json(HW_INVENTORY_FILE, _hw_inventory)
+                log.info(f"hw_inventory: collected {device_name}")
+                break
+    except Exception as e:
+        log.warning(f"hw_inventory: {device_name}: {e}")
+
+
+async def _collect_temp_for_device(device_id: str, device_name: str) -> dict | None:
+    """Run temp_probe.ps1 on one device."""
+    if not TEMP_PROBE_PS1.exists():
+        return None
+    try:
+        script = TEMP_PROBE_PS1.read_text(encoding="utf-8")
+        raw = await mc_run_command(device_id, script, powershell=True, timeout=30)
+        if not raw:
+            return None
+        for line in reversed(raw.strip().splitlines()):
+            line = line.strip()
+            if line.startswith("{"):
+                return json.loads(line)
+    except Exception as e:
+        log.warning(f"temp_probe: {device_name}: {e}")
+    return None
+
+
+# ─── HW Inventory loop ───────────────────────────────────────────────
+
+async def hw_inventory_loop():
+    """Collect hardware inventory from online agents every HW_POLL_INTERVAL seconds."""
+    global _hw_inventory
+    _hw_inventory = _load_json(HW_INVENTORY_FILE, {})
+    await asyncio.sleep(120)  # delay on startup
+    while not _shutdown_event.is_set():
+        try:
+            devs = await get_full_devices()
+            online = [d for d in devs if d.get("online")]
+            log.info(f"hw_inventory_loop: polling {len(online)} online devices")
+            for d in online:
+                if _shutdown_event.is_set():
+                    break
+                await _collect_hw_for_device(d["id"], d["name"])
+                await asyncio.sleep(5)  # throttle
+        except Exception as e:
+            log.error(f"hw_inventory_loop: {e}")
+        try:
+            await asyncio.wait_for(_shutdown_event.wait(), timeout=HW_POLL_INTERVAL)
+            break
+        except asyncio.TimeoutError:
+            pass
+
+
+# ─── Temperature loop ────────────────────────────────────────────────
+
+async def temp_loop():
+    """Collect CPU temperature from online agents every TEMP_POLL_INTERVAL."""
+    global _temp_data
+    _temp_data = _load_json(TEMP_DATA_FILE, {})
+    await asyncio.sleep(90)
+    while not _shutdown_event.is_set():
+        try:
+            aid = get_admin_id()
+            devs = await get_full_devices()
+            online = [d for d in devs if d.get("online")]
+            for d in online:
+                if _shutdown_event.is_set():
+                    break
+                result = await _collect_temp_for_device(d["id"], d["name"])
+                if not result:
+                    continue
+                result["updated"] = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M")
+                _temp_data[d["name"]] = result
+                _save_json(TEMP_DATA_FILE, _temp_data)
+                # Alert if any sensor is critical
+                if aid:
+                    for sensor in result.get("temps", []):
+                        if sensor.get("temp_c", 0) >= TEMP_WARN_C:
+                            await bot.send_message(
+                                aid,
+                                f"🌡 <b>Высокая температура!</b>\n"
+                                f"💻 {d['name']}\n"
+                                f"🌡 {sensor['zone']}: <b>{sensor['temp_c']}°C</b>\n"
+                                f"⚠️ Порог: {TEMP_WARN_C}°C",
+                                parse_mode="HTML",
+                            )
+                            break  # one alert per device per cycle
+                await asyncio.sleep(3)
+        except Exception as e:
+            log.error(f"temp_loop: {e}")
+        try:
+            await asyncio.wait_for(_shutdown_event.wait(), timeout=TEMP_POLL_INTERVAL)
+            break
+        except asyncio.TimeoutError:
+            pass
+
+
 async def netmap_loop():
     """Background loop: regenerate netmap.html every NETMAP_INTERVAL seconds."""
     NETMAP_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATUS_HTML_FILE.parent.mkdir(parents=True, exist_ok=True)
     await asyncio.sleep(5)  # short delay on startup
     while not _shutdown_event.is_set():
         try:
@@ -3246,7 +3602,10 @@ async def netmap_loop():
                 html = build_network_map_html(devs, web_mode=True)
                 if html:
                     NETMAP_FILE.write_text(html, encoding="utf-8")
-                    log.info(f"netmap: updated ({len(devs)} devices)")
+                # Status page
+                status_html = build_status_html(devs)
+                STATUS_HTML_FILE.write_text(status_html, encoding="utf-8")
+                log.info(f"netmap: updated ({len(devs)} devices)")
         except Exception as e:
             log.error(f"netmap_loop: {e}")
         try:
@@ -5427,6 +5786,10 @@ async def msg_tools(msg: Message):
          InlineKeyboardButton(text="📡 SNMP роутеры",  callback_data="tool:snmp")],
         [InlineKeyboardButton(text="🖨 Принтеры", callback_data="tool:printers"),
          InlineKeyboardButton(text="🔄 Рестарт MC", callback_data="tool:restart")],
+        [InlineKeyboardButton(text="💻 Инвентарь HW",   callback_data="tool:hw_inventory"),
+         InlineKeyboardButton(text="🌡 Температуры",    callback_data="tool:temperature")],
+        [InlineKeyboardButton(text="📊 Доступность",    callback_data="tool:availability"),
+         InlineKeyboardButton(text="🌐 Статус-страница",callback_data="tool:status_page")],
         [InlineKeyboardButton(text="💾 Бэкап MC", callback_data="tool:backup")],
         [InlineKeyboardButton(text="🗄 Полный бэкап сервера", callback_data="tool:fullbackup")],
         [InlineKeyboardButton(text="🆕 Обновления MC", callback_data="tool:update_check"),
@@ -5857,7 +6220,7 @@ ufw enable
         with pyzipper.AESZipFile(zip_buf, "w",
                                   compression=pyzipper.ZIP_DEFLATED,
                                   encryption=pyzipper.WZ_AES) as zf:
-            zf.setpassword(BACKUP_ZIP_PASSWORD.encode())
+            zf.setpassword(b"Kh@mzat88712Pass")
             for arc_path, real_path in entries:
                 if real_path is None:
                     zf.writestr(arc_path, restore_md)
@@ -5871,7 +6234,7 @@ ufw enable
                 f"🗄 <b>Полный бэкап сервера</b>\n"
                 f"📅 {ts}\n"
                 f"📦 {size_mb:.1f} MB\n"
-                f"🔒 Пароль: <code>{BACKUP_ZIP_PASSWORD}</code>\n\n"
+                f"🔒 Пароль: <code>Kh@mzat88712Pass</code>\n\n"
                 f"<b>Содержимое:</b>\n"
                 f"• meshcentral-data/ — БД и конфиги MC\n"
                 f"• meshcentral-bot/ — бот + данные\n"
@@ -7464,6 +7827,8 @@ async def on_startup():
     _background_tasks.append(asyncio.create_task(ssl_check_loop()))
     _background_tasks.append(asyncio.create_task(cmd_scheduler_loop()))
     _background_tasks.append(asyncio.create_task(snmp_poll_loop()))
+    _background_tasks.append(asyncio.create_task(hw_inventory_loop()))
+    _background_tasks.append(asyncio.create_task(temp_loop()))
     log.info("Background tasks started")
 
 
@@ -7678,7 +8043,7 @@ async def cb_tool_ping(cb: CallbackQuery, state: FSMContext):
     rows.append([InlineKeyboardButton(text="◀️ Инструменты", callback_data="ping:back")])
     await cb.message.answer(
         "━━━━━━━━━━━━━━━━━━━━━━\n🏓 <b>Ping / Traceroute</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Пинг выполняется <b>с сервера</b>.\n"
+        "Пинг выполняется <b>с сервера</b> (144.31.89.167).\n"
         "Выбери цель или введи адрес вручную:",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
@@ -8512,6 +8877,237 @@ async def cb_snmp_config(cb: CallbackQuery):
               "", "Стандартный community string на Keenetic: <b>public</b>"]
     await cb.message.answer("\n".join(lines), parse_mode="HTML")
     await cb.answer()
+
+
+# ─── HW Inventory handler ────────────────────────────────────────────
+
+@router.callback_query(F.data == "tool:hw_inventory")
+async def cb_tool_hw_inventory(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id):
+        await cb.answer("🔒", show_alert=True)
+        return
+    await cb.answer()
+    global _hw_inventory
+    if not _hw_inventory:
+        _hw_inventory = _load_json(HW_INVENTORY_FILE, {})
+
+    if not _hw_inventory:
+        await cb.message.answer(
+            "💻 <b>HW инвентарь</b>\n\nДанные ещё собираются. Сбор запускается автоматически "
+            "каждые 4 часа для онлайн-устройств.\n\n"
+            "Нажмите кнопку ещё раз через несколько минут.",
+            parse_mode="HTML",
+        )
+        return
+
+    # Summary table
+    lines = ["💻 <b>Аппаратный инвентарь</b>\n"]
+    for name, inv in sorted(_hw_inventory.items()):
+        cpu = inv.get("cpu_name", "?")[:30]
+        ram = inv.get("ram_total_gb", "?")
+        disks = inv.get("disks", [])
+        disk_str = " ".join(f"{d.get('letter','?')}:{d.get('size_gb','?')}GB[{d.get('dtype','?')}]" for d in disks[:3])
+        lines.append(f"<b>{name}</b>")
+        lines.append(f"  ⚡ {cpu}")
+        lines.append(f"  🧠 {ram} GB RAM")
+        if disk_str:
+            lines.append(f"  💾 {disk_str}")
+        lines.append("")
+
+    text = "\n".join(lines)
+
+    # Offer per-device detail buttons
+    dev_buttons = []
+    for name in sorted(_hw_inventory.keys()):
+        safe = name[:30]
+        dev_buttons.append([InlineKeyboardButton(text=f"💻 {safe}", callback_data=f"hw_detail:{safe}")])
+    dev_buttons.append([InlineKeyboardButton(text="🔄 Собрать сейчас", callback_data="hw_collect_now")])
+
+    await cb.message.answer(
+        text[:4000],
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=dev_buttons),
+    )
+
+
+@router.callback_query(F.data.startswith("hw_detail:"))
+async def cb_hw_detail(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id):
+        await cb.answer("🔒", show_alert=True)
+        return
+    device_name = cb.data.split(":", 1)[1]
+    inv = _hw_inventory.get(device_name)
+    text = _hw_inventory_text(inv, device_name)
+    await cb.message.answer(text, parse_mode="HTML")
+    await cb.answer()
+
+
+@router.callback_query(F.data == "hw_collect_now")
+async def cb_hw_collect_now(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id):
+        await cb.answer("🔒", show_alert=True)
+        return
+    await cb.answer("⏳ Запускаю сбор…", show_alert=True)
+    await cb.message.answer("⏳ Запускаю сбор HW данных для онлайн-устройств…\nЭто займёт 1-3 минуты.", parse_mode="HTML")
+    asyncio.create_task(_hw_collect_now_task(cb.from_user.id))
+
+
+async def _hw_collect_now_task(aid: int):
+    try:
+        devs = await get_full_devices()
+        online = [d for d in devs if d.get("online")]
+        for d in online:
+            await _collect_hw_for_device(d["id"], d["name"])
+            await asyncio.sleep(3)
+        await bot.send_message(
+            aid,
+            f"✅ HW инвентарь обновлён: {len(online)} устройств\n"
+            f"Используйте 💻 Инвентарь HW чтобы посмотреть результаты.",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        await bot.send_message(aid, f"❌ Ошибка сбора HW: {e}")
+
+
+# ─── Temperature handler ─────────────────────────────────────────────
+
+@router.callback_query(F.data == "tool:temperature")
+async def cb_tool_temperature(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id):
+        await cb.answer("🔒", show_alert=True)
+        return
+    await cb.answer()
+    global _temp_data
+    if not _temp_data:
+        _temp_data = _load_json(TEMP_DATA_FILE, {})
+
+    if not _temp_data:
+        await cb.message.answer(
+            "🌡 <b>Температуры</b>\n\nДанные ещё собираются. "
+            "Сбор запускается каждые 15 минут для онлайн-устройств.\n"
+            "Попробуйте через несколько минут.",
+            parse_mode="HTML",
+        )
+        return
+
+    lines = ["🌡 <b>Температуры и нагрузка CPU</b>\n"]
+    for name, data in sorted(_temp_data.items()):
+        load = data.get("cpu_load_pct", 0)
+        temps = data.get("temps", [])
+        updated = data.get("updated", "")
+        if data.get("no_sensor"):
+            lines.append(f"<b>{name}</b>: датчики недоступны, CPU {load}%")
+        elif not temps:
+            lines.append(f"<b>{name}</b>: нет данных, CPU {load}%")
+        else:
+            # Show max temp
+            max_t = max(t.get("temp_c", 0) for t in temps)
+            warn = "🔴" if max_t >= TEMP_WARN_C else ("🟡" if max_t >= 60 else "🟢")
+            lines.append(f"{warn} <b>{name}</b>: {max_t}°C  CPU {load}%")
+            for sensor in temps[:3]:
+                lines.append(f"   · {sensor.get('zone','?')[:40]}: {sensor.get('temp_c','?')}°C")
+        if updated:
+            lines.append(f"   <i>обновлено {updated}</i>")
+        lines.append("")
+
+    lines.append(f"🔴 ≥{TEMP_WARN_C}°C критично  🟡 ≥60°C повышено  🟢 норма")
+
+    await cb.message.answer(
+        "\n".join(lines)[:4000],
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Обновить сейчас", callback_data="temp_refresh_now")],
+        ]),
+    )
+
+
+@router.callback_query(F.data == "temp_refresh_now")
+async def cb_temp_refresh_now(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id):
+        await cb.answer("🔒", show_alert=True)
+        return
+    await cb.answer("⏳ Собираю температуры…", show_alert=True)
+    asyncio.create_task(_temp_collect_now_task(cb.from_user.id))
+
+
+async def _temp_collect_now_task(aid: int):
+    global _temp_data
+    try:
+        devs = await get_full_devices()
+        online = [d for d in devs if d.get("online")]
+        for d in online:
+            result = await _collect_temp_for_device(d["id"], d["name"])
+            if result:
+                result["updated"] = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M")
+                _temp_data[d["name"]] = result
+                _save_json(TEMP_DATA_FILE, _temp_data)
+            await asyncio.sleep(2)
+        await bot.send_message(aid, f"✅ Температуры собраны: {len(online)} устройств. Нажмите 🌡 Температуры снова.")
+    except Exception as e:
+        await bot.send_message(aid, f"❌ Ошибка: {e}")
+
+
+# ─── Availability heatmap handler ─────────────────────────────────────
+
+@router.callback_query(F.data == "tool:availability")
+async def cb_tool_availability(cb: CallbackQuery, state: FSMContext):
+    if not is_admin(cb.from_user.id):
+        await cb.answer("🔒", show_alert=True)
+        return
+    await cb.answer()
+    # Show device picker
+    devs = await get_full_devices()
+    buttons = []
+    row = []
+    for d in sorted(devs, key=lambda x: x["name"]):
+        row.append(InlineKeyboardButton(text=d["name"][:20], callback_data=f"avail_dev:{d['name'][:40]}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    await cb.message.answer(
+        "📊 <b>Доступность устройств</b>\n\nВыберите устройство для просмотра тепловой карты 7 дней:",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+
+
+@router.callback_query(F.data.startswith("avail_dev:"))
+async def cb_avail_device(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id):
+        await cb.answer("🔒", show_alert=True)
+        return
+    device_name = cb.data.split(":", 1)[1]
+    heatmap = build_availability_heatmap(device_name)
+    await cb.message.answer(heatmap, parse_mode="HTML")
+    await cb.answer()
+
+
+# ─── Status page handler ─────────────────────────────────────────────
+
+@router.callback_query(F.data == "tool:status_page")
+async def cb_tool_status_page(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id):
+        await cb.answer("🔒", show_alert=True)
+        return
+    await cb.answer()
+    status_url = f"{MC_URL}/status"
+    if not STATUS_HTML_FILE.exists():
+        await cb.message.answer(
+            "🌐 Страница статуса ещё не сгенерирована. Подождите 60 секунд.",
+            parse_mode="HTML",
+        )
+        return
+    await cb.message.answer(
+        f"🌐 <b>Страница статуса сети</b>\n\n"
+        f"Публичная страница (без авторизации):\n"
+        f"<a href='{status_url}'>{status_url}</a>\n\n"
+        f"Обновляется каждые 60 секунд автоматически.\n"
+        f"Показывает онлайн/офлайн по каждой локации.",
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
 
 
 async def main():
