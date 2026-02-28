@@ -2109,7 +2109,7 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#0a1120;font-family
 .dot{{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:2px;vertical-align:middle}}
 .don{{background:#2ecc71}}.doff{{background:#e74c3c}}.dst{{background:#555}}
 .osbg{{background:#ffffff12;border-radius:3px;padding:0 5px;font-size:10px}}
-#wrap{{width:100%;height:calc(100vh - 44px);overflow:hidden;cursor:grab;user-select:none;-webkit-user-select:none}}
+#wrap{{width:100%;height:calc(100vh - 44px);overflow:hidden;cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none}}
 #wrap.dragging{{cursor:grabbing}}
 #cvs{{transform-origin:0 0}}
 .nd{{cursor:pointer}}
@@ -2176,7 +2176,7 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#0a1120;font-family
   var wrap=document.getElementById('wrap'),
       cvs=document.getElementById('cvs'),
       panel=document.getElementById('panel');
-  var tx=0,ty=0,sc=1,drag=false,moved=false,sx=0,sy=0,stx=0,sty=0;
+  var tx=0,ty=0,sc=1,moved=false,sx=0,sy=0,stx=0,sty=0;
   // Initial fit — restore position from sessionStorage after auto-reload
   function fit(){{
     var saved=sessionStorage.getItem('nm_sc');
@@ -2207,66 +2207,55 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#0a1120;font-family
     tx=mx-(mx-tx)*(nsc/sc); ty=my-(my-ty)*(nsc/sc); sc=nsc;
     applyT();
   }},{{passive:false}});
-  // Pan - mouse (drag from any element; distinguish click vs drag by movement >5px)
-  wrap.addEventListener('mousedown',function(e){{
-    if(e.button!==0)return;
-    drag=true; moved=false; sx=e.clientX; sy=e.clientY; stx=tx; sty=ty;
+  // ── Pan & Click — Pointer Events (unified mouse+touch, with capture) ──────────
+  var pId=null;
+  wrap.addEventListener('pointerdown',function(e){{
+    if(e.pointerType==='mouse'&&e.button!==0)return;
+    if(pId!==null)return;          // ignore extra pointers (handled by pinch below)
+    pId=e.pointerId;
+    moved=false; sx=e.clientX; sy=e.clientY; stx=tx; sty=ty;
+    try{{wrap.setPointerCapture(pId);}}catch(_){{}}
     wrap.classList.add('dragging');
+    e.preventDefault();
   }});
-  window.addEventListener('mousemove',function(e){{
-    if(!drag)return;
+  wrap.addEventListener('pointermove',function(e){{
+    if(e.pointerId!==pId)return;
     var dx=e.clientX-sx,dy=e.clientY-sy;
     if(!moved&&(Math.abs(dx)>5||Math.abs(dy)>5))moved=true;
     if(moved){{tx=stx+dx;ty=sty+dy;applyT();}}
+    e.preventDefault();
   }});
-  window.addEventListener('mouseup',function(e){{
-    if(!drag)return;
+  wrap.addEventListener('pointerup',function(e){{
+    if(e.pointerId!==pId)return;
     var wasDrag=moved;
-    drag=false;moved=false;wrap.classList.remove('dragging');
+    pId=null;moved=false;wrap.classList.remove('dragging');
     if(!wasDrag){{var nd=e.target.closest('.nd');if(nd)openPanel(nd);else panel.style.display='none';}}
   }});
-  // Pan - touch (single finger pan + pinch zoom + tap detection)
-  var t0=null,t1=null,isc=1,itx=0,ity=0,tMoved=false;
+  wrap.addEventListener('pointercancel',function(e){{
+    if(e.pointerId===pId){{pId=null;moved=false;wrap.classList.remove('dragging');}}
+  }});
+  // ── Pinch to zoom — Touch Events (2 fingers) ────────────────────────────────
+  var t0=null,t1=null,isc=1,itx=0,ity=0;
   wrap.addEventListener('touchstart',function(e){{
-    e.preventDefault();
-    if(e.touches.length===1){{
-      var t=e.touches[0]; sx=t.clientX; sy=t.clientY; stx=tx; sty=ty; drag=true; tMoved=false;
-    }}
     if(e.touches.length===2){{
-      drag=false;
-      t0=e.touches[0]; t1=e.touches[1];
-      isc=sc; itx=tx; ity=ty;
+      e.preventDefault();
+      pId=null;moved=false;wrap.classList.remove('dragging'); // cancel pointer drag
+      t0=e.touches[0];t1=e.touches[1];isc=sc;itx=tx;ity=ty;
     }}
   }},{{passive:false}});
   wrap.addEventListener('touchmove',function(e){{
-    e.preventDefault();
-    if(drag&&e.touches.length===1){{
-      var t=e.touches[0];
-      var dx=t.clientX-sx,dy=t.clientY-sy;
-      if(!tMoved&&(Math.abs(dx)>8||Math.abs(dy)>8))tMoved=true;
-      if(tMoved){{tx=stx+dx;ty=sty+dy;applyT();}}
-    }}
     if(e.touches.length===2&&t0&&t1){{
+      e.preventDefault();
       var a=e.touches[0],b=e.touches[1];
       var d0=Math.hypot(t1.clientX-t0.clientX,t1.clientY-t0.clientY);
       var d1=Math.hypot(b.clientX-a.clientX,b.clientY-a.clientY);
       var nsc=Math.max(0.1,Math.min(isc*(d1/d0),8));
-      var mx=(a.clientX+b.clientX)/2, my=(a.clientY+b.clientY)/2;
-      var r=wrap.getBoundingClientRect();
-      mx-=r.left; my-=r.top;
-      tx=mx-(mx-itx)*(nsc/isc); ty=my-(my-ity)*(nsc/isc); sc=nsc;
-      applyT();
+      var mx=(a.clientX+b.clientX)/2,my=(a.clientY+b.clientY)/2;
+      var r=wrap.getBoundingClientRect();mx-=r.left;my-=r.top;
+      tx=mx-(mx-itx)*(nsc/isc);ty=my-(my-ity)*(nsc/isc);sc=nsc;applyT();
     }}
   }},{{passive:false}});
-  wrap.addEventListener('touchend',function(e){{
-    if(drag&&!tMoved&&e.changedTouches.length){{
-      var pt=e.changedTouches[0];
-      var el=document.elementFromPoint(pt.clientX,pt.clientY);
-      var nd=el&&el.closest('.nd');
-      if(nd)openPanel(nd);else panel.style.display='none';
-    }}
-    drag=false;t0=null;t1=null;tMoved=false;
-  }});
+  wrap.addEventListener('touchend',function(){{t0=null;t1=null;}});
   // Node panel
   function xe(s){{return s==null||s==='-'?'—':String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}}
   function row(l,v){{return '<div class="row"><span class="lbl">'+l+'</span><span class="val">'+v+'</span></div>';}}
