@@ -1,5 +1,7 @@
 # Temperature & Load Probe for MeshCentral Bot
 # Returns JSON: temps[], cpu_load_pct, hostname
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
 
 $result = @{ hostname = $env:COMPUTERNAME; temps = @(); cpu_load_pct = 0 }
 

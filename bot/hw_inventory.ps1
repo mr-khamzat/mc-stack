@@ -1,5 +1,7 @@
 # Hardware Inventory Probe for MeshCentral Bot
 # Returns JSON: cpu, ram, disks, system, network
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
 
 $result = @{}
 
