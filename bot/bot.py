@@ -2109,7 +2109,7 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#0a1120;font-family
 .dot{{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:2px;vertical-align:middle}}
 .don{{background:#2ecc71}}.doff{{background:#e74c3c}}.dst{{background:#555}}
 .osbg{{background:#ffffff12;border-radius:3px;padding:0 5px;font-size:10px}}
-#wrap{{width:100%;height:calc(100vh - 44px);overflow:hidden;cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none}}
+#wrap{{width:100%;height:calc(100vh - 44px);overflow:hidden;cursor:grab;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}}
 #wrap.dragging{{cursor:grabbing}}
 #cvs{{transform-origin:0 0}}
 .nd{{cursor:pointer}}
@@ -2176,8 +2176,12 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#0a1120;font-family
   var wrap=document.getElementById('wrap'),
       cvs=document.getElementById('cvs'),
       panel=document.getElementById('panel');
-  var tx=0,ty=0,sc=1,moved=false,sx=0,sy=0,stx=0,sty=0;
-  // Initial fit — restore position from sessionStorage after auto-reload
+  var tx=0,ty=0,sc=1;
+  // ── Transform ────────────────────────────────────────────────────────────────
+  function applyT(){{
+    cvs.style.transform='translate('+tx+'px,'+ty+'px) scale('+sc+')';
+  }}
+  // ── Fit on load — restore from sessionStorage after auto-reload ───────────────
   function fit(){{
     var saved=sessionStorage.getItem('nm_sc');
     if(saved!==null){{
@@ -2190,14 +2194,13 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#0a1120;font-family
     var cw=parseInt(cvs.getAttribute('data-w')),
         ch=parseInt(cvs.getAttribute('data-h')),
         ww=wrap.clientWidth, wh=wrap.clientHeight;
-    sc=Math.min(ww/cw, wh/ch, 1)*0.95;
+    var fitSc=Math.min(ww/cw, wh/ch)*0.95;
+    // On mobile start zoomed to ~2 locations wide so content is readable
+    sc = ww<640 ? Math.max(fitSc, ww/(cw*0.35)) : fitSc;
     tx=(ww-cw*sc)/2; ty=(wh-ch*sc)/2;
     applyT();
   }}
-  function applyT(){{
-    cvs.style.transform='translate('+tx+'px,'+ty+'px) scale('+sc+')';
-  }}
-  // Zoom
+  // ── Wheel zoom ───────────────────────────────────────────────────────────────
   wrap.addEventListener('wheel',function(e){{
     e.preventDefault();
     var r=wrap.getBoundingClientRect();
@@ -2207,55 +2210,75 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#0a1120;font-family
     tx=mx-(mx-tx)*(nsc/sc); ty=my-(my-ty)*(nsc/sc); sc=nsc;
     applyT();
   }},{{passive:false}});
-  // ── Pan & Click — Pointer Events (unified mouse+touch, with capture) ──────────
-  var pId=null;
-  wrap.addEventListener('pointerdown',function(e){{
-    if(e.pointerType==='mouse'&&e.button!==0)return;
-    if(pId!==null)return;          // ignore extra pointers (handled by pinch below)
-    pId=e.pointerId;
-    moved=false; sx=e.clientX; sy=e.clientY; stx=tx; sty=ty;
-    try{{wrap.setPointerCapture(pId);}}catch(_){{}}
+  // ── Mouse pan ────────────────────────────────────────────────────────────────
+  var mDown=false,mDist=0,mLx=0,mLy=0,mSx=0,mSy=0;
+  wrap.addEventListener('mousedown',function(e){{
+    if(e.button!==0)return;
+    mDown=true; mDist=0;
+    mLx=mSx=e.clientX; mLy=mSy=e.clientY;
     wrap.classList.add('dragging');
     e.preventDefault();
   }});
-  wrap.addEventListener('pointermove',function(e){{
-    if(e.pointerId!==pId)return;
-    var dx=e.clientX-sx,dy=e.clientY-sy;
-    if(!moved&&(Math.abs(dx)>5||Math.abs(dy)>5))moved=true;
-    if(moved){{tx=stx+dx;ty=sty+dy;applyT();}}
-    e.preventDefault();
+  document.addEventListener('mousemove',function(e){{
+    if(!mDown)return;
+    tx+=e.clientX-mLx; ty+=e.clientY-mLy;
+    mDist+=Math.abs(e.clientX-mLx)+Math.abs(e.clientY-mLy);
+    mLx=e.clientX; mLy=e.clientY;
+    applyT();
   }});
-  wrap.addEventListener('pointerup',function(e){{
-    if(e.pointerId!==pId)return;
-    var wasDrag=moved;
-    pId=null;moved=false;wrap.classList.remove('dragging');
-    if(!wasDrag){{var nd=e.target.closest('.nd');if(nd)openPanel(nd);else panel.style.display='none';}}
+  document.addEventListener('mouseup',function(e){{
+    if(!mDown)return;
+    mDown=false; wrap.classList.remove('dragging');
+    if(mDist<6){{  // tap/click
+      var el=document.elementFromPoint(mSx,mSy);
+      var nd=el&&el.closest('.nd');
+      if(nd)openPanel(nd); else panel.style.display='none';
+    }}
   }});
-  wrap.addEventListener('pointercancel',function(e){{
-    if(e.pointerId===pId){{pId=null;moved=false;wrap.classList.remove('dragging');}}
-  }});
-  // ── Pinch to zoom — Touch Events (2 fingers) ────────────────────────────────
-  var t0=null,t1=null,isc=1,itx=0,ity=0;
+  // ── Touch pan & pinch zoom ───────────────────────────────────────────────────
+  var tDown=false,tDist=0,tLx=0,tLy=0,tSx=0,tSy=0;
+  var pinching=false,pinchDist0=0,pinchSc0=0,pinchMx=0,pinchMy=0;
   wrap.addEventListener('touchstart',function(e){{
-    if(e.touches.length===2){{
-      e.preventDefault();
-      pId=null;moved=false;wrap.classList.remove('dragging'); // cancel pointer drag
-      t0=e.touches[0];t1=e.touches[1];isc=sc;itx=tx;ity=ty;
+    e.preventDefault();
+    if(e.touches.length===1){{
+      tDown=true; pinching=false; tDist=0;
+      tLx=tSx=e.touches[0].clientX; tLy=tSy=e.touches[0].clientY;
+    }} else if(e.touches.length===2){{
+      tDown=false; pinching=true;
+      var a=e.touches[0],b=e.touches[1];
+      pinchDist0=Math.hypot(b.clientX-a.clientX,b.clientY-a.clientY);
+      pinchSc0=sc;
+      var r=wrap.getBoundingClientRect();
+      pinchMx=(a.clientX+b.clientX)/2-r.left;
+      pinchMy=(a.clientY+b.clientY)/2-r.top;
     }}
   }},{{passive:false}});
   wrap.addEventListener('touchmove',function(e){{
-    if(e.touches.length===2&&t0&&t1){{
-      e.preventDefault();
+    e.preventDefault();
+    if(tDown&&e.touches.length===1){{
+      var dx=e.touches[0].clientX-tLx, dy=e.touches[0].clientY-tLy;
+      tx+=dx; ty+=dy;
+      tDist+=Math.abs(dx)+Math.abs(dy);
+      tLx=e.touches[0].clientX; tLy=e.touches[0].clientY;
+      applyT();
+    }} else if(pinching&&e.touches.length===2){{
       var a=e.touches[0],b=e.touches[1];
-      var d0=Math.hypot(t1.clientX-t0.clientX,t1.clientY-t0.clientY);
-      var d1=Math.hypot(b.clientX-a.clientX,b.clientY-a.clientY);
-      var nsc=Math.max(0.1,Math.min(isc*(d1/d0),8));
-      var mx=(a.clientX+b.clientX)/2,my=(a.clientY+b.clientY)/2;
-      var r=wrap.getBoundingClientRect();mx-=r.left;my-=r.top;
-      tx=mx-(mx-itx)*(nsc/isc);ty=my-(my-ity)*(nsc/isc);sc=nsc;applyT();
+      var d=Math.hypot(b.clientX-a.clientX,b.clientY-a.clientY);
+      var nsc=Math.max(0.1,Math.min(pinchSc0*(d/pinchDist0),8));
+      tx=pinchMx-(pinchMx-tx)*(nsc/sc);
+      ty=pinchMy-(pinchMy-ty)*(nsc/sc);
+      sc=nsc; applyT();
     }}
   }},{{passive:false}});
-  wrap.addEventListener('touchend',function(){{t0=null;t1=null;}});
+  wrap.addEventListener('touchend',function(e){{
+    if(tDown&&tDist<8&&e.changedTouches.length){{  // tap
+      var t=e.changedTouches[0];
+      var el=document.elementFromPoint(t.clientX,t.clientY);
+      var nd=el&&el.closest('.nd');
+      if(nd)openPanel(nd); else panel.style.display='none';
+    }}
+    tDown=false; pinching=false;
+  }});
   // Node panel
   function xe(s){{return s==null||s==='-'?'—':String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}}
   function row(l,v){{return '<div class="row"><span class="lbl">'+l+'</span><span class="val">'+v+'</span></div>';}}
