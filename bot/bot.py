@@ -2109,9 +2109,8 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#0a1120;font-family
 .dot{{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:2px;vertical-align:middle}}
 .don{{background:#2ecc71}}.doff{{background:#e74c3c}}.dst{{background:#555}}
 .osbg{{background:#ffffff12;border-radius:3px;padding:0 5px;font-size:10px}}
-#wrap{{width:100%;height:calc(100vh - 44px);overflow:hidden;cursor:grab;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}}
+#wrap{{width:100%;height:calc(100vh - 44px);overflow:hidden;cursor:grab;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:none}}
 #wrap.dragging{{cursor:grabbing}}
-#cvs{{transform-origin:0 0}}
 .nd{{cursor:pointer}}
 .nd rect{{transition:filter .15s}}
 .nd:hover rect{{filter:brightness(1.35)}}
@@ -2158,7 +2157,9 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#0a1120;font-family
 </div>
 <div id="wrap">
   <svg id="cvs" xmlns="http://www.w3.org/2000/svg"
-       width="{canvas_w}" height="{canvas_h}"
+       width="100%" height="100%"
+       viewBox="0 0 {canvas_w} {canvas_h}"
+       preserveAspectRatio="none"
        data-w="{canvas_w}" data-h="{canvas_h}">
     <rect width="{canvas_w}" height="{canvas_h}" fill="#0a1120"/>
 {svg_body}
@@ -2176,78 +2177,81 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#0a1120;font-family
   var wrap=document.getElementById('wrap'),
       cvs=document.getElementById('cvs'),
       panel=document.getElementById('panel');
-  var tx=0,ty=0,sc=1;
-  // ── Transform ────────────────────────────────────────────────────────────────
-  function applyT(){{
-    cvs.style.transform='translate('+tx+'px,'+ty+'px) scale('+sc+')';
+  var cw=parseInt(cvs.getAttribute('data-w')),
+      ch=parseInt(cvs.getAttribute('data-h'));
+  // viewBox state: vx/vy = top-left in SVG coords; sc = pixels per SVG unit
+  var vx=0,vy=0,sc=1;
+  function vw(){{return wrap.clientWidth/sc;}}
+  function vh(){{return wrap.clientHeight/sc;}}
+  function applyVB(){{
+    cvs.setAttribute('viewBox',vx+' '+vy+' '+vw()+' '+vh());
   }}
   // ── Fit on load — restore from sessionStorage after auto-reload ───────────────
   function fit(){{
     var saved=sessionStorage.getItem('nm_sc');
     if(saved!==null){{
       sc=parseFloat(saved);
-      tx=parseFloat(sessionStorage.getItem('nm_tx')||0);
-      ty=parseFloat(sessionStorage.getItem('nm_ty')||0);
-      sessionStorage.removeItem('nm_sc');sessionStorage.removeItem('nm_tx');sessionStorage.removeItem('nm_ty');
-      applyT();return;
+      vx=parseFloat(sessionStorage.getItem('nm_vx')||0);
+      vy=parseFloat(sessionStorage.getItem('nm_vy')||0);
+      sessionStorage.removeItem('nm_sc');sessionStorage.removeItem('nm_vx');sessionStorage.removeItem('nm_vy');
+      applyVB();return;
     }}
-    var cw=parseInt(cvs.getAttribute('data-w')),
-        ch=parseInt(cvs.getAttribute('data-h')),
-        ww=wrap.clientWidth, wh=wrap.clientHeight;
-    var fitSc=Math.min(ww/cw, wh/ch)*0.95;
-    // On mobile start zoomed to ~2 locations wide so content is readable
-    sc = ww<640 ? Math.max(fitSc, ww/(cw*0.35)) : fitSc;
-    tx=(ww-cw*sc)/2; ty=(wh-ch*sc)/2;
-    applyT();
+    var fw=wrap.clientWidth,fh=wrap.clientHeight;
+    var fitSc=Math.min(fw/cw,fh/ch)*0.95;
+    sc=fw<640?Math.max(fitSc,fw/(cw*0.35)):fitSc;
+    vx=(cw-fw/sc)/2; vy=(ch-fh/sc)/2;
+    applyVB();
   }}
   // ── Wheel zoom ───────────────────────────────────────────────────────────────
   wrap.addEventListener('wheel',function(e){{
     e.preventDefault();
     var r=wrap.getBoundingClientRect();
-    var mx=e.clientX-r.left, my=e.clientY-r.top;
-    var d=e.deltaY<0?1.15:0.87;
-    var nsc=Math.max(0.1,Math.min(sc*d,8));
-    tx=mx-(mx-tx)*(nsc/sc); ty=my-(my-ty)*(nsc/sc); sc=nsc;
-    applyT();
+    var mx=e.clientX-r.left,my=e.clientY-r.top;
+    var factor=e.deltaY<0?1.15:0.87;
+    var nsc=Math.max(0.1,Math.min(sc*factor,10));
+    var svgX=vx+mx/sc,svgY=vy+my/sc;
+    sc=nsc;vx=svgX-mx/sc;vy=svgY-my/sc;
+    applyVB();
   }},{{passive:false}});
   // ── Mouse pan ────────────────────────────────────────────────────────────────
   var mDown=false,mDist=0,mLx=0,mLy=0,mSx=0,mSy=0;
   wrap.addEventListener('mousedown',function(e){{
     if(e.button!==0)return;
-    mDown=true; mDist=0;
-    mLx=mSx=e.clientX; mLy=mSy=e.clientY;
+    mDown=true;mDist=0;
+    mLx=mSx=e.clientX;mLy=mSy=e.clientY;
     wrap.classList.add('dragging');
     e.preventDefault();
   }});
   document.addEventListener('mousemove',function(e){{
     if(!mDown)return;
-    tx+=e.clientX-mLx; ty+=e.clientY-mLy;
-    mDist+=Math.abs(e.clientX-mLx)+Math.abs(e.clientY-mLy);
-    mLx=e.clientX; mLy=e.clientY;
-    applyT();
+    var dx=e.clientX-mLx,dy=e.clientY-mLy;
+    vx-=dx/sc;vy-=dy/sc;
+    mDist+=Math.abs(dx)+Math.abs(dy);
+    mLx=e.clientX;mLy=e.clientY;
+    applyVB();
   }});
   document.addEventListener('mouseup',function(e){{
     if(!mDown)return;
-    mDown=false; wrap.classList.remove('dragging');
-    if(mDist<6){{  // tap/click
+    mDown=false;wrap.classList.remove('dragging');
+    if(mDist<6){{
       var el=document.elementFromPoint(mSx,mSy);
       var nd=el&&el.closest('.nd');
-      if(nd)openPanel(nd); else panel.style.display='none';
+      if(nd)openPanel(nd);else panel.style.display='none';
     }}
   }});
   // ── Touch pan & pinch zoom ───────────────────────────────────────────────────
   var tDown=false,tDist=0,tLx=0,tLy=0,tSx=0,tSy=0;
-  var pinching=false,pinchDist0=0,pinchSc0=0,pinchMx=0,pinchMy=0;
+  var pinching=false,pinchD0=0,pinchSc0=0,pinchVx0=0,pinchVy0=0,pinchMx=0,pinchMy=0;
   wrap.addEventListener('touchstart',function(e){{
     e.preventDefault();
     if(e.touches.length===1){{
-      tDown=true; pinching=false; tDist=0;
-      tLx=tSx=e.touches[0].clientX; tLy=tSy=e.touches[0].clientY;
-    }} else if(e.touches.length===2){{
-      tDown=false; pinching=true;
+      tDown=true;pinching=false;tDist=0;
+      tLx=tSx=e.touches[0].clientX;tLy=tSy=e.touches[0].clientY;
+    }}else if(e.touches.length===2){{
+      tDown=false;pinching=true;
       var a=e.touches[0],b=e.touches[1];
-      pinchDist0=Math.hypot(b.clientX-a.clientX,b.clientY-a.clientY);
-      pinchSc0=sc;
+      pinchD0=Math.hypot(b.clientX-a.clientX,b.clientY-a.clientY);
+      pinchSc0=sc;pinchVx0=vx;pinchVy0=vy;
       var r=wrap.getBoundingClientRect();
       pinchMx=(a.clientX+b.clientX)/2-r.left;
       pinchMy=(a.clientY+b.clientY)/2-r.top;
@@ -2256,28 +2260,28 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#0a1120;font-family
   wrap.addEventListener('touchmove',function(e){{
     e.preventDefault();
     if(tDown&&e.touches.length===1){{
-      var dx=e.touches[0].clientX-tLx, dy=e.touches[0].clientY-tLy;
-      tx+=dx; ty+=dy;
+      var dx=e.touches[0].clientX-tLx,dy=e.touches[0].clientY-tLy;
+      vx-=dx/sc;vy-=dy/sc;
       tDist+=Math.abs(dx)+Math.abs(dy);
-      tLx=e.touches[0].clientX; tLy=e.touches[0].clientY;
-      applyT();
-    }} else if(pinching&&e.touches.length===2){{
+      tLx=e.touches[0].clientX;tLy=e.touches[0].clientY;
+      applyVB();
+    }}else if(pinching&&e.touches.length===2){{
       var a=e.touches[0],b=e.touches[1];
       var d=Math.hypot(b.clientX-a.clientX,b.clientY-a.clientY);
-      var nsc=Math.max(0.1,Math.min(pinchSc0*(d/pinchDist0),8));
-      tx=pinchMx-(pinchMx-tx)*(nsc/sc);
-      ty=pinchMy-(pinchMy-ty)*(nsc/sc);
-      sc=nsc; applyT();
+      var nsc=Math.max(0.1,Math.min(pinchSc0*(d/pinchD0),10));
+      var svgX=pinchVx0+pinchMx/pinchSc0,svgY=pinchVy0+pinchMy/pinchSc0;
+      sc=nsc;vx=svgX-pinchMx/sc;vy=svgY-pinchMy/sc;
+      applyVB();
     }}
   }},{{passive:false}});
   wrap.addEventListener('touchend',function(e){{
-    if(tDown&&tDist<8&&e.changedTouches.length){{  // tap
+    if(tDown&&tDist<8&&e.changedTouches.length){{
       var t=e.changedTouches[0];
       var el=document.elementFromPoint(t.clientX,t.clientY);
       var nd=el&&el.closest('.nd');
-      if(nd)openPanel(nd); else panel.style.display='none';
+      if(nd)openPanel(nd);else panel.style.display='none';
     }}
-    tDown=false; pinching=false;
+    tDown=false;pinching=false;
   }});
   // Node panel
   function xe(s){{return s==null||s==='-'?'—':String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}}
@@ -2348,31 +2352,29 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#0a1120;font-family
       else{{n.classList.remove('nd-match');n.classList.add('nd-dim');}}
     }});
     srchCount.textContent=matches>0?matches+' найд.':'не найдено';
-    // auto-center on first match
     var first=cvs.querySelector('.nd-match');
     if(first){{
       var r=first.getBoundingClientRect(),wr=wrap.getBoundingClientRect();
-      tx+=(wr.left+wr.width/2)-(r.left+r.width/2);
-      ty+=(wr.top+wr.height/2)-(r.top+r.height/2);
-      applyT();
+      vx-=(wr.left+wr.width/2-(r.left+r.width/2))/sc;
+      vy-=(wr.top+wr.height/2-(r.top+r.height/2))/sc;
+      applyVB();
     }}
   }}
   srch.addEventListener('input',doSearch);
   srch.addEventListener('keydown',function(e){{
     if(e.key==='Escape'){{srch.value='';doSearch();srch.blur();}}
     if(e.key==='Enter'){{
-      // jump to next match
       var all=Array.from(cvs.querySelectorAll('.nd-match'));
       if(all.length>0){{
         var cur=cvs.querySelector('.nd-match.nd-current');
-        var idx=cur?all.indexOf(cur):‑1;
+        var idx=cur?all.indexOf(cur):-1;
         if(cur)cur.classList.remove('nd-current');
         var next=all[(idx+1)%all.length];
         next.classList.add('nd-current');
         var r=next.getBoundingClientRect(),wr=wrap.getBoundingClientRect();
-        tx+=(wr.left+wr.width/2)-(r.left+r.width/2);
-        ty+=(wr.top+wr.height/2)-(r.top+r.height/2);
-        applyT();
+        vx-=(wr.left+wr.width/2-(r.left+r.width/2))/sc;
+        vy-=(wr.top+wr.height/2-(r.top+r.height/2))/sc;
+        applyVB();
       }}
     }}
   }});
@@ -2385,8 +2387,8 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#0a1120;font-family
     badge.textContent='🔄 '+m+'м'+s+'с';
     secs--;
     if(secs<0){{
-      sessionStorage.setItem('nm_tx',tx);
-      sessionStorage.setItem('nm_ty',ty);
+      sessionStorage.setItem('nm_vx',vx);
+      sessionStorage.setItem('nm_vy',vy);
       sessionStorage.setItem('nm_sc',sc);
       location.reload(true);
     }}
