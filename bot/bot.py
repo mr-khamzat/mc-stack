@@ -87,7 +87,7 @@ PRINTER_INK_PS1        = DATA_DIR / "printer_ink.ps1"
 INK_ALERTS_FILE        = DATA_DIR / "ink_alerts.json"
 INK_WARN_PCT           = 20   # % threshold for low ink alert
 NETMAP_INTERVAL        = 60   # seconds
-WIFI_POLL_INTERVAL     = 300  # seconds (5 min)
+WIFI_POLL_INTERVAL     = 8 * 3600  # seconds (8 hours)
 # ── New features ──
 HW_INVENTORY_FILE  = DATA_DIR / "hw_inventory.json"
 HW_INVENTORY_PS1   = DATA_DIR / "hw_inventory.ps1"
