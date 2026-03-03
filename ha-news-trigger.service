@@ -1,0 +1,15 @@
+[Unit]
+Description=HA News Refresh Trigger Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/meshcentral-bot/ha_news_trigger_daemon.py
+Restart=always
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
