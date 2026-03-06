@@ -34,6 +34,7 @@ HA_HEADERS = {"Authorization": f"Bearer {HA_TOKEN}", "Content-Type": "applicatio
 
 # Грозный — координаты для Open-Meteo
 LAT, LON = 43.31, 45.69
+TIMEZONE = "Europe/Moscow"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ async def ha_get(path: str) -> dict | list | None:
         async with aiohttp.ClientSession() as s:
             async with s.get(
                 f"{HA_URL}/api/{path}", headers=HA_HEADERS,
-                ssl=False, timeout=aiohttp.ClientTimeout(total=10)
+                timeout=aiohttp.ClientTimeout(total=10)
             ) as r:
                 if r.status == 200:
                     return await r.json()
@@ -64,7 +65,7 @@ async def ha_post(path: str, data: dict = None) -> dict | None:
         async with aiohttp.ClientSession() as s:
             async with s.post(
                 f"{HA_URL}/api/{path}", headers=HA_HEADERS,
-                json=data or {}, ssl=False, timeout=aiohttp.ClientTimeout(total=10)
+                json=data or {}, timeout=aiohttp.ClientTimeout(total=10)
             ) as r:
                 return await r.json()
     except Exception as e:
@@ -107,7 +108,7 @@ async def get_weather() -> dict | None:
         f"&current=temperature_2m,apparent_temperature,relative_humidity_2m,"
         f"wind_speed_10m,precipitation,weather_code"
         f"&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code"
-        f"&timezone=Europe/Moscow&forecast_days=3"
+        f"&timezone={TIMEZONE}&forecast_days=3"
     )
     try:
         async with aiohttp.ClientSession() as s:
@@ -284,7 +285,7 @@ async def build_climate_text() -> str:
         try:
             dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
             return dt.astimezone().strftime("%H:%M")
-        except:
+        except Exception:
             return "?"
 
     floor_icon = "🔥" if floor == "heat" else "❄️"
@@ -295,7 +296,7 @@ async def build_climate_text() -> str:
             temp_alert = " ⚠️ ХОЛОДНО!"
         elif t > 27:
             temp_alert = " ⚠️ ЖАРКО!"
-    except:
+    except Exception:
         pass
 
     return (
@@ -368,7 +369,7 @@ async def build_energy_text() -> str:
     try:
         if float(power) > 3000:
             power_alert = " ⚠️"
-    except:
+    except Exception:
         pass
     return (
         f"⚡ <b>Энергия</b>\n\n"
@@ -401,16 +402,8 @@ async def energy_refresh(cb: CallbackQuery):
     await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
 # ── 🌤 Погода (Open-Meteo) ────────────────────────────────────────────────────
-@dp.message(F.text == "🌤 Погода")
-async def weather_menu(msg: Message):
-    if not is_admin(msg.from_user.id): return
-    await msg.answer("🌤 Загружаю погоду...")
-
-    data = await get_weather()
-    if not data:
-        await msg.answer("❌ Погода временно недоступна")
-        return
-
+def build_weather_text(data: dict) -> str:
+    """Формирует текст погоды из ответа Open-Meteo."""
     c = data.get("current", {})
     daily = data.get("daily", {})
 
@@ -422,32 +415,25 @@ async def weather_menu(msg: Message):
     code   = c.get("weather_code", 0)
     cond   = WMO_CODES.get(code, f"Код {code}")
 
-    # Дата обновления
-    time_str = c.get("time", "")
     try:
-        dt = datetime.fromisoformat(time_str)
-        updated = dt.strftime("%H:%M")
-    except:
+        updated = datetime.fromisoformat(c.get("time", "")).strftime("%H:%M")
+    except Exception:
         updated = "?"
 
-    # Прогноз на 3 дня
-    forecast_lines = []
-    days = daily.get("time", [])
-    t_max = daily.get("temperature_2m_max", [])
-    t_min = daily.get("temperature_2m_min", [])
-    codes = daily.get("weather_code", [])
-    precip_sum = daily.get("precipitation_sum", [])
-
     day_names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    days   = daily.get("time", [])
+    t_max  = daily.get("temperature_2m_max", [])
+    t_min  = daily.get("temperature_2m_min", [])
+    codes  = daily.get("weather_code", [])
+    forecast_lines = []
     for i in range(min(3, len(days))):
         try:
             d = datetime.fromisoformat(days[i])
-            day_name = day_names[d.weekday()]
             wcode = WMO_CODES.get(codes[i], "?").split()[0]
             forecast_lines.append(
-                f"  {day_name} {d.strftime('%d.%m')}: {wcode} {t_min[i]:.0f}…{t_max[i]:.0f}°C"
+                f"  {day_names[d.weekday()]} {d.strftime('%d.%m')}: {wcode} {t_min[i]:.0f}…{t_max[i]:.0f}°C"
             )
-        except:
+        except Exception:
             pass
 
     text = (
@@ -461,11 +447,21 @@ async def weather_menu(msg: Message):
     )
     if forecast_lines:
         text += "\n📅 <b>Прогноз:</b>\n" + "\n".join(forecast_lines)
+    return text
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🔄 Обновить", callback_data="weather_refresh")
-    ]])
-    await msg.answer(text, parse_mode="HTML", reply_markup=kb)
+_WEATHER_KB = InlineKeyboardMarkup(inline_keyboard=[[
+    InlineKeyboardButton(text="🔄 Обновить", callback_data="weather_refresh")
+]])
+
+@dp.message(F.text == "🌤 Погода")
+async def weather_menu(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    await msg.answer("🌤 Загружаю погоду...")
+    data = await get_weather()
+    if not data:
+        await msg.answer("❌ Погода временно недоступна")
+        return
+    await msg.answer(build_weather_text(data), parse_mode="HTML", reply_markup=_WEATHER_KB)
 
 @dp.callback_query(F.data == "weather_refresh")
 async def weather_refresh(cb: CallbackQuery):
@@ -475,45 +471,7 @@ async def weather_refresh(cb: CallbackQuery):
     if not data:
         await cb.answer("❌ Недоступно")
         return
-    c = data.get("current", {})
-    daily = data.get("daily", {})
-    temp   = c.get("temperature_2m", "?")
-    feels  = c.get("apparent_temperature", "?")
-    hum    = c.get("relative_humidity_2m", "?")
-    wind   = c.get("wind_speed_10m", "?")
-    precip = c.get("precipitation", 0)
-    code   = c.get("weather_code", 0)
-    cond   = WMO_CODES.get(code, f"Код {code}")
-    time_str = c.get("time", "")
-    try:
-        updated = datetime.fromisoformat(time_str).strftime("%H:%M")
-    except:
-        updated = "?"
-    days = daily.get("time", [])
-    t_max = daily.get("temperature_2m_max", [])
-    t_min = daily.get("temperature_2m_min", [])
-    codes = daily.get("weather_code", [])
-    day_names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-    forecast_lines = []
-    for i in range(min(3, len(days))):
-        try:
-            d = datetime.fromisoformat(days[i])
-            day_name = day_names[d.weekday()]
-            wcode = WMO_CODES.get(codes[i], "?").split()[0]
-            forecast_lines.append(f"  {day_name} {d.strftime('%d.%m')}: {wcode} {t_min[i]:.0f}…{t_max[i]:.0f}°C")
-        except:
-            pass
-    text = (
-        f"🌤 <b>Погода — Грозный</b>\n<i>Обновлено: {updated}</i>\n\n"
-        f"{cond}\n🌡️ <b>{temp}°C</b> (ощущается {feels}°C)\n"
-        f"💧 Влажность: {hum}%\n💨 Ветер: {wind} км/ч\n🌧 Осадки: {precip} мм\n"
-    )
-    if forecast_lines:
-        text += "\n📅 <b>Прогноз:</b>\n" + "\n".join(forecast_lines)
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🔄 Обновить", callback_data="weather_refresh")
-    ]])
-    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    await cb.message.edit_text(build_weather_text(data), parse_mode="HTML", reply_markup=_WEATHER_KB)
 
 # ── 🏠 Дом ────────────────────────────────────────────────────────────────────
 @dp.message(F.text == "🏠 Дом")
@@ -709,7 +667,7 @@ async def ask_claude(question: str, context: str) -> str:
     env.pop("CLAUDECODE", None)  # Убираем чтобы не было ошибки вложенности
     try:
         proc = await asyncio.create_subprocess_exec(
-            "claude", "-p", prompt, "--model", "claude-haiku-4-5",
+            "/root/.local/bin/claude", "-p", prompt, "--model", "claude-haiku-4-5",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env
@@ -807,8 +765,8 @@ async def _check_alerts():
                 parse_mode="HTML")
         elif power <= 3000 and _alert_state["power_high"]:
             _alert_state["power_high"] = False
-    except:
-        pass
+    except Exception as e:
+        log.error(f"Alert power check: {e}")
 
     # 🌡️ Температура детской
     try:
@@ -828,8 +786,8 @@ async def _check_alerts():
                 parse_mode="HTML")
         elif temp <= 27:
             _alert_state["temp_high"] = False
-    except:
-        pass
+    except Exception as e:
+        log.error(f"Alert temp check: {e}")
 
     # 🏠 Приход/уход Хамзата
     try:
@@ -841,8 +799,8 @@ async def _check_alerts():
             elif prev == "home":
                 await bot.send_message(ADMIN_ID, "🚗 Хамзат <b>ушёл</b>", parse_mode="HTML")
         _alert_state["person_khamzat"] = person
-    except:
-        pass
+    except Exception as e:
+        log.error(f"Alert person check: {e}")
 
     # 🌅 Утреннее сводка в 8:00
     now = datetime.now()
