@@ -215,54 +215,106 @@ _WEATHER_KB = InlineKeyboardMarkup(inline_keyboard=[[
     InlineKeyboardButton(text="🔄 Обновить", callback_data="weather_refresh")
 ]])
 
-# ── Намаз helpers ─────────────────────────────────────────────────────────────
-def _namaz_seconds(finishes_at: str) -> int:
+# ── Намаз — время молитв (Aladhan API) ───────────────────────────────────────
+MSK = timezone(timedelta(hours=3))
+
+PRAYERS_RU = {
+    "Fajr":    ("🌙", "Фаджр"),
+    "Dhuhr":   ("🌞", "Зухр"),
+    "Asr":     ("🌤️", "Аср"),
+    "Maghrib": ("🌅", "Магриб"),
+    "Isha":    ("🌃", "Иша"),
+}
+PRAYERS_ORDER = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
+
+_prayer_cache: dict = {"date": None, "timings": None}
+
+async def get_prayer_times() -> dict | None:
+    today = datetime.now(MSK).date().isoformat()
+    if _prayer_cache["date"] == today and _prayer_cache["timings"]:
+        return _prayer_cache["timings"]
+    url = (
+        f"https://api.aladhan.com/v1/timings"
+        f"?latitude={LAT}&longitude={LON}"
+        f"&method=3&timezonestring=Europe%2FMoscow"
+    )
     try:
-        dt = datetime.fromisoformat(finishes_at.replace("Z", "+00:00"))
-        return max(0, int((dt - datetime.now(timezone.utc)).total_seconds()))
-    except Exception:
-        return 0
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    timings = data.get("data", {}).get("timings", {})
+                    _prayer_cache["date"] = today
+                    _prayer_cache["timings"] = timings
+                    return timings
+    except Exception as e:
+        log.error(f"Aladhan API: {e}")
+    return None
 
 def _namaz_remaining(finishes_at: str) -> str:
-    secs = _namaz_seconds(finishes_at)
-    if secs <= 0:
-        return "⏰ истекло"
-    h = secs // 3600
-    m = (secs % 3600) // 60
-    s = secs % 60
-    if h > 0:
-        return f"{h}ч {m:02d}м"
-    if m > 0:
-        return f"{m}м {s:02d}с"
+    try:
+        dt = datetime.fromisoformat(finishes_at.replace("Z", "+00:00"))
+        secs = max(0, int((dt - datetime.now(timezone.utc)).total_seconds()))
+    except Exception:
+        return "?"
+    h = secs // 3600; m = (secs % 3600) // 60; s = secs % 60
+    if h > 0: return f"{h}ч {m:02d}м"
+    if m > 0: return f"{m}м {s:02d}с"
     return f"{s}с"
 
 async def build_namaz_text() -> str:
-    d = await ha_get(f"states/{NAMAZ_EID}")
-    if not d:
-        return "🕌 <b>Намаз</b>\n\n❌ Таймер недоступен"
-    state      = d.get("state", "?")
-    attrs      = d.get("attributes", {})
-    finishes   = attrs.get("finishes_at", "")
-    friendly   = attrs.get("friendly_name", "Намаз")
+    now = datetime.now(MSK)
+    day_names = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+    day_ru   = day_names[now.weekday()]
+    date_str = now.strftime("%d.%m")
+    time_str = now.strftime("%H:%M")
 
-    if state == "active":
-        rem = _namaz_remaining(finishes)
-        return (
-            f"🕌 <b>Намаз</b>\n\n"
-            f"⏳ До намаза: <b>{rem}</b>\n"
-            f"📿 {friendly}"
-        )
-    elif state == "idle":
-        return f"🕌 <b>Намаз</b>\n\n✅ Намаз совершён\n📿 {friendly}"
-    elif state == "paused":
-        rem = _namaz_remaining(finishes) if finishes else "?"
-        return (
-            f"🕌 <b>Намаз</b>\n\n"
-            f"⏸ Таймер приостановлен\n"
-            f"⏳ Осталось: {rem}\n"
-            f"📿 {friendly}"
-        )
-    return f"🕌 <b>Намаз</b>\n\nСтатус: {state}"
+    header = f"🕌 <b>Намаз</b> — {day_ru}, {date_str}\n🕐 Сейчас: {time_str}\n"
+    timings = await get_prayer_times()
+
+    if not timings:
+        # Fallback на HA таймер
+        d = await ha_get(f"states/{NAMAZ_EID}")
+        if not d:
+            return header + "\n❌ Расписание недоступно"
+        state    = d.get("state", "?")
+        finishes = d.get("attributes", {}).get("finishes_at", "")
+        if state == "active" and finishes:
+            return header + f"\n⏳ До намаза: <b>{_namaz_remaining(finishes)}</b>"
+        if state == "idle":
+            return header + "\n✅ Намаз совершён"
+        return header + f"\nСтатус: {state}"
+
+    lines = []
+    next_found = False
+    for p_name in PRAYERS_ORDER:
+        p_time_str = timings.get(p_name, "")
+        if not p_time_str:
+            continue
+        try:
+            p_dt = datetime.strptime(p_time_str, "%H:%M").replace(
+                year=now.year, month=now.month, day=now.day, tzinfo=MSK
+            )
+        except Exception:
+            continue
+        icon, ru_name = PRAYERS_RU[p_name]
+        diff_min = int((p_dt - now).total_seconds() / 60)
+
+        if diff_min < 0:
+            lines.append(f"  ✅ {icon} {ru_name:<8}  {p_time_str}")
+        elif not next_found:
+            next_found = True
+            if diff_min < 60:
+                remain = f"через {diff_min} мин"
+            else:
+                h = diff_min // 60; m = diff_min % 60
+                remain = f"через {h}ч {m:02d}м" if m else f"через {h}ч"
+            lines.append(f"  ⏰ {icon} <b>{ru_name}</b>   {p_time_str}  ← {remain}")
+        else:
+            lines.append(f"  🕌 {icon} {ru_name:<8}  {p_time_str}")
+
+    body = "\n".join(lines) if lines else "❌ Данные недоступны"
+    return header + "\n" + body
 
 _NAMAZ_KB = InlineKeyboardMarkup(inline_keyboard=[[
     InlineKeyboardButton(text="🔄 Обновить", callback_data="namaz_refresh")
@@ -291,17 +343,19 @@ async def build_tv_text() -> str:
 def tv_kb(state: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     if state in ("off", "standby", "unavailable"):
-        builder.button(text="▶️ Включить", callback_data="tv:turn_on")
+        builder.button(text="⚡ Включить ТВ", callback_data="tv:turn_on")
+        builder.button(text="🔄 Обновить",    callback_data="tv:refresh")
+        builder.adjust(1)
     else:
-        builder.button(text="📴 Выключить",  callback_data="tv:turn_off")
-        builder.button(text="⏯ Play/Pause",  callback_data="tv:media_play_pause")
-        builder.button(text="⏹ Стоп",        callback_data="tv:media_stop")
-        builder.button(text="🔊 Громче",      callback_data="tv:volume_up")
-        builder.button(text="🔉 Тише",        callback_data="tv:volume_down")
-        builder.button(text="🔇 Mute",        callback_data="tv:mute")
-        builder.button(text="🏠 Домой",       callback_data="tv:go_home")
-        builder.adjust(1, 2, 2, 2)
-    builder.button(text="🔄 Обновить", callback_data="tv:refresh")
+        builder.button(text="⏯ Play / Pause", callback_data="tv:media_play_pause")
+        builder.button(text="⏹ Стоп",         callback_data="tv:media_stop")
+        builder.button(text="🔊+",             callback_data="tv:volume_up")
+        builder.button(text="🔇 Mute",         callback_data="tv:mute")
+        builder.button(text="🔉−",             callback_data="tv:volume_down")
+        builder.button(text="🏠 Домой",        callback_data="tv:go_home")
+        builder.button(text="📴 Выключить",    callback_data="tv:turn_off")
+        builder.button(text="🔄 Обновить",     callback_data="tv:refresh")
+        builder.adjust(2, 3, 1, 1)
     return builder.as_markup()
 
 # ── Автоматизации (с кешем для индексации) ────────────────────────────────────
@@ -1234,13 +1288,12 @@ async def inline_handler(query: InlineQuery):
 
 # ── Фоновые алерты ────────────────────────────────────────────────────────────
 _alert_state = {
-    "power_high":         False,
-    "temp_low":           False,
-    "temp_high":          False,
-    "person_khamzat":     None,
-    "namaz_15m_notified": False,
-    "namaz_last_state":   None,
-    "last_briefing_day":  None,
+    "power_high":            False,
+    "temp_low":              False,
+    "temp_high":             False,
+    "person_khamzat":        None,
+    "namaz_notified_prayer": None,   # "2026-03-07_Asr"
+    "last_briefing_day":     None,
 }
 
 async def alert_loop():
@@ -1253,11 +1306,10 @@ async def alert_loop():
         await asyncio.sleep(60)
 
 async def _check_alerts():
-    power_d, temp_d, person_d, namaz_d = await asyncio.gather(
+    power_d, temp_d, person_d = await asyncio.gather(
         ha_get("states/sensor.moshchnost_vsego_doma"),
         ha_get("states/sensor.temp_detskaia_temperature"),
         ha_get("states/person.khamzat"),
-        ha_get(f"states/{NAMAZ_EID}"),
     )
 
     # ⚡ Высокая мощность
@@ -1300,32 +1352,35 @@ async def _check_alerts():
     except Exception as e:
         log.error(f"Alert person check: {e}")
 
-    # 🕌 Намаз — уведомление за 15 минут
+    # 🕌 Намаз — уведомление за 15 минут по расписанию Aladhan
     try:
-        if namaz_d:
-            namaz_state = namaz_d.get("state", "?")
-            attrs       = namaz_d.get("attributes", {})
-            finishes    = attrs.get("finishes_at", "")
-            friendly    = attrs.get("friendly_name", "Намаз")
-
-            # Сбрасываем флаг при новом запуске таймера
-            if namaz_state != _alert_state["namaz_last_state"]:
-                if namaz_state == "active":
-                    _alert_state["namaz_15m_notified"] = False
-                _alert_state["namaz_last_state"] = namaz_state
-
-            # Отправляем уведомление если осталось ≤ 15 мин
-            if (namaz_state == "active" and finishes
-                    and not _alert_state["namaz_15m_notified"]):
-                secs = _namaz_seconds(finishes)
-                if 0 < secs <= 900:  # 15 минут
-                    _alert_state["namaz_15m_notified"] = True
-                    mins = secs // 60
-                    await bot.send_message(
-                        ADMIN_ID,
-                        f"🕌 <b>До намаза {mins} мин!</b>\n📿 {friendly}",
-                        parse_mode="HTML"
+        now_msk = datetime.now(MSK)
+        timings = await get_prayer_times()
+        if timings:
+            for p_name in PRAYERS_ORDER:
+                p_time_str = timings.get(p_name, "")
+                if not p_time_str:
+                    continue
+                try:
+                    p_dt = datetime.strptime(p_time_str, "%H:%M").replace(
+                        year=now_msk.year, month=now_msk.month, day=now_msk.day,
+                        tzinfo=MSK
                     )
+                except Exception:
+                    continue
+                diff_min = int((p_dt - now_msk).total_seconds() / 60)
+                if 0 < diff_min <= 15:
+                    notif_key = f"{now_msk.date().isoformat()}_{p_name}"
+                    if _alert_state["namaz_notified_prayer"] != notif_key:
+                        _alert_state["namaz_notified_prayer"] = notif_key
+                        icon, ru_name = PRAYERS_RU[p_name]
+                        await bot.send_message(
+                            ADMIN_ID,
+                            f"🕌 <b>Через {diff_min} мин — {ru_name}!</b>\n"
+                            f"{icon} Время: {p_time_str}",
+                            parse_mode="HTML"
+                        )
+                    break  # Уведомляем только ближайший намаз
     except Exception as e:
         log.error(f"Alert namaz check: {e}")
 
@@ -1348,9 +1403,22 @@ async def _send_morning_briefing():
             cond = WMO_CODES.get(code, "").split()[0] if WMO_CODES.get(code) else ""
             temp = c.get("temperature_2m", "?")
             weather_line = f"\n🌤️ Погода: {cond} <b>{temp}°C</b>"
+
+        prayer_line = ""
+        timings = await get_prayer_times()
+        if timings:
+            parts = []
+            for p in PRAYERS_ORDER:
+                t = timings.get(p, "")
+                if t:
+                    icon, ru = PRAYERS_RU[p]
+                    parts.append(f"{icon}{t}")
+            if parts:
+                prayer_line = "\n🕌 " + "  ".join(parts)
+
         await bot.send_message(
             ADMIN_ID,
-            f"🌅 <b>Доброе утро!</b>{weather_line}\n\n{status_text}",
+            f"🌅 <b>Доброе утро!</b>{weather_line}{prayer_line}\n\n{status_text}",
             parse_mode="HTML"
         )
     except Exception as e:
