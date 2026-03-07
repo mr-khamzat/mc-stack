@@ -11,8 +11,10 @@ import logging
 import ssl as _ssl
 import subprocess
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import aiohttp
+from aiohttp import web as aiohttp_web
 try:
     import websockets
     HAS_WS = True
@@ -32,7 +34,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     Message, CallbackQuery, BufferedInputFile,
     InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardMarkup, KeyboardButton,
+    ReplyKeyboardMarkup, KeyboardButton, WebAppInfo,
     InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -45,6 +47,10 @@ ADMIN_ID   = int(os.environ["ADMIN_ID"])
 HA_URL     = os.environ["HA_URL"].rstrip("/")
 HA_TOKEN   = os.environ["HA_TOKEN"]
 HA_HEADERS = {"Authorization": f"Bearer {HA_TOKEN}", "Content-Type": "application/json"}
+
+WEBAPP_TOKEN = os.environ.get("WEBAPP_TOKEN", "")
+WEBAPP_URL   = "https://hub.office.mooo.com/ha-app/"
+WEBAPP_DIR   = Path("/opt/ha-bot/webapp")
 
 # Грозный — координаты для Open-Meteo
 LAT, LON  = 43.31, 45.69
@@ -441,6 +447,7 @@ def main_kb() -> ReplyKeyboardMarkup:
         [KeyboardButton(text="⚙️ Автоматизации"),  KeyboardButton(text="📹 Камеры")],
         [KeyboardButton(text="🕌 Намаз"),           KeyboardButton(text="📊 Статус")],
         [KeyboardButton(text="🧠 ИИ Ассистент")],
+        [KeyboardButton(text="🖥️ Панель управления", web_app=WebAppInfo(url=WEBAPP_URL))],
     ], resize_keyboard=True)
 
 # ── /start ────────────────────────────────────────────────────────────────────
@@ -1559,19 +1566,136 @@ async def _send_weekly_report():
     except Exception as e:
         log.error(f"Weekly report error: {e}")
 
+# ── Web App handlers ──────────────────────────────────────────────────────────
+def _check_token(request: aiohttp_web.Request) -> bool:
+    auth = request.headers.get("Authorization", "")
+    return auth == f"Bearer {WEBAPP_TOKEN}"
+
+async def _web_index(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    path = WEBAPP_DIR / "index.html"
+    if not path.exists():
+        return aiohttp_web.Response(status=404, text="Not found")
+    return aiohttp_web.Response(
+        body=path.read_bytes(),
+        content_type="text/html",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized")
+    try:
+        results = await asyncio.gather(
+            ha_get("states/sensor.moshchnost_vsego_doma"),
+            ha_get("states/sensor.temp_detskaia_temperature"),
+            ha_get("states/binary_sensor.keenetic_gateway_wan_status_2"),
+            ha_get("states/climate.teplyi_pol_lodzhiia"),
+            ha_get(f"states/{TV_EID}"),
+            ha_get("states/vacuum.pylik"),
+            *[ha_get(f"states/{eid}") for eid in FAMILY.values()],
+            *[ha_get(f"states/{eid}") for _, (_, eid) in LIGHTS.items()],
+        )
+        n_fixed = 6
+        n_family = len(FAMILY)
+        n_lights = len(LIGHTS)
+        power_d, temp_d, inet_d, floor_d, tv_d, vac_d = results[:n_fixed]
+        family_results = results[n_fixed:n_fixed + n_family]
+        lights_results = results[n_fixed + n_family:]
+
+        def st(d): return d.get("state", "?") if d else "?"
+
+        floor_attrs = floor_d.get("attributes", {}) if floor_d else {}
+        tv_attrs    = tv_d.get("attributes", {}) if tv_d else {}
+
+        family_data = {}
+        for (name, _), d in zip(FAMILY.items(), family_results):
+            # Strip emoji prefix for JSON key
+            clean_name = name.split(" ", 1)[1] if " " in name else name
+            family_data[clean_name] = st(d)
+
+        lights_data = {}
+        for (name, (domain, eid)), d in zip(LIGHTS.items(), lights_results):
+            lights_data[eid] = st(d)
+
+        payload = {
+            "power":        st(power_d),
+            "temp_detskaia": st(temp_d),
+            "internet":     "on" if st(inet_d) == "on" else "off",
+            "floor_heating": st(floor_d),
+            "floor_setpoint": str(floor_attrs.get("temperature", "?")),
+            "floor_temp":   str(floor_attrs.get("current_temperature", "?")),
+            "family":       family_data,
+            "lights":       lights_data,
+            "tv": {
+                "state":  st(tv_d),
+                "title":  tv_attrs.get("media_title", ""),
+                "volume": tv_attrs.get("volume_level"),
+            },
+            "vacuum": {
+                "state": st(vac_d),
+            },
+        }
+        return aiohttp_web.Response(
+            text=json.dumps(payload, ensure_ascii=False),
+            content_type="application/json",
+        )
+    except Exception as e:
+        log.error(f"web_status error: {e}")
+        return aiohttp_web.Response(status=500, text=str(e))
+
+async def _web_action(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized")
+    try:
+        body = await request.json()
+        service_str = body.get("service", "")   # e.g. "light.turn_on"
+        entity_id   = body.get("entity_id", "")
+        extra       = body.get("extra") or {}
+        if "." not in service_str or not entity_id:
+            return aiohttp_web.Response(status=400, text="Bad request")
+        domain, service = service_str.split(".", 1)
+        await ha_call(domain, service, entity_id, extra or None)
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json")
+    except Exception as e:
+        log.error(f"web_action error: {e}")
+        return aiohttp_web.Response(status=500, text=str(e))
+
+async def _start_web():
+    app = aiohttp_web.Application()
+    app.router.add_get("/ha-app/",           _web_index)
+    app.router.add_get("/ha-app",            _web_index)
+    app.router.add_get("/ha-app/api/status", _web_status)
+    app.router.add_post("/ha-app/api/action",_web_action)
+    runner = aiohttp_web.AppRunner(app)
+    await runner.setup()
+    site = aiohttp_web.TCPSite(runner, "127.0.0.1", 8766)
+    await site.start()
+    log.info("WebApp server started on 127.0.0.1:8766")
+
+# ── /app command ──────────────────────────────────────────────────────────────
+@dp.message(Command("app"))
+async def cmd_app(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(
+        text="🖥️ Открыть панель", web_app=WebAppInfo(url=WEBAPP_URL)
+    )]], resize_keyboard=True, one_time_keyboard=True)
+    await msg.answer("🖥️ Откройте панель управления:", reply_markup=kb)
+
 # ── Запуск ────────────────────────────────────────────────────────────────────
 async def main():
-    log.info("HA Bot v3 starting...")
+    log.info("HA Bot v3.3 starting...")
     asyncio.create_task(alert_loop())
+    asyncio.create_task(_start_web())
     await bot.send_message(
         ADMIN_ID,
-        "🏠 <b>Home Assistant Bot v3.2 запущен!</b>\n"
+        "🏠 <b>Home Assistant Bot v3.3 запущен!</b>\n"
         "✅ Намаз по Aladhan API, алерт за 15 мин\n"
         "✅ 📊 Графики энергии (24ч / 7 дней)\n"
         "✅ 📈 История температуры (24ч)\n"
         "✅ 🗓️ Еженедельный отчёт (воскресенье 20:00)\n"
         "✅ Телевизор, Семья, Покупки, Автоматизации\n"
-        "✅ ИИ Ассистент, Погода, Авто-алерты",
+        "✅ ИИ Ассистент, Погода, Авто-алерты\n"
+        "✅ 🖥️ Telegram Mini App панель управления",
         parse_mode="HTML"
     )
     log.info("Start polling")

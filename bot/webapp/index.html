@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Умный Дом</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg:       #1e1e2e;
+    --surface:  #2a2a3e;
+    --surface2: #313149;
+    --accent:   #89b4fa;
+    --accent2:  #cba6f7;
+    --green:    #a6e3a1;
+    --red:      #f38ba8;
+    --yellow:   #f9e2af;
+    --text:     #cdd6f4;
+    --muted:    #6c7086;
+    --radius:   12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 12px;
+    min-height: 100vh;
+    font-size: 14px;
+  }
+  h2 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--accent);
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .section {
+    background: var(--surface);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    margin-bottom: 12px;
+  }
+  /* Status grid */
+  .status-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .stat-card {
+    background: var(--surface2);
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .stat-label { font-size: 11px; color: var(--muted); }
+  .stat-value { font-size: 18px; font-weight: 700; }
+  .stat-value.ok   { color: var(--green); }
+  .stat-value.warn { color: var(--yellow); }
+  .stat-value.err  { color: var(--red); }
+  /* Light buttons */
+  .lights-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  .light-btn {
+    background: var(--surface2);
+    border: 2px solid transparent;
+    border-radius: 8px;
+    padding: 10px 8px;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .light-btn.on  { border-color: var(--yellow); color: var(--yellow); background: rgba(249,226,175,0.1); }
+  .light-btn.off { border-color: var(--muted); opacity: 0.7; }
+  .light-btn:active { transform: scale(0.95); }
+  /* Climate */
+  .climate-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--surface2);
+  }
+  .climate-row:last-child { border-bottom: none; }
+  .climate-label { color: var(--muted); font-size: 12px; }
+  .climate-val   { font-weight: 600; font-size: 16px; }
+  .ctrl-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .ctrl-btn {
+    flex: 1;
+    background: var(--surface2);
+    border: none;
+    border-radius: 8px;
+    padding: 8px;
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .ctrl-btn:active { background: var(--surface); filter: brightness(1.2); }
+  .ctrl-btn.danger { color: var(--red); }
+  .ctrl-btn.success { color: var(--green); }
+  /* TV */
+  .tv-state { font-size: 24px; margin-bottom: 4px; }
+  .tv-meta  { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  /* Family */
+  .family-list { display: flex; flex-direction: column; gap: 6px; }
+  .family-row  {
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--surface2); border-radius: 8px; padding: 8px 12px;
+  }
+  .person-name { font-weight: 500; }
+  .badge {
+    font-size: 11px; font-weight: 600; padding: 2px 8px;
+    border-radius: 20px;
+  }
+  .badge.home    { background: rgba(166,227,161,0.2); color: var(--green); }
+  .badge.away    { background: rgba(243,139,168,0.2); color: var(--red); }
+  /* Spinner */
+  .spin { display: inline-block; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* Refresh btn */
+  .refresh-row {
+    display: flex; justify-content: flex-end; margin-top: 10px;
+  }
+  .refresh-btn {
+    background: none; border: 1px solid var(--muted); border-radius: 20px;
+    color: var(--muted); font-size: 12px; padding: 4px 12px; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .refresh-btn:active { color: var(--accent); border-color: var(--accent); }
+  /* Toast */
+  #toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: #313149; color: var(--text); padding: 8px 18px;
+    border-radius: 20px; font-size: 13px;
+    opacity: 0; transition: opacity 0.3s;
+    pointer-events: none; z-index: 999;
+  }
+  #toast.show { opacity: 1; }
+  /* Loading */
+  #loading {
+    position: fixed; inset: 0; background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 28px; z-index: 100;
+    transition: opacity 0.3s;
+  }
+</style>
+</head>
+<body>
+
+<div id="loading"><span class="spin">⚙️</span></div>
+<div id="toast"></div>
+
+<!-- Status -->
+<div class="section" id="sec-status">
+  <h2>📊 Статус дома</h2>
+  <div class="status-grid" id="status-grid">
+    <div class="stat-card"><span class="stat-label">⚡ Мощность</span><span class="stat-value" id="s-power">—</span></div>
+    <div class="stat-card"><span class="stat-label">🌡️ Температура</span><span class="stat-value" id="s-temp">—</span></div>
+    <div class="stat-card"><span class="stat-label">🛁 Тёплый пол</span><span class="stat-value" id="s-floor">—</span></div>
+    <div class="stat-card"><span class="stat-label">🌐 Интернет</span><span class="stat-value" id="s-internet">—</span></div>
+  </div>
+</div>
+
+<!-- Family -->
+<div class="section" id="sec-family">
+  <h2>👪 Семья</h2>
+  <div class="family-list" id="family-list">
+    <div style="color:var(--muted);font-size:13px;">Загрузка...</div>
+  </div>
+</div>
+
+<!-- Lights -->
+<div class="section" id="sec-lights">
+  <h2>💡 Свет</h2>
+  <div class="lights-grid" id="lights-grid">
+    <div style="color:var(--muted);font-size:13px;">Загрузка...</div>
+  </div>
+  <div class="ctrl-row">
+    <button class="ctrl-btn success" onclick="allLights('on')">💡 Всё включить</button>
+    <button class="ctrl-btn danger"  onclick="allLights('off')">🌑 Всё выключить</button>
+  </div>
+</div>
+
+<!-- Climate -->
+<div class="section" id="sec-climate">
+  <h2>🌡️ Климат</h2>
+  <div id="climate-body">
+    <div class="climate-row">
+      <span class="stat-label">Температура</span>
+      <span class="climate-val" id="c-temp">—</span>
+    </div>
+    <div class="climate-row">
+      <span class="stat-label">🛁 Тёплый пол</span>
+      <span class="climate-val" id="c-floor">—</span>
+    </div>
+    <div class="climate-row">
+      <span class="stat-label">Уставка пола</span>
+      <span class="climate-val" id="c-setpoint">—</span>
+    </div>
+  </div>
+  <div class="ctrl-row">
+    <button class="ctrl-btn success" onclick="floorAction('turn_on')">🔥 Пол вкл</button>
+    <button class="ctrl-btn danger"  onclick="floorAction('turn_off')">❄️ Пол выкл</button>
+    <button class="ctrl-btn"         onclick="floorTemp(1)">+1°</button>
+    <button class="ctrl-btn"         onclick="floorTemp(-1)">-1°</button>
+  </div>
+</div>
+
+<!-- TV -->
+<div class="section" id="sec-tv">
+  <h2>📺 Телевизор</h2>
+  <div class="tv-state" id="tv-icon">📴</div>
+  <div class="tv-meta" id="tv-meta">—</div>
+  <div class="ctrl-row">
+    <button class="ctrl-btn success" onclick="tvAction('turn_on')">⚡ Вкл</button>
+    <button class="ctrl-btn danger"  onclick="tvAction('turn_off')">📴 Выкл</button>
+    <button class="ctrl-btn"         onclick="tvAction('volume_up')">🔊+</button>
+    <button class="ctrl-btn"         onclick="tvAction('volume_down')">🔉-</button>
+  </div>
+</div>
+
+<!-- Vacuum -->
+<div class="section" id="sec-vacuum">
+  <h2>🤖 Пылесос</h2>
+  <div class="climate-row">
+    <span class="stat-label">Статус</span>
+    <span class="climate-val" id="vac-state">—</span>
+  </div>
+  <div class="ctrl-row">
+    <button class="ctrl-btn success" onclick="vacAction('start')">▶️ Старт</button>
+    <button class="ctrl-btn"         onclick="vacAction('pause')">⏸ Пауза</button>
+    <button class="ctrl-btn danger"  onclick="vacAction('return_to_base')">🏠 База</button>
+  </div>
+</div>
+
+<div class="refresh-row">
+  <button class="refresh-btn" onclick="loadStatus()">🔄 Обновить всё</button>
+</div>
+
+<script>
+const TOKEN = "eb4512bc794be98c665881d28c5c511c";
+const BASE  = "/ha-app/api";
+const tg    = window.Telegram?.WebApp;
+
+if (tg) {
+  tg.ready();
+  tg.expand();
+  // Apply Telegram theme if available
+  if (tg.colorScheme === 'light') {
+    document.documentElement.style.setProperty('--bg', '#f0f0f8');
+    document.documentElement.style.setProperty('--surface', '#ffffff');
+    document.documentElement.style.setProperty('--surface2', '#f5f5ff');
+    document.documentElement.style.setProperty('--text', '#1e1e2e');
+    document.documentElement.style.setProperty('--muted', '#888899');
+  }
+}
+
+const headers = {
+  "Authorization": `Bearer ${TOKEN}`,
+  "Content-Type": "application/json"
+};
+
+// Toast
+let toastTimer;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// API call
+async function api(path, method = 'GET', body = null) {
+  const opts = { method, headers };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(BASE + path, opts);
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+// ── Status ────────────────────────────────────────────────────────────────────
+let _lights_state = {};
+
+function setVal(id, val, cls = '') {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = val;
+  el.className = 'stat-value ' + cls;
+}
+
+async function loadStatus() {
+  try {
+    const d = await api('/status');
+    applyStatus(d);
+  } catch(e) {
+    showToast('❌ Ошибка загрузки: ' + e.message);
+  }
+}
+
+function applyStatus(d) {
+  // Power
+  const pw = parseInt(d.power);
+  setVal('s-power', isNaN(pw) ? '—' : pw + ' Вт', pw > 2000 ? 'warn' : 'ok');
+
+  // Temp
+  const tmp = parseFloat(d.temp_detskaia);
+  setVal('s-temp', isNaN(tmp) ? '—' : tmp.toFixed(1) + '°C', 'ok');
+
+  // Floor (climate state: 'heat'=on, 'off'=off)
+  const fl = d.floor_heating;
+  const flOn = fl === 'on' || fl === 'heat';
+  setVal('s-floor', flOn ? `🔥 ${d.floor_setpoint}°` : '❄️ Выкл', flOn ? 'ok' : '');
+
+  // Internet
+  const inet = d.internet;
+  setVal('s-internet', inet === 'on' ? '🟢 ОК' : '🔴 Нет', inet === 'on' ? 'ok' : 'err');
+
+  // Climate
+  document.getElementById('c-temp').textContent     = isNaN(parseFloat(d.temp_detskaia)) ? '—' : parseFloat(d.temp_detskaia).toFixed(1) + '°C';
+  document.getElementById('c-floor').textContent    = flOn ? '🔥 Работает' : '❄️ Выключен';
+  document.getElementById('c-setpoint').textContent = d.floor_setpoint ? d.floor_setpoint + '°C' : '—';
+
+  // Family
+  const famEl = document.getElementById('family-list');
+  if (d.family && Object.keys(d.family).length) {
+    famEl.innerHTML = Object.entries(d.family).map(([name, state]) => {
+      const home = state === 'home';
+      return `<div class="family-row">
+        <span class="person-name">${name}</span>
+        <span class="badge ${home ? 'home' : 'away'}">${home ? '🏠 Дома' : '🚗 Не дома'}</span>
+      </div>`;
+    }).join('');
+  }
+
+  // Lights
+  _lights_state = d.lights || {};
+  renderLights();
+
+  // TV
+  const tv = d.tv || {};
+  const tvIcons = {playing:'▶️', paused:'⏸', idle:'💤', standby:'📴', off:'📴', unavailable:'❓'};
+  document.getElementById('tv-icon').textContent = tvIcons[tv.state] || '📺';
+  const volStr = tv.volume != null ? ` | ${Math.round(tv.volume * 100)}%` : '';
+  document.getElementById('tv-meta').textContent = (tv.state || '—') + (tv.title ? ` — ${tv.title}` : '') + volStr;
+
+  // Vacuum
+  const vacStates = {docked:'🏠 Докован', cleaning:'🤖 Уборка', paused:'⏸ Пауза',
+                     idle:'💤 Ожидание', returning:'↩️ Возврат', error:'❌ Ошибка'};
+  document.getElementById('vac-state').textContent = vacStates[d.vacuum?.state] || (d.vacuum?.state || '—');
+}
+
+// ── Lights ────────────────────────────────────────────────────────────────────
+const LIGHTS_DEF = {
+  "Кровать":        {domain: "light",  eid: "light.svet_krovat"},
+  "Кухня":          {domain: "switch", eid: "switch.vykliuchatel_kukhnia"},
+  "ПК Левый":       {domain: "switch", eid: "switch.kabinet_svet_pk_left"},
+  "ПК Правый":      {domain: "switch", eid: "switch.kabinet_svet_pk_right"},
+  "Люстра Детская": {domain: "switch", eid: "switch.sonoff_100093f84f"},
+  "Шкаф":           {domain: "switch", eid: "switch.sonoff_1000a60930"},
+};
+
+function renderLights() {
+  const grid = document.getElementById('lights-grid');
+  grid.innerHTML = Object.entries(LIGHTS_DEF).map(([name, {domain, eid}]) => {
+    const on = _lights_state[eid] === 'on';
+    return `<button class="light-btn ${on ? 'on' : 'off'}"
+      onclick="toggleLight('${domain}','${eid}',this)">
+      ${on ? '💡' : '🌑'} ${name}
+    </button>`;
+  }).join('');
+}
+
+async function toggleLight(domain, eid, btn) {
+  const isOn = btn.classList.contains('on');
+  const service = isOn ? 'turn_off' : 'turn_on';
+  btn.style.opacity = '0.5';
+  try {
+    await api('/action', 'POST', {service: `${domain}.${service}`, entity_id: eid});
+    _lights_state[eid] = isOn ? 'off' : 'on';
+    renderLights();
+    showToast(isOn ? '🌑 Выключено' : '💡 Включено');
+  } catch(e) {
+    showToast('❌ Ошибка');
+    btn.style.opacity = '1';
+  }
+}
+
+async function allLights(action) {
+  try {
+    for (const [name, {domain, eid}] of Object.entries(LIGHTS_DEF)) {
+      await api('/action', 'POST', {service: `${domain}.turn_${action}`, entity_id: eid});
+      _lights_state[eid] = action;
+    }
+    renderLights();
+    showToast(action === 'on' ? '💡 Весь свет включён' : '🌑 Весь свет выключен');
+  } catch(e) {
+    showToast('❌ Ошибка');
+  }
+}
+
+// ── Climate ───────────────────────────────────────────────────────────────────
+async function floorAction(service) {
+  try {
+    await api('/action', 'POST', {service: `climate.${service}`, entity_id: 'climate.teplyi_pol_lodzhiia'});
+    showToast(service === 'turn_on' ? '🔥 Пол включён' : '❄️ Пол выключен');
+    setTimeout(loadStatus, 1000);
+  } catch(e) {
+    showToast('❌ Ошибка');
+  }
+}
+
+async function floorTemp(delta) {
+  try {
+    const cur = parseFloat(document.getElementById('c-setpoint').textContent) || 25;
+    await api('/action', 'POST', {
+      service: 'climate.set_temperature',
+      entity_id: 'climate.teplyi_pol_lodzhiia',
+      extra: {temperature: cur + delta}
+    });
+    showToast(`🌡️ Установлено ${cur + delta}°C`);
+    setTimeout(loadStatus, 1000);
+  } catch(e) {
+    showToast('❌ Ошибка');
+  }
+}
+
+// ── TV ────────────────────────────────────────────────────────────────────────
+async function tvAction(service) {
+  try {
+    await api('/action', 'POST', {service: `media_player.${service}`, entity_id: 'media_player.android_tv'});
+    showToast('✅ Команда отправлена');
+    setTimeout(loadStatus, 1500);
+  } catch(e) {
+    showToast('❌ Ошибка');
+  }
+}
+
+// ── Vacuum ────────────────────────────────────────────────────────────────────
+async function vacAction(service) {
+  try {
+    await api('/action', 'POST', {service: `vacuum.${service}`, entity_id: 'vacuum.pylik'});
+    showToast('✅ Команда отправлена');
+    setTimeout(loadStatus, 1500);
+  } catch(e) {
+    showToast('❌ Ошибка');
+  }
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+async function init() {
+  await loadStatus();
+  document.getElementById('loading').style.opacity = '0';
+  setTimeout(() => document.getElementById('loading').style.display = 'none', 300);
+  // Auto-refresh every 30s
+  setInterval(loadStatus, 30000);
+}
+
+init();
+</script>
+</body>
+</html>
