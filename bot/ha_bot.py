@@ -4,6 +4,7 @@ Home Assistant Telegram Bot — управление умным домом.
 Версия 3.0: Намаз, TV, Семья, Покупки, Автоматизации (toggle), Inline режим.
 """
 import asyncio
+import io
 import os
 import json
 import logging
@@ -18,13 +19,18 @@ try:
 except ImportError:
     HAS_WS = False
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
-    Message, CallbackQuery,
+    Message, CallbackQuery, BufferedInputFile,
     InlineKeyboardMarkup, InlineKeyboardButton,
     ReplyKeyboardMarkup, KeyboardButton,
     InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
@@ -109,6 +115,51 @@ async def ha_attr(entity_id: str, attr: str, default="?"):
 async def ha_call(domain: str, service: str, entity_id: str, extra: dict = None):
     data = {"entity_id": entity_id, **(extra or {})}
     return await ha_post(f"services/{domain}/{service}", data)
+
+async def ha_history(entity_id: str, hours: int = 24) -> list:
+    """Returns list of (datetime_utc, float) from HA history API."""
+    start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    data = await ha_get(
+        f"history/period/{start}?filter_entity_id={entity_id}&minimal_response=true"
+    )
+    if not data or not isinstance(data, list) or not data[0]:
+        return []
+    points = []
+    for entry in data[0]:
+        try:
+            ts  = datetime.fromisoformat(entry["last_updated"].replace("Z", "+00:00"))
+            val = float(entry["state"])
+            points.append((ts, val))
+        except (KeyError, ValueError, TypeError):
+            pass
+    return points
+
+def _make_chart(series: list, title: str, ylabel: str, color: str = "#4fc3f7") -> bytes | None:
+    """Generate dark-theme PNG chart from [(datetime, float)] series."""
+    if not series:
+        return None
+    times, values = zip(*series)
+    fig, ax = plt.subplots(figsize=(10, 4))
+    fig.patch.set_facecolor("#1e1e2e")
+    ax.set_facecolor("#1e1e2e")
+    ax.plot(times, values, color=color, linewidth=1.5)
+    ax.fill_between(times, values, alpha=0.2, color=color)
+    ax.set_title(title, color="white", fontsize=13, pad=8)
+    ax.set_ylabel(ylabel, color="#aaaaaa", fontsize=10)
+    ax.tick_params(colors="#888888")
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m %H:%M", tz=MSK))
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#444444")
+    ax.grid(axis="y", color="#333333", linestyle="--", alpha=0.7)
+    fig.autofmt_xdate(rotation=30)
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=100, bbox_inches="tight",
+                facecolor=fig.get_facecolor())
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
 
 # ── HA WebSocket (для todo items) ─────────────────────────────────────────────
 async def ha_ws_get_todo_items(entity_id: str) -> list:
@@ -573,11 +624,8 @@ async def build_climate_text() -> str:
         f"🌅 Восход: {fmt_time(rising)}  🌇 Закат: {fmt_time(setting)}"
     )
 
-@dp.message(F.text == "🌡️ Климат")
-async def climate_menu(msg: Message):
-    if not is_admin(msg.from_user.id): return
-    text = await build_climate_text()
-    kb = InlineKeyboardMarkup(inline_keyboard=[
+def _climate_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🔥 Пол вкл",  callback_data="floor_on"),
             InlineKeyboardButton(text="❄️ Пол выкл", callback_data="floor_off"),
@@ -586,9 +634,15 @@ async def climate_menu(msg: Message):
             InlineKeyboardButton(text="🌡️ Пол +1°",  callback_data="floor_temp:+1"),
             InlineKeyboardButton(text="🌡️ Пол -1°",  callback_data="floor_temp:-1"),
         ],
-        [InlineKeyboardButton(text="🔄 Обновить", callback_data="climate_refresh")],
+        [InlineKeyboardButton(text="📈 История темп 24ч", callback_data="temp_chart")],
+        [InlineKeyboardButton(text="🔄 Обновить",         callback_data="climate_refresh")],
     ])
-    await msg.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@dp.message(F.text == "🌡️ Климат")
+async def climate_menu(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    text = await build_climate_text()
+    await msg.answer(text, parse_mode="HTML", reply_markup=_climate_kb())
 
 @dp.callback_query(F.data.in_({"floor_on", "floor_off", "climate_refresh"}))
 async def climate_basic(cb: CallbackQuery):
@@ -603,7 +657,25 @@ async def climate_basic(cb: CallbackQuery):
         await cb.answer("Обновлено")
     await asyncio.sleep(0.5)
     text = await build_climate_text()
-    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=cb.message.reply_markup)
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=_climate_kb())
+
+@dp.callback_query(F.data == "temp_chart")
+async def temp_chart_cb(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    await cb.answer("📈 Строю график температуры...")
+    points = await ha_history("sensor.temp_detskaia_temperature", hours=24)
+    if not points:
+        await cb.message.answer("❌ Нет данных истории в HA")
+        return
+    img = _make_chart(points, "🌡️ Температура детской — 24 ч", "°C", "#ef5350")
+    if not img:
+        await cb.message.answer("❌ Не удалось построить график")
+        return
+    await cb.message.answer_photo(
+        BufferedInputFile(img, filename="temp.png"),
+        caption="🌡️ <b>Температура детской — 24 ч</b>",
+        parse_mode="HTML"
+    )
 
 @dp.callback_query(F.data.startswith("floor_temp:"))
 async def floor_temp_adjust(cb: CallbackQuery):
@@ -648,24 +720,47 @@ async def build_energy_text() -> str:
         f"📈 Прогноз: {prog} ₽"
     )
 
+def _energy_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📊 График 24ч",  callback_data="energy_chart:24"),
+            InlineKeyboardButton(text="📊 График 7д",   callback_data="energy_chart:168"),
+        ],
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data="energy_refresh")],
+    ])
+
 @dp.message(F.text == "⚡ Энергия")
 async def energy_menu(msg: Message):
     if not is_admin(msg.from_user.id): return
     text = await build_energy_text()
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🔄 Обновить", callback_data="energy_refresh")
-    ]])
-    await msg.answer(text, parse_mode="HTML", reply_markup=kb)
+    await msg.answer(text, parse_mode="HTML", reply_markup=_energy_kb())
 
 @dp.callback_query(F.data == "energy_refresh")
 async def energy_refresh(cb: CallbackQuery):
     if not is_admin(cb.from_user.id): return
     await cb.answer("Обновляю...")
     text = await build_energy_text()
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🔄 Обновить", callback_data="energy_refresh")
-    ]])
-    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=_energy_kb())
+
+@dp.callback_query(F.data.startswith("energy_chart:"))
+async def energy_chart_cb(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    hours = int(cb.data.split(":")[1])
+    label = "24 ч" if hours == 24 else "7 дней"
+    await cb.answer(f"📊 Строю график {label}...")
+    points = await ha_history("sensor.moshchnost_vsego_doma", hours=hours)
+    if not points:
+        await cb.message.answer("❌ Нет данных истории в HA")
+        return
+    img = _make_chart(points, f"⚡ Мощность дома — {label}", "Вт", "#ffd54f")
+    if not img:
+        await cb.message.answer("❌ Не удалось построить график")
+        return
+    await cb.message.answer_photo(
+        BufferedInputFile(img, filename="energy.png"),
+        caption=f"⚡ <b>Мощность дома — {label}</b>",
+        parse_mode="HTML"
+    )
 
 # ── 🌤️ Погода ─────────────────────────────────────────────────────────────────
 @dp.message(F.text == "🌤️ Погода")
@@ -1295,6 +1390,7 @@ _alert_state = {
     "person_khamzat":        None,
     "namaz_notified_prayer": None,   # "2026-03-07_Asr"
     "last_briefing_day":     None,
+    "last_weekly_report":    None,   # "week_10_2026"
 }
 
 async def alert_loop():
@@ -1393,6 +1489,14 @@ async def _check_alerts():
             _alert_state["last_briefing_day"] = today
             await _send_morning_briefing()
 
+    # 🗓️ Еженедельный отчёт — воскресенье 20:00
+    if now.weekday() == 6 and now.hour == 20 and now.minute < 1:
+        iso = now.isocalendar()
+        week_key = f"week_{iso.week}_{iso.year}"
+        if _alert_state["last_weekly_report"] != week_key:
+            _alert_state["last_weekly_report"] = week_key
+            await _send_weekly_report()
+
 async def _send_morning_briefing():
     try:
         status_text  = await build_status_text()
@@ -1425,20 +1529,49 @@ async def _send_morning_briefing():
     except Exception as e:
         log.error(f"Morning briefing error: {e}")
 
+async def _send_weekly_report():
+    try:
+        now = datetime.now(MSK)
+        week_num = now.isocalendar().week
+        day_d, month_d, prog_d = await asyncio.gather(
+            ha_state("sensor.elektroenergiia_stoimost_za_den"),
+            ha_state("sensor.elektroenergiia_stoimost_za_mesiats"),
+            ha_state("sensor.elektroenergiia_prognoz_scheta_za_mesiats"),
+        )
+        text = (
+            f"🗓️ <b>Еженедельный отчёт — неделя {week_num}</b>\n\n"
+            f"⚡ Сегодня: <b>{day_d} ₽</b>\n"
+            f"💰 Накоплено за месяц: <b>{month_d} ₽</b>\n"
+            f"📈 Прогноз за месяц: <b>{prog_d} ₽</b>"
+        )
+        points = await ha_history("sensor.moshchnost_vsego_doma", hours=168)
+        if points:
+            img = _make_chart(points, f"⚡ Мощность дома — неделя {week_num}", "Вт", "#ffd54f")
+            if img:
+                await bot.send_photo(
+                    ADMIN_ID,
+                    BufferedInputFile(img, filename="weekly.png"),
+                    caption=text,
+                    parse_mode="HTML"
+                )
+                return
+        await bot.send_message(ADMIN_ID, text, parse_mode="HTML")
+    except Exception as e:
+        log.error(f"Weekly report error: {e}")
+
 # ── Запуск ────────────────────────────────────────────────────────────────────
 async def main():
     log.info("HA Bot v3 starting...")
     asyncio.create_task(alert_loop())
     await bot.send_message(
         ADMIN_ID,
-        "🏠 <b>Home Assistant Bot v3 запущен!</b>\n"
-        "✅ Намаз таймер с уведомлением за 15 мин\n"
-        "✅ Управление телевизором\n"
-        "✅ Семья (местоположение)\n"
-        "✅ Список покупок\n"
-        "✅ Автоматизации с toggle\n"
-        "✅ Inline режим (@бот запрос)\n"
-        "✅ Погода, ИИ Ассистент, Авто-алерты",
+        "🏠 <b>Home Assistant Bot v3.2 запущен!</b>\n"
+        "✅ Намаз по Aladhan API, алерт за 15 мин\n"
+        "✅ 📊 Графики энергии (24ч / 7 дней)\n"
+        "✅ 📈 История температуры (24ч)\n"
+        "✅ 🗓️ Еженедельный отчёт (воскресенье 20:00)\n"
+        "✅ Телевизор, Семья, Покупки, Автоматизации\n"
+        "✅ ИИ Ассистент, Погода, Авто-алерты",
         parse_mode="HTML"
     )
     log.info("Start polling")
