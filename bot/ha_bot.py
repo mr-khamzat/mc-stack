@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
 """
 Home Assistant Telegram Bot — управление умным домом.
-Версия 2.0: погода (Open-Meteo), ИИ ассистент (Claude), авто-алерты.
+Версия 3.0: Намаз, TV, Семья, Покупки, Автоматизации (toggle), Inline режим.
 """
 import asyncio
 import os
 import json
 import logging
+import ssl as _ssl
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import aiohttp
+try:
+    import websockets
+    HAS_WS = True
+except ImportError:
+    HAS_WS = False
+
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -20,6 +27,7 @@ from aiogram.types import (
     Message, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton,
     ReplyKeyboardMarkup, KeyboardButton,
+    InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
@@ -33,8 +41,21 @@ HA_TOKEN   = os.environ["HA_TOKEN"]
 HA_HEADERS = {"Authorization": f"Bearer {HA_TOKEN}", "Content-Type": "application/json"}
 
 # Грозный — координаты для Open-Meteo
-LAT, LON = 43.31, 45.69
-TIMEZONE = "Europe/Moscow"
+LAT, LON  = 43.31, 45.69
+TIMEZONE  = "Europe/Moscow"
+
+# Entities
+TV_EID    = "media_player.android_tv"
+NAMAZ_EID = "timer.namaz_obratnyi_otschet"
+SHOP_EID  = "todo.shopping_list"
+
+# Семья
+FAMILY = {
+    "👨 Хамзат": "person.khamzat",
+    "👩 Айза":   "person.aiza",
+    "👦 Сулим":  "person.sulim",
+    "👧 Камила": "person.kamila",
+}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -46,7 +67,10 @@ dp  = Dispatcher(storage=MemoryStorage())
 class AIChat(StatesGroup):
     active = State()
 
-# ── HA API ────────────────────────────────────────────────────────────────────
+class ShoppingAdd(StatesGroup):
+    waiting = State()
+
+# ── HA REST API ───────────────────────────────────────────────────────────────
 async def ha_get(path: str) -> dict | list | None:
     try:
         async with aiohttp.ClientSession() as s:
@@ -86,6 +110,34 @@ async def ha_call(domain: str, service: str, entity_id: str, extra: dict = None)
     data = {"entity_id": entity_id, **(extra or {})}
     return await ha_post(f"services/{domain}/{service}", data)
 
+# ── HA WebSocket (для todo items) ─────────────────────────────────────────────
+async def ha_ws_get_todo_items(entity_id: str) -> list:
+    if not HAS_WS:
+        return []
+    ws_url = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
+    ssl_ctx = _ssl.create_default_context()
+    try:
+        async with websockets.connect(ws_url, ssl=ssl_ctx) as ws:
+            msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+            if msg.get("type") != "auth_required":
+                return []
+            await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
+            auth_resp = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+            if auth_resp.get("type") != "auth_ok":
+                return []
+            await ws.send(json.dumps({
+                "id": 1, "type": "call_service",
+                "domain": "todo", "service": "get_items",
+                "service_data": {"entity_id": entity_id},
+                "return_response": True,
+            }))
+            result = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+            return (result.get("result", {}).get("response", {})
+                    .get(entity_id, {}).get("items", []))
+    except Exception as e:
+        log.error(f"WS todo {entity_id}: {e}")
+    return []
+
 # ── Auth ──────────────────────────────────────────────────────────────────────
 def is_admin(uid: int) -> bool:
     return uid == ADMIN_ID
@@ -119,14 +171,170 @@ async def get_weather() -> dict | None:
         log.error(f"Open-Meteo: {e}")
     return None
 
+def build_weather_text(data: dict) -> str:
+    c      = data.get("current", {})
+    daily  = data.get("daily", {})
+    temp   = c.get("temperature_2m", "?")
+    feels  = c.get("apparent_temperature", "?")
+    hum    = c.get("relative_humidity_2m", "?")
+    wind   = c.get("wind_speed_10m", "?")
+    precip = c.get("precipitation", 0)
+    code   = c.get("weather_code", 0)
+    cond   = WMO_CODES.get(code, f"Код {code}")
+    try:
+        updated = datetime.fromisoformat(c.get("time", "")).strftime("%H:%M")
+    except Exception:
+        updated = "?"
+    day_names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    days      = daily.get("time", [])
+    t_max     = daily.get("temperature_2m_max", [])
+    t_min     = daily.get("temperature_2m_min", [])
+    codes     = daily.get("weather_code", [])
+    fc_lines  = []
+    for i in range(min(3, len(days))):
+        try:
+            d = datetime.fromisoformat(days[i])
+            icon = WMO_CODES.get(codes[i], "?").split()[0]
+            fc_lines.append(f"  {day_names[d.weekday()]} {d.strftime('%d.%m')}: {icon} {t_min[i]:.0f}…{t_max[i]:.0f}°C")
+        except Exception:
+            pass
+    text = (
+        f"🌤️ <b>Погода — Грозный</b>\n"
+        f"<i>Обновлено: {updated}</i>\n\n"
+        f"{cond}\n"
+        f"🌡️ <b>{temp}°C</b> (ощущается {feels}°C)\n"
+        f"💧 Влажность: {hum}%\n"
+        f"💨 Ветер: {wind} км/ч\n"
+        f"🌧 Осадки: {precip} мм\n"
+    )
+    if fc_lines:
+        text += "\n📅 <b>Прогноз:</b>\n" + "\n".join(fc_lines)
+    return text
+
+_WEATHER_KB = InlineKeyboardMarkup(inline_keyboard=[[
+    InlineKeyboardButton(text="🔄 Обновить", callback_data="weather_refresh")
+]])
+
+# ── Намаз helpers ─────────────────────────────────────────────────────────────
+def _namaz_seconds(finishes_at: str) -> int:
+    try:
+        dt = datetime.fromisoformat(finishes_at.replace("Z", "+00:00"))
+        return max(0, int((dt - datetime.now(timezone.utc)).total_seconds()))
+    except Exception:
+        return 0
+
+def _namaz_remaining(finishes_at: str) -> str:
+    secs = _namaz_seconds(finishes_at)
+    if secs <= 0:
+        return "⏰ истекло"
+    h = secs // 3600
+    m = (secs % 3600) // 60
+    s = secs % 60
+    if h > 0:
+        return f"{h}ч {m:02d}м"
+    if m > 0:
+        return f"{m}м {s:02d}с"
+    return f"{s}с"
+
+async def build_namaz_text() -> str:
+    d = await ha_get(f"states/{NAMAZ_EID}")
+    if not d:
+        return "🕌 <b>Намаз</b>\n\n❌ Таймер недоступен"
+    state      = d.get("state", "?")
+    attrs      = d.get("attributes", {})
+    finishes   = attrs.get("finishes_at", "")
+    friendly   = attrs.get("friendly_name", "Намаз")
+
+    if state == "active":
+        rem = _namaz_remaining(finishes)
+        return (
+            f"🕌 <b>Намаз</b>\n\n"
+            f"⏳ До намаза: <b>{rem}</b>\n"
+            f"📿 {friendly}"
+        )
+    elif state == "idle":
+        return f"🕌 <b>Намаз</b>\n\n✅ Намаз совершён\n📿 {friendly}"
+    elif state == "paused":
+        rem = _namaz_remaining(finishes) if finishes else "?"
+        return (
+            f"🕌 <b>Намаз</b>\n\n"
+            f"⏸ Таймер приостановлен\n"
+            f"⏳ Осталось: {rem}\n"
+            f"📿 {friendly}"
+        )
+    return f"🕌 <b>Намаз</b>\n\nСтатус: {state}"
+
+_NAMAZ_KB = InlineKeyboardMarkup(inline_keyboard=[[
+    InlineKeyboardButton(text="🔄 Обновить", callback_data="namaz_refresh")
+]])
+
+# ── TV helpers ────────────────────────────────────────────────────────────────
+async def build_tv_text() -> str:
+    d = await ha_get(f"states/{TV_EID}")
+    if not d:
+        return "📺 <b>Телевизор</b>\n\n❌ Недоступен"
+    state = d.get("state", "?")
+    attrs = d.get("attributes", {})
+    app   = attrs.get("app_name", "")
+    vol   = attrs.get("volume_level", None)
+    muted = attrs.get("is_volume_muted", False)
+    icons = {"playing": "▶️", "paused": "⏸", "idle": "💤", "standby": "📴", "off": "📴"}
+    icon  = icons.get(state, "📺")
+    vol_str   = f"{int(float(vol)*100)}%" if vol is not None else "?"
+    mute_str  = " 🔇" if muted else ""
+    text = f"📺 <b>Телевизор</b>\n\n{icon} Статус: <b>{state}</b>\n"
+    if app:
+        text += f"📱 Приложение: {app}\n"
+    text += f"🔊 Громкость: {vol_str}{mute_str}"
+    return text
+
+def tv_kb(state: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    if state in ("off", "standby", "unavailable"):
+        builder.button(text="▶️ Включить", callback_data="tv:turn_on")
+    else:
+        builder.button(text="📴 Выключить",  callback_data="tv:turn_off")
+        builder.button(text="⏯ Play/Pause",  callback_data="tv:media_play_pause")
+        builder.button(text="⏹ Стоп",        callback_data="tv:media_stop")
+        builder.button(text="🔊 Громче",      callback_data="tv:volume_up")
+        builder.button(text="🔉 Тише",        callback_data="tv:volume_down")
+        builder.button(text="🔇 Mute",        callback_data="tv:mute")
+        builder.button(text="🏠 Домой",       callback_data="tv:go_home")
+        builder.adjust(1, 2, 2, 2)
+    builder.button(text="🔄 Обновить", callback_data="tv:refresh")
+    return builder.as_markup()
+
+# ── Автоматизации (с кешем для индексации) ────────────────────────────────────
+_autos_cache: list = []
+
+async def _fetch_automations() -> list:
+    all_states = await ha_get("states")
+    if not all_states:
+        return []
+    return [e for e in all_states if e["entity_id"].startswith("automation.")][:18]
+
+def _build_auto_kb(autos: list) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for i, a in enumerate(autos):
+        state   = a.get("state", "?")
+        name    = a.get("attributes", {}).get("friendly_name", a["entity_id"])
+        icon    = "✅" if state == "on" else "🚫"
+        display = (name[:26] + "…") if len(name) > 27 else name
+        builder.button(text=f"{icon} {display}", callback_data=f"auto:{i}")
+    builder.button(text="🔄 Обновить", callback_data="auto:r")
+    builder.adjust(1)
+    return builder.as_markup()
+
 # ── Главная клавиатура ────────────────────────────────────────────────────────
 def main_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="🏠 Дом"),        KeyboardButton(text="💡 Свет")],
-        [KeyboardButton(text="🌡️ Климат"),     KeyboardButton(text="⚡ Энергия")],
-        [KeyboardButton(text="📹 Камеры"),     KeyboardButton(text="🤖 Пылесос")],
-        [KeyboardButton(text="🌤 Погода"),     KeyboardButton(text="🔔 Автоматизации")],
-        [KeyboardButton(text="📊 Статус"),     KeyboardButton(text="🧠 ИИ Ассистент")],
+        [KeyboardButton(text="🏡 Дом"),           KeyboardButton(text="💡 Свет")],
+        [KeyboardButton(text="🌡️ Климат"),        KeyboardButton(text="⚡ Энергия")],
+        [KeyboardButton(text="🌤️ Погода"),        KeyboardButton(text="🕌 Намаз")],
+        [KeyboardButton(text="📺 Телевизор"),     KeyboardButton(text="🤖 Пылесос")],
+        [KeyboardButton(text="👪 Семья"),          KeyboardButton(text="🛒 Покупки")],
+        [KeyboardButton(text="⚙️ Автоматизации"), KeyboardButton(text="📹 Камеры")],
+        [KeyboardButton(text="📊 Статус"),        KeyboardButton(text="🧠 ИИ Ассистент")],
     ], resize_keyboard=True)
 
 # ── /start ────────────────────────────────────────────────────────────────────
@@ -137,16 +345,19 @@ async def cmd_start(msg: Message, state: FSMContext):
         return
     await state.clear()
     await msg.answer(
-        "🏠 <b>Home Assistant Bot v2</b>\n\n"
-        "Управление умным домом — выбери раздел:\n"
-        "🧠 <b>ИИ Ассистент</b> — спрашивай что угодно голосом",
+        "🏠 <b>Home Assistant Bot v3</b>\n\n"
+        "Управляй умным домом из Telegram!\n"
+        "• 🕌 Намаз таймер\n"
+        "• 📺 Управление телевизором\n"
+        "• 👪 Местоположение семьи\n"
+        "• 🛒 Список покупок\n"
+        "• 🧠 ИИ Ассистент",
         parse_mode="HTML",
         reply_markup=main_kb()
     )
 
 # ── 📊 Статус ─────────────────────────────────────────────────────────────────
 async def build_status_text() -> str:
-    # Параллельно запрашиваем всё
     results = await asyncio.gather(
         ha_get("states/sensor.moshchnost_vsego_doma"),
         ha_get("states/sensor.elektroenergiia_stoimost_za_den"),
@@ -154,41 +365,47 @@ async def build_status_text() -> str:
         ha_get("states/sensor.temp_detskaia_temperature"),
         ha_get("states/sensor.temp_detskaia_humidity"),
         ha_get("states/binary_sensor.keenetic_gateway_wan_status_2"),
-        ha_get("states/media_player.android_tv"),
+        ha_get(f"states/{TV_EID}"),
         ha_get("states/person.khamzat"),
         ha_get("states/vacuum.pylik"),
+        ha_get(f"states/{NAMAZ_EID}"),
     )
     def st(d): return d.get("state", "?") if d else "?"
     def at(d, k): return d.get("attributes", {}).get(k, "?") if d else "?"
 
-    power_d, day_d, prog_d, temp_d, hum_d, inet_d, tv_d, person_d, vac_d = results
-    power = st(power_d)
-    day   = st(day_d)
-    prog  = st(prog_d)
-    temp  = st(temp_d)
-    hum   = st(hum_d)
-    inet  = "✅ Онлайн" if st(inet_d) == "on" else "❌ Офлайн"
-    tv    = st(tv_d)
+    power_d, day_d, prog_d, temp_d, hum_d, inet_d, tv_d, person_d, vac_d, namaz_d = results
+    power   = st(power_d)
+    day     = st(day_d)
+    prog    = st(prog_d)
+    temp    = st(temp_d)
+    hum     = st(hum_d)
+    inet    = "✅ Онлайн" if st(inet_d) == "on" else "❌ Офлайн"
     khamzat = "🏠 Дома" if st(person_d) == "home" else "🚗 Вне дома"
-    vac   = st(vac_d)
+    vac     = st(vac_d)
 
-    # TV details
+    tv_state  = st(tv_d)
     tv_detail = ""
-    if tv_d and st(tv_d) == "playing":
-        app = at(tv_d, "app_name")
-        tv_detail = f" ({app})"
+    if tv_d and tv_state == "playing":
+        tv_detail = f" ({at(tv_d, 'app_name')})"
 
-    lines = [
-        f"📊 <b>Статус дома</b> — {datetime.now().strftime('%H:%M')}\n",
-        f"⚡ Мощность: <b>{power} Вт</b>",
-        f"💰 Сегодня: {day} ₽ | Прогноз: {prog} ₽",
-        f"🌡️ Детская: <b>{temp}°C</b>, влажность {hum}%",
-        f"🌐 Интернет: {inet}",
-        f"📺 TV: {tv}{tv_detail}",
-        f"👤 Хамзат: {khamzat}",
-        f"🤖 Пылесос: {vac}",
-    ]
-    return "\n".join(lines)
+    namaz_str = ""
+    if namaz_d and st(namaz_d) == "active":
+        finishes = at(namaz_d, "finishes_at")
+        if finishes and finishes != "?":
+            rem = _namaz_remaining(str(finishes))
+            namaz_str = f"\n🕌 До намаза: <b>{rem}</b>"
+
+    return (
+        f"📊 <b>Статус дома</b> — {datetime.now().strftime('%H:%M')}\n"
+        f"\n⚡ Мощность: <b>{power} Вт</b>"
+        f"\n💰 Сегодня: {day} ₽ | Прогноз: {prog} ₽"
+        f"\n🌡️ Детская: <b>{temp}°C</b>, влажность {hum}%"
+        f"\n🌐 Интернет: {inet}"
+        f"\n📺 TV: {tv_state}{tv_detail}"
+        f"\n👤 Хамзат: {khamzat}"
+        f"\n🤖 Пылесос: {vac}"
+        + namaz_str
+    )
 
 @dp.message(F.text == "📊 Статус")
 async def status_home(msg: Message):
@@ -222,8 +439,7 @@ LIGHTS = {
 def lights_kb(states: dict) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for name, (domain, eid) in LIGHTS.items():
-        state = states.get(eid, "?")
-        icon = "🟡" if state == "on" else "⚫"
+        icon = "🟡" if states.get(eid) == "on" else "⚫"
         builder.button(text=f"{icon} {name}", callback_data=f"lt:{domain}:{eid}")
     builder.button(text="💡 Всё вкл",  callback_data="lights_all:on")
     builder.button(text="🌑 Всё выкл", callback_data="lights_all:off")
@@ -234,9 +450,7 @@ def lights_kb(states: dict) -> InlineKeyboardMarkup:
 @dp.message(F.text == "💡 Свет")
 async def lights_menu(msg: Message):
     if not is_admin(msg.from_user.id): return
-    states = {}
-    for _, (domain, eid) in LIGHTS.items():
-        states[eid] = await ha_state(eid)
+    states = {e: await ha_state(e) for _, (_, e) in LIGHTS.items()}
     await msg.answer("💡 <b>Управление светом</b>", parse_mode="HTML",
                      reply_markup=lights_kb(states))
 
@@ -244,12 +458,12 @@ async def lights_menu(msg: Message):
 async def light_toggle(cb: CallbackQuery):
     if not is_admin(cb.from_user.id): return
     _, domain, eid = cb.data.split(":", 2)
-    state = await ha_state(eid)
+    state   = await ha_state(eid)
     service = "turn_off" if state == "on" else "turn_on"
     await ha_call(domain, service, eid)
-    await cb.answer(f"{'Выключаю' if service == 'turn_off' else 'Включаю'}...")
+    await cb.answer("Выключаю..." if service == "turn_off" else "Включаю...")
     await asyncio.sleep(0.5)
-    states = {e: await ha_state(e) for _, (d, e) in LIGHTS.items()}
+    states = {e: await ha_state(e) for _, (_, e) in LIGHTS.items()}
     await cb.message.edit_reply_markup(reply_markup=lights_kb(states))
 
 @dp.callback_query(F.data.startswith("lights_all:"))
@@ -258,15 +472,15 @@ async def lights_all(cb: CallbackQuery):
     action = cb.data.split(":")[1]
     for _, (domain, eid) in LIGHTS.items():
         await ha_call(domain, f"turn_{action}", eid)
-    await cb.answer(f"{'💡 Весь свет включён' if action == 'on' else '🌑 Весь свет выключен'}")
+    await cb.answer("💡 Весь свет включён" if action == "on" else "🌑 Весь свет выключен")
     await asyncio.sleep(1)
-    states = {e: await ha_state(e) for _, (d, e) in LIGHTS.items()}
+    states = {e: await ha_state(e) for _, (_, e) in LIGHTS.items()}
     await cb.message.edit_reply_markup(reply_markup=lights_kb(states))
 
 @dp.callback_query(F.data == "lights_refresh")
 async def lights_refresh(cb: CallbackQuery):
     if not is_admin(cb.from_user.id): return
-    states = {e: await ha_state(e) for _, (d, e) in LIGHTS.items()}
+    states = {e: await ha_state(e) for _, (_, e) in LIGHTS.items()}
     await cb.message.edit_reply_markup(reply_markup=lights_kb(states))
     await cb.answer("Обновлено")
 
@@ -288,14 +502,12 @@ async def build_climate_text() -> str:
         except Exception:
             return "?"
 
-    floor_icon = "🔥" if floor == "heat" else "❄️"
-    temp_alert = ""
+    floor_icon  = "🔥" if floor == "heat" else "❄️"
+    temp_alert  = ""
     try:
         t = float(temp)
-        if t < 18:
-            temp_alert = " ⚠️ ХОЛОДНО!"
-        elif t > 27:
-            temp_alert = " ⚠️ ЖАРКО!"
+        if t < 18:   temp_alert = " ⚠️ ХОЛОДНО!"
+        elif t > 27: temp_alert = " ⚠️ ЖАРКО!"
     except Exception:
         pass
 
@@ -345,10 +557,9 @@ async def floor_temp_adjust(cb: CallbackQuery):
     d = await ha_get("states/climate.teplyi_pol_lodzhiia")
     if d:
         current = d.get("attributes", {}).get("temperature", 25)
-        new_t = float(current) + delta
+        new_t   = float(current) + delta
         await ha_post("services/climate/set_temperature", {
-            "entity_id": "climate.teplyi_pol_lodzhiia",
-            "temperature": new_t
+            "entity_id": "climate.teplyi_pol_lodzhiia", "temperature": new_t
         })
         await cb.answer(f"🌡️ Установлено {new_t}°C")
     else:
@@ -401,62 +612,11 @@ async def energy_refresh(cb: CallbackQuery):
     ]])
     await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
-# ── 🌤 Погода (Open-Meteo) ────────────────────────────────────────────────────
-def build_weather_text(data: dict) -> str:
-    """Формирует текст погоды из ответа Open-Meteo."""
-    c = data.get("current", {})
-    daily = data.get("daily", {})
-
-    temp   = c.get("temperature_2m", "?")
-    feels  = c.get("apparent_temperature", "?")
-    hum    = c.get("relative_humidity_2m", "?")
-    wind   = c.get("wind_speed_10m", "?")
-    precip = c.get("precipitation", 0)
-    code   = c.get("weather_code", 0)
-    cond   = WMO_CODES.get(code, f"Код {code}")
-
-    try:
-        updated = datetime.fromisoformat(c.get("time", "")).strftime("%H:%M")
-    except Exception:
-        updated = "?"
-
-    day_names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-    days   = daily.get("time", [])
-    t_max  = daily.get("temperature_2m_max", [])
-    t_min  = daily.get("temperature_2m_min", [])
-    codes  = daily.get("weather_code", [])
-    forecast_lines = []
-    for i in range(min(3, len(days))):
-        try:
-            d = datetime.fromisoformat(days[i])
-            wcode = WMO_CODES.get(codes[i], "?").split()[0]
-            forecast_lines.append(
-                f"  {day_names[d.weekday()]} {d.strftime('%d.%m')}: {wcode} {t_min[i]:.0f}…{t_max[i]:.0f}°C"
-            )
-        except Exception:
-            pass
-
-    text = (
-        f"🌤 <b>Погода — Грозный</b>\n"
-        f"<i>Обновлено: {updated}</i>\n\n"
-        f"{cond}\n"
-        f"🌡️ <b>{temp}°C</b> (ощущается {feels}°C)\n"
-        f"💧 Влажность: {hum}%\n"
-        f"💨 Ветер: {wind} км/ч\n"
-        f"🌧 Осадки: {precip} мм\n"
-    )
-    if forecast_lines:
-        text += "\n📅 <b>Прогноз:</b>\n" + "\n".join(forecast_lines)
-    return text
-
-_WEATHER_KB = InlineKeyboardMarkup(inline_keyboard=[[
-    InlineKeyboardButton(text="🔄 Обновить", callback_data="weather_refresh")
-]])
-
-@dp.message(F.text == "🌤 Погода")
+# ── 🌤️ Погода ─────────────────────────────────────────────────────────────────
+@dp.message(F.text == "🌤️ Погода")
 async def weather_menu(msg: Message):
     if not is_admin(msg.from_user.id): return
-    await msg.answer("🌤 Загружаю погоду...")
+    await msg.answer("🌤️ Загружаю погоду...")
     data = await get_weather()
     if not data:
         await msg.answer("❌ Погода временно недоступна")
@@ -473,8 +633,70 @@ async def weather_refresh(cb: CallbackQuery):
         return
     await cb.message.edit_text(build_weather_text(data), parse_mode="HTML", reply_markup=_WEATHER_KB)
 
-# ── 🏠 Дом ────────────────────────────────────────────────────────────────────
-@dp.message(F.text == "🏠 Дом")
+# ── 🕌 Намаз ──────────────────────────────────────────────────────────────────
+@dp.message(F.text == "🕌 Намаз")
+async def namaz_menu(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    text = await build_namaz_text()
+    await msg.answer(text, parse_mode="HTML", reply_markup=_NAMAZ_KB)
+
+@dp.callback_query(F.data == "namaz_refresh")
+async def namaz_refresh(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    await cb.answer("Обновляю...")
+    text = await build_namaz_text()
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=_NAMAZ_KB)
+
+# ── 📺 Телевизор ──────────────────────────────────────────────────────────────
+@dp.message(F.text == "📺 Телевизор")
+async def tv_menu(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    d     = await ha_get(f"states/{TV_EID}")
+    state = d.get("state", "off") if d else "off"
+    text  = await build_tv_text()
+    await msg.answer(text, parse_mode="HTML", reply_markup=tv_kb(state))
+
+@dp.callback_query(F.data.startswith("tv:"))
+async def tv_action(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    action = cb.data.split(":", 1)[1]
+    if action == "turn_on":
+        await ha_call("media_player", "turn_on", TV_EID)
+        await cb.answer("▶️ Включаю...")
+    elif action == "turn_off":
+        await ha_call("media_player", "turn_off", TV_EID)
+        await cb.answer("📴 Выключаю...")
+    elif action == "media_play_pause":
+        await ha_call("media_player", "media_play_pause", TV_EID)
+        await cb.answer("⏯")
+    elif action == "media_stop":
+        await ha_call("media_player", "media_stop", TV_EID)
+        await cb.answer("⏹ Стоп")
+    elif action == "volume_up":
+        await ha_call("media_player", "volume_up", TV_EID)
+        await cb.answer("🔊")
+    elif action == "volume_down":
+        await ha_call("media_player", "volume_down", TV_EID)
+        await cb.answer("🔉")
+    elif action == "mute":
+        d     = await ha_get(f"states/{TV_EID}")
+        muted = d.get("attributes", {}).get("is_volume_muted", False) if d else False
+        await ha_post("services/media_player/volume_mute",
+                      {"entity_id": TV_EID, "is_volume_muted": not muted})
+        await cb.answer("🔇 Mute" if not muted else "🔊 Unmute")
+    elif action == "go_home":
+        await ha_call("media_player", "select_source", TV_EID, {"source": "Home"})
+        await cb.answer("🏠 Домой")
+    elif action == "refresh":
+        await cb.answer("Обновлено")
+    await asyncio.sleep(0.5)
+    d     = await ha_get(f"states/{TV_EID}")
+    state = d.get("state", "off") if d else "off"
+    text  = await build_tv_text()
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=tv_kb(state))
+
+# ── 🏡 Дом ────────────────────────────────────────────────────────────────────
+@dp.message(F.text == "🏡 Дом")
 async def home_menu(msg: Message):
     if not is_admin(msg.from_user.id): return
     khamzat, inet, dl, ul, tv, vacuum = await asyncio.gather(
@@ -482,15 +704,15 @@ async def home_menu(msg: Message):
         ha_state("binary_sensor.keenetic_gateway_wan_status_2"),
         ha_state("sensor.keenetic_gateway_download_speed_2"),
         ha_state("sensor.keenetic_gateway_upload_speed_2"),
-        ha_state("media_player.android_tv"),
+        ha_state(TV_EID),
         ha_state("vacuum.pylik"),
     )
-    person_icon = "🏠" if khamzat == "home" else "🚗"
-    inet_icon   = "✅" if inet == "on" else "❌"
+    p_icon = "🏠" if khamzat == "home" else "🚗"
+    i_icon = "✅" if inet == "on" else "❌"
     text = (
-        f"🏠 <b>Дом</b>\n\n"
-        f"{person_icon} Хамзат: <b>{khamzat}</b>\n"
-        f"{inet_icon} Интернет: ↓{dl} / ↑{ul} Мбит/с\n"
+        f"🏡 <b>Дом</b>\n\n"
+        f"{p_icon} Хамзат: <b>{khamzat}</b>\n"
+        f"{i_icon} Интернет: ↓{dl} / ↑{ul} Мбит/с\n"
         f"📺 TV: <b>{tv}</b>\n"
         f"🤖 Пылесос: <b>{vacuum}</b>"
     )
@@ -508,15 +730,15 @@ async def home_refresh(cb: CallbackQuery):
         ha_state("binary_sensor.keenetic_gateway_wan_status_2"),
         ha_state("sensor.keenetic_gateway_download_speed_2"),
         ha_state("sensor.keenetic_gateway_upload_speed_2"),
-        ha_state("media_player.android_tv"),
+        ha_state(TV_EID),
         ha_state("vacuum.pylik"),
     )
-    person_icon = "🏠" if khamzat == "home" else "🚗"
-    inet_icon   = "✅" if inet == "on" else "❌"
+    p_icon = "🏠" if khamzat == "home" else "🚗"
+    i_icon = "✅" if inet == "on" else "❌"
     text = (
-        f"🏠 <b>Дом</b> ({datetime.now().strftime('%H:%M')})\n\n"
-        f"{person_icon} Хамзат: <b>{khamzat}</b>\n"
-        f"{inet_icon} Интернет: ↓{dl} / ↑{ul} Мбит/с\n"
+        f"🏡 <b>Дом</b> ({datetime.now().strftime('%H:%M')})\n\n"
+        f"{p_icon} Хамзат: <b>{khamzat}</b>\n"
+        f"{i_icon} Интернет: ↓{dl} / ↑{ul} Мбит/с\n"
         f"📺 TV: <b>{tv}</b>\n"
         f"🤖 Пылесос: <b>{vacuum}</b>"
     )
@@ -539,7 +761,7 @@ async def news_refresh(cb: CallbackQuery):
 async def build_vacuum_text() -> str:
     d = await ha_get("states/vacuum.pylik")
     if not d:
-        return "🤖 <b>Пылесос</b>\n❌ Недоступен"
+        return "🤖 <b>Пылесос</b>\n\n❌ Недоступен"
     state   = d.get("state", "?")
     attrs   = d.get("attributes", {})
     battery = attrs.get("battery_level", "?")
@@ -581,103 +803,301 @@ async def vacuum_actions(cb: CallbackQuery):
         await cb.answer("⏸ Пауза")
     elif action == "home":
         await ha_call("vacuum", "return_to_base", "vacuum.pylik")
-        await cb.answer("🏠 Возвращается на базу")
+        await cb.answer("🏠 На базу")
     elif action == "refresh":
         await cb.answer("Обновлено")
     await asyncio.sleep(1)
     text = await build_vacuum_text()
     await cb.message.edit_text(text, parse_mode="HTML", reply_markup=cb.message.reply_markup)
 
+# ── 👪 Семья ──────────────────────────────────────────────────────────────────
+async def build_family_text() -> str:
+    person_states = await asyncio.gather(*[ha_get(f"states/{eid}") for eid in FAMILY.values()])
+    lines = ["👪 <b>Семья</b>\n"]
+    for (label, eid), d in zip(FAMILY.items(), person_states):
+        if not d:
+            lines.append(f"{label}: ❓ нет данных")
+            continue
+        state  = d.get("state", "?")
+        attrs  = d.get("attributes", {})
+        source = attrs.get("source", "")
+        if state == "home":
+            lines.append(f"{label}: 🏠 <b>Дома</b>")
+        elif state == "not_home":
+            lines.append(f"{label}: 🚗 Вне дома")
+        else:
+            lines.append(f"{label}: 📍 {state}")
+    return "\n".join(lines)
+
+@dp.message(F.text == "👪 Семья")
+async def family_menu(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    text = await build_family_text()
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="family_refresh")
+    ]])
+    await msg.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@dp.callback_query(F.data == "family_refresh")
+async def family_refresh(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    await cb.answer("Обновляю...")
+    text = await build_family_text()
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="family_refresh")
+    ]])
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+
+# ── 🛒 Покупки ─────────────────────────────────────────────────────────────────
+def _shop_kb(items: list) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for item in items:
+        name    = item.get("summary", "?")
+        status  = item.get("status", "needs_action")
+        done_cb = f"shop:done:{name[:40]}"
+        del_cb  = f"shop:del:{name[:40]}"
+        icon    = "☑️" if status == "completed" else "🔲"
+        display = (name[:30] + "…") if len(name) > 31 else name
+        builder.button(text=f"{icon} {display}", callback_data=done_cb)
+        builder.button(text="🗑",                callback_data=del_cb)
+    builder.button(text="➕ Добавить",   callback_data="shop:add")
+    builder.button(text="🧹 Очистить",  callback_data="shop:clear")
+    builder.button(text="🔄 Обновить",  callback_data="shop:refresh")
+    if items:
+        builder.adjust(*([2] * len(items)), 1, 2)
+    else:
+        builder.adjust(1, 2)
+    return builder.as_markup()
+
+async def build_shopping_text(items: list) -> str:
+    if not items:
+        return "🛒 <b>Список покупок</b>\n\n📭 Список пуст"
+    total   = len(items)
+    done    = sum(1 for i in items if i.get("status") == "completed")
+    pending = total - done
+    lines   = [f"🛒 <b>Список покупок</b> ({pending} не куплено)\n"]
+    for item in items:
+        name   = item.get("summary", "?")
+        status = item.get("status", "needs_action")
+        icon   = "✅" if status == "completed" else "🔲"
+        lines.append(f"{icon} {name}")
+    return "\n".join(lines)
+
+@dp.message(F.text == "🛒 Покупки")
+async def shopping_menu(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    items = await ha_ws_get_todo_items(SHOP_EID)
+    text  = await build_shopping_text(items)
+    await msg.answer(text, parse_mode="HTML", reply_markup=_shop_kb(items))
+
+@dp.callback_query(F.data == "shop:refresh")
+async def shop_refresh(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    await cb.answer("Обновляю...")
+    items = await ha_ws_get_todo_items(SHOP_EID)
+    text  = await build_shopping_text(items)
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=_shop_kb(items))
+
+@dp.callback_query(F.data == "shop:add")
+async def shop_add_start(cb: CallbackQuery, state: FSMContext):
+    if not is_admin(cb.from_user.id): return
+    await state.set_state(ShoppingAdd.waiting)
+    await cb.answer()
+    await cb.message.answer(
+        "🛒 Введи название товара:\n<i>(или /cancel для отмены)</i>",
+        parse_mode="HTML"
+    )
+
+@dp.message(Command("cancel"))
+async def cmd_cancel(msg: Message, state: FSMContext):
+    if not is_admin(msg.from_user.id): return
+    current = await state.get_state()
+    await state.clear()
+    if current:
+        await msg.answer("❌ Отменено", reply_markup=main_kb())
+    else:
+        await msg.answer("🏠 Главное меню", reply_markup=main_kb())
+
+@dp.message(StateFilter(ShoppingAdd.waiting))
+async def shop_add_item(msg: Message, state: FSMContext):
+    if not is_admin(msg.from_user.id): return
+    item_text = (msg.text or "").strip()
+    if not item_text or item_text.startswith("/"):
+        await state.clear()
+        await msg.answer("❌ Отменено", reply_markup=main_kb())
+        return
+    await state.clear()
+    result = await ha_post(f"services/todo/add_item",
+                           {"entity_id": SHOP_EID, "item": item_text})
+    if result is not None:
+        await msg.answer(f"✅ <b>{item_text}</b> добавлен в список", parse_mode="HTML",
+                         reply_markup=main_kb())
+    else:
+        await msg.answer("❌ Не удалось добавить", reply_markup=main_kb())
+    # Показываем обновлённый список
+    await asyncio.sleep(0.5)
+    items = await ha_ws_get_todo_items(SHOP_EID)
+    text  = await build_shopping_text(items)
+    await msg.answer(text, parse_mode="HTML", reply_markup=_shop_kb(items))
+
+@dp.callback_query(F.data.startswith("shop:done:"))
+async def shop_done_item(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    name = cb.data[10:]
+    # Toggle: check current status
+    items = await ha_ws_get_todo_items(SHOP_EID)
+    current_item = next((i for i in items if i.get("summary", "").startswith(name[:40])), None)
+    if current_item:
+        new_status = "needs_action" if current_item.get("status") == "completed" else "completed"
+        await ha_post(f"services/todo/update_item",
+                      {"entity_id": SHOP_EID, "item": current_item["summary"], "status": new_status})
+        await cb.answer("☑️ Отмечено" if new_status == "completed" else "🔲 Снято")
+    else:
+        await cb.answer("Не найдено")
+    await asyncio.sleep(0.3)
+    items = await ha_ws_get_todo_items(SHOP_EID)
+    text  = await build_shopping_text(items)
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=_shop_kb(items))
+
+@dp.callback_query(F.data.startswith("shop:del:"))
+async def shop_del_item(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    name = cb.data[9:]
+    items = await ha_ws_get_todo_items(SHOP_EID)
+    full_name = next((i["summary"] for i in items if i.get("summary", "").startswith(name[:40])), name)
+    await ha_post(f"services/todo/remove_item",
+                  {"entity_id": SHOP_EID, "item": full_name})
+    await cb.answer(f"🗑 Удалено")
+    await asyncio.sleep(0.3)
+    items = await ha_ws_get_todo_items(SHOP_EID)
+    text  = await build_shopping_text(items)
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=_shop_kb(items))
+
+@dp.callback_query(F.data == "shop:clear")
+async def shop_clear(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    # Remove all completed items
+    items = await ha_ws_get_todo_items(SHOP_EID)
+    done  = [i["summary"] for i in items if i.get("status") == "completed"]
+    for name in done:
+        await ha_post("services/todo/remove_item", {"entity_id": SHOP_EID, "item": name})
+    await cb.answer(f"🧹 Удалено {len(done)} выполненных")
+    await asyncio.sleep(0.5)
+    items = await ha_ws_get_todo_items(SHOP_EID)
+    text  = await build_shopping_text(items)
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=_shop_kb(items))
+
+# ── ⚙️ Автоматизации (с toggle) ──────────────────────────────────────────────
+@dp.message(F.text == "⚙️ Автоматизации")
+async def automations_menu(msg: Message):
+    global _autos_cache
+    if not is_admin(msg.from_user.id): return
+    _autos_cache = await _fetch_automations()
+    if not _autos_cache:
+        await msg.answer("❌ Нет автоматизаций")
+        return
+    await msg.answer(
+        "⚙️ <b>Автоматизации</b>\n\nНажми для включения/выключения:",
+        parse_mode="HTML",
+        reply_markup=_build_auto_kb(_autos_cache)
+    )
+
+@dp.callback_query(F.data.startswith("auto:"))
+async def automation_action(cb: CallbackQuery):
+    global _autos_cache
+    if not is_admin(cb.from_user.id): return
+    val = cb.data[5:]
+
+    if val == "r":
+        _autos_cache = await _fetch_automations()
+        await cb.message.edit_reply_markup(reply_markup=_build_auto_kb(_autos_cache))
+        await cb.answer("Обновлено")
+        return
+
+    try:
+        idx   = int(val)
+        entry = _autos_cache[idx]
+        eid   = entry["entity_id"]
+        state = entry.get("state", "off")
+    except (ValueError, IndexError):
+        await cb.answer("Ошибка")
+        return
+
+    if state == "on":
+        await ha_call("automation", "turn_off", eid)
+        _autos_cache[idx]["state"] = "off"
+        await cb.answer("🚫 Выключено")
+    else:
+        await ha_call("automation", "turn_on", eid)
+        _autos_cache[idx]["state"] = "on"
+        await cb.answer("✅ Включено")
+    await cb.message.edit_reply_markup(reply_markup=_build_auto_kb(_autos_cache))
+
 # ── 📹 Камеры ─────────────────────────────────────────────────────────────────
 @dp.message(F.text == "📹 Камеры")
 async def cameras_menu(msg: Message):
     if not is_admin(msg.from_user.id): return
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📹 Открыть камеры в HA", url="https://ha-as.khamzat-home.crazedns.ru/lovelace/cameras")],
-        [InlineKeyboardButton(text="🎞 Frigate",             url="https://ha-as.khamzat-home.crazedns.ru/ccab4aaf_frigate-fa")],
+        [InlineKeyboardButton(text="📹 Камеры в HA",  url=f"{HA_URL}/lovelace/cameras")],
+        [InlineKeyboardButton(text="🎞 Frigate",       url=f"{HA_URL}/ccab4aaf_frigate-fa")],
     ])
     await msg.answer(
-        "📹 <b>Камеры</b>\n\n🎥 <b>Лофт</b> — Frigate (camera.loft)\n"
-        "RTSP: <code>rtsp://admin:010203@192.168.1.194:554/</code>",
+        "📹 <b>Камеры</b>\n\n"
+        "🎥 <b>Лофт</b> — Frigate (<code>camera.loft</code>)\n"
+        f"RTSP: <code>rtsp://admin:010203@192.168.1.194:554/</code>",
         parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True
     )
 
-# ── 🔔 Автоматизации ──────────────────────────────────────────────────────────
-@dp.message(F.text == "🔔 Автоматизации")
-async def automations_menu(msg: Message):
-    if not is_admin(msg.from_user.id): return
-    all_states = await ha_get("states")
-    if not all_states:
-        await msg.answer("❌ Не удалось получить данные")
-        return
-    autos = [e for e in all_states if e["entity_id"].startswith("automation.")][:20]
-    lines = ["🔔 <b>Автоматизации</b>\n"]
-    for a in autos:
-        state = a.get("state", "?")
-        name  = a.get("attributes", {}).get("friendly_name", a["entity_id"])
-        icon  = "✅" if state == "on" else "🚫"
-        lines.append(f"{icon} {name}")
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🌐 Открыть в HA", url="https://ha-as.khamzat-home.crazedns.ru/config/automation/dashboard")
-    ]])
-    await msg.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb)
-
 # ── 🧠 ИИ Ассистент (Claude) ──────────────────────────────────────────────────
 async def get_ha_context() -> str:
-    """Собираем текущее состояние дома для контекста ИИ."""
-    power, temp, hum, inet, tv, person, floor, vacuum = await asyncio.gather(
+    power, temp, hum, inet, tv, person, floor, vacuum, namaz_d = await asyncio.gather(
         ha_state("sensor.moshchnost_vsego_doma"),
         ha_state("sensor.temp_detskaia_temperature"),
         ha_state("sensor.temp_detskaia_humidity"),
         ha_state("binary_sensor.keenetic_gateway_wan_status_2"),
-        ha_state("media_player.android_tv"),
+        ha_state(TV_EID),
         ha_state("person.khamzat"),
         ha_state("climate.teplyi_pol_lodzhiia"),
         ha_state("vacuum.pylik"),
+        ha_get(f"states/{NAMAZ_EID}"),
     )
-    # Состояние света
-    light_states = []
-    for name, (_, eid) in LIGHTS.items():
-        st = await ha_state(eid)
-        if st == "on":
-            light_states.append(name)
+    light_on = [n for n, (_, e) in LIGHTS.items() if await ha_state(e) == "on"]
+    lights_str = ", ".join(light_on) if light_on else "весь выключен"
 
-    lights_str = ", ".join(light_states) if light_states else "весь выключен"
+    namaz_str = ""
+    if namaz_d and namaz_d.get("state") == "active":
+        finishes = namaz_d.get("attributes", {}).get("finishes_at", "")
+        if finishes:
+            namaz_str = f"\nДо намаза: {_namaz_remaining(finishes)}"
+
     return (
         f"Мощность дома: {power} Вт\n"
         f"Температура детской: {temp}°C, влажность {hum}%\n"
         f"Интернет: {'онлайн' if inet == 'on' else 'офлайн'}\n"
-        f"TV: {tv}\n"
-        f"Хамзат: {person}\n"
-        f"Тёплый пол: {floor}\n"
-        f"Пылесос: {vacuum}\n"
+        f"TV: {tv}\nХамзат: {person}\n"
+        f"Тёплый пол: {floor}\nПылесос: {vacuum}\n"
         f"Свет горит: {lights_str}"
+        + namaz_str
     )
 
 async def ask_claude(question: str, context: str) -> str:
-    """Вызов Claude через CLI."""
     system = (
         "Ты — умный ассистент умного дома. Отвечай коротко и по делу на русском языке. "
-        "Ты можешь помочь управлять устройствами, отвечать на вопросы о состоянии дома, "
-        "давать советы. Если пользователь просит включить/выключить что-то — скажи что сделаешь "
-        "и предложи использовать кнопки бота. Текущее состояние дома:\n" + context
+        "Текущее состояние дома:\n" + context
     )
     prompt = f"{system}\n\nВопрос: {question}"
     env = os.environ.copy()
-    env.pop("CLAUDECODE", None)  # Убираем чтобы не было ошибки вложенности
+    env.pop("CLAUDECODE", None)
     try:
         proc = await asyncio.create_subprocess_exec(
             "/root/.local/bin/claude", "-p", prompt, "--model", "claude-haiku-4-5",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
         result = stdout.decode("utf-8", errors="replace").strip()
         if result:
             return result
-        err = stderr.decode("utf-8", errors="replace").strip()
-        log.error(f"Claude stderr: {err}")
+        log.error(f"Claude stderr: {stderr.decode('utf-8', errors='replace').strip()}")
         return "❌ ИИ временно недоступен"
     except asyncio.TimeoutError:
         return "⏱ Таймаут — попробуй ещё раз"
@@ -694,12 +1114,11 @@ async def ai_enter(msg: Message, state: FSMContext):
     ]])
     await msg.answer(
         "🧠 <b>ИИ Ассистент активен</b>\n\n"
-        "Задавай вопросы или команды на русском языке.\n"
+        "Задавай вопросы о состоянии дома.\n"
         "Примеры:\n"
         "• <i>Какая температура в детской?</i>\n"
         "• <i>Сколько потребляет дом?</i>\n"
-        "• <i>Что делает пылесос?</i>\n"
-        "• <i>Расскажи о состоянии дома</i>\n\n"
+        "• <i>Кто дома?</i>\n\n"
         "Для выхода — /start или кнопка ниже",
         parse_mode="HTML", reply_markup=kb
     )
@@ -721,26 +1140,111 @@ async def ai_chat(msg: Message, state: FSMContext):
         await msg.answer("🏠 Главное меню:", reply_markup=main_kb())
         return
     thinking = await msg.answer("🧠 Думаю...")
-    context = await get_ha_context()
-    answer = await ask_claude(question, context)
+    context  = await get_ha_context()
+    answer   = await ask_claude(question, context)
     await thinking.delete()
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="❌ Выйти из чата с ИИ", callback_data="ai_exit")
     ]])
     await msg.answer(f"🧠 {answer}", parse_mode="HTML", reply_markup=kb)
 
-# ── Фоновые задачи — авто-алерты ─────────────────────────────────────────────
+# ── 🔍 Inline режим ───────────────────────────────────────────────────────────
+@dp.inline_query()
+async def inline_handler(query: InlineQuery):
+    q       = query.query.strip().lower()
+    results = []
+
+    # Статус дома
+    if not q or any(k in q for k in ("дом", "статус", "status", "дома")):
+        try:
+            text = await build_status_text()
+            results.append(InlineQueryResultArticle(
+                id="status",
+                title="📊 Статус дома",
+                description="Мощность, температура, интернет, TV",
+                input_message_content=InputTextMessageContent(
+                    message_text=text, parse_mode="HTML"
+                )
+            ))
+        except Exception:
+            pass
+
+    # Погода
+    if not q or any(k in q for k in ("погода", "weather", "темп")):
+        try:
+            data = await get_weather()
+            if data:
+                results.append(InlineQueryResultArticle(
+                    id="weather",
+                    title="🌤️ Погода — Грозный",
+                    description="Текущая погода и прогноз на 3 дня",
+                    input_message_content=InputTextMessageContent(
+                        message_text=build_weather_text(data), parse_mode="HTML"
+                    )
+                ))
+        except Exception:
+            pass
+
+    # Намаз
+    if not q or any(k in q for k in ("намаз", "namaz", "молитва")):
+        try:
+            text = await build_namaz_text()
+            results.append(InlineQueryResultArticle(
+                id="namaz",
+                title="🕌 Намаз",
+                description="Таймер до следующего намаза",
+                input_message_content=InputTextMessageContent(
+                    message_text=text, parse_mode="HTML"
+                )
+            ))
+        except Exception:
+            pass
+
+    # Энергия
+    if not q or any(k in q for k in ("энергия", "свет", "мощность", "energy")):
+        try:
+            text = await build_energy_text()
+            results.append(InlineQueryResultArticle(
+                id="energy",
+                title="⚡ Энергия",
+                description="Мощность и стоимость электричества",
+                input_message_content=InputTextMessageContent(
+                    message_text=text, parse_mode="HTML"
+                )
+            ))
+        except Exception:
+            pass
+
+    # Семья
+    if not q or any(k in q for k in ("семья", "family", "дома", "хамзат")):
+        try:
+            text = await build_family_text()
+            results.append(InlineQueryResultArticle(
+                id="family",
+                title="👪 Семья",
+                description="Кто дома, кто вне дома",
+                input_message_content=InputTextMessageContent(
+                    message_text=text, parse_mode="HTML"
+                )
+            ))
+        except Exception:
+            pass
+
+    await query.answer(results[:10], cache_time=30, is_personal=True)
+
+# ── Фоновые алерты ────────────────────────────────────────────────────────────
 _alert_state = {
-    "power_high": False,
-    "temp_low":   False,
-    "temp_high":  False,
-    "person_khamzat": None,
-    "last_briefing_day": None,
+    "power_high":         False,
+    "temp_low":           False,
+    "temp_high":          False,
+    "person_khamzat":     None,
+    "namaz_15m_notified": False,
+    "namaz_last_state":   None,
+    "last_briefing_day":  None,
 }
 
 async def alert_loop():
-    """Проверяем каждые 60 сек: мощность, температура, присутствие."""
-    await asyncio.sleep(10)  # Даём боту запуститься
+    await asyncio.sleep(10)
     while True:
         try:
             await _check_alerts()
@@ -749,20 +1253,19 @@ async def alert_loop():
         await asyncio.sleep(60)
 
 async def _check_alerts():
-    power_d, temp_d, person_d = await asyncio.gather(
+    power_d, temp_d, person_d, namaz_d = await asyncio.gather(
         ha_get("states/sensor.moshchnost_vsego_doma"),
         ha_get("states/sensor.temp_detskaia_temperature"),
         ha_get("states/person.khamzat"),
+        ha_get(f"states/{NAMAZ_EID}"),
     )
 
-    # ⚡ Высокая мощность > 3000 Вт
+    # ⚡ Высокая мощность
     try:
         power = float(power_d.get("state", 0)) if power_d else 0
         if power > 3000 and not _alert_state["power_high"]:
             _alert_state["power_high"] = True
-            await bot.send_message(ADMIN_ID,
-                f"⚡ <b>Высокая нагрузка!</b> {power:.0f} Вт",
-                parse_mode="HTML")
+            await bot.send_message(ADMIN_ID, f"⚡ <b>Высокая нагрузка!</b> {power:.0f} Вт", parse_mode="HTML")
         elif power <= 3000 and _alert_state["power_high"]:
             _alert_state["power_high"] = False
     except Exception as e:
@@ -773,17 +1276,12 @@ async def _check_alerts():
         temp = float(temp_d.get("state", 20)) if temp_d else 20
         if temp < 18 and not _alert_state["temp_low"]:
             _alert_state["temp_low"] = True
-            await bot.send_message(ADMIN_ID,
-                f"🥶 <b>Холодно в детской!</b> {temp}°C",
-                parse_mode="HTML")
+            await bot.send_message(ADMIN_ID, f"🥶 <b>Холодно в детской!</b> {temp}°C", parse_mode="HTML")
         elif temp >= 18:
             _alert_state["temp_low"] = False
-
         if temp > 27 and not _alert_state["temp_high"]:
             _alert_state["temp_high"] = True
-            await bot.send_message(ADMIN_ID,
-                f"🥵 <b>Жарко в детской!</b> {temp}°C",
-                parse_mode="HTML")
+            await bot.send_message(ADMIN_ID, f"🥵 <b>Жарко в детской!</b> {temp}°C", parse_mode="HTML")
         elif temp <= 27:
             _alert_state["temp_high"] = False
     except Exception as e:
@@ -792,7 +1290,7 @@ async def _check_alerts():
     # 🏠 Приход/уход Хамзата
     try:
         person = person_d.get("state", "?") if person_d else "?"
-        prev = _alert_state["person_khamzat"]
+        prev   = _alert_state["person_khamzat"]
         if prev is not None and prev != person:
             if person == "home":
                 await bot.send_message(ADMIN_ID, "🏠 Хамзат <b>дома</b>", parse_mode="HTML")
@@ -802,7 +1300,36 @@ async def _check_alerts():
     except Exception as e:
         log.error(f"Alert person check: {e}")
 
-    # 🌅 Утреннее сводка в 8:00
+    # 🕌 Намаз — уведомление за 15 минут
+    try:
+        if namaz_d:
+            namaz_state = namaz_d.get("state", "?")
+            attrs       = namaz_d.get("attributes", {})
+            finishes    = attrs.get("finishes_at", "")
+            friendly    = attrs.get("friendly_name", "Намаз")
+
+            # Сбрасываем флаг при новом запуске таймера
+            if namaz_state != _alert_state["namaz_last_state"]:
+                if namaz_state == "active":
+                    _alert_state["namaz_15m_notified"] = False
+                _alert_state["namaz_last_state"] = namaz_state
+
+            # Отправляем уведомление если осталось ≤ 15 мин
+            if (namaz_state == "active" and finishes
+                    and not _alert_state["namaz_15m_notified"]):
+                secs = _namaz_seconds(finishes)
+                if 0 < secs <= 900:  # 15 минут
+                    _alert_state["namaz_15m_notified"] = True
+                    mins = secs // 60
+                    await bot.send_message(
+                        ADMIN_ID,
+                        f"🕌 <b>До намаза {mins} мин!</b>\n📿 {friendly}",
+                        parse_mode="HTML"
+                    )
+    except Exception as e:
+        log.error(f"Alert namaz check: {e}")
+
+    # 🌅 Утренняя сводка в 8:00
     now = datetime.now()
     if now.hour == 8 and now.minute < 1:
         today = now.date().isoformat()
@@ -811,21 +1338,19 @@ async def _check_alerts():
             await _send_morning_briefing()
 
 async def _send_morning_briefing():
-    """Отправляет утреннюю сводку в 8:00."""
     try:
-        status_text = await build_status_text()
+        status_text  = await build_status_text()
         weather_data = await get_weather()
-        weather_text = ""
+        weather_line = ""
         if weather_data:
-            c = weather_data.get("current", {})
+            c    = weather_data.get("current", {})
             code = c.get("weather_code", 0)
             cond = WMO_CODES.get(code, "").split()[0] if WMO_CODES.get(code) else ""
             temp = c.get("temperature_2m", "?")
-            weather_text = f"\n🌤 Погода: {cond} <b>{temp}°C</b>"
-
+            weather_line = f"\n🌤️ Погода: {cond} <b>{temp}°C</b>"
         await bot.send_message(
             ADMIN_ID,
-            f"🌅 <b>Доброе утро!</b>{weather_text}\n\n{status_text}",
+            f"🌅 <b>Доброе утро!</b>{weather_line}\n\n{status_text}",
             parse_mode="HTML"
         )
     except Exception as e:
@@ -833,15 +1358,18 @@ async def _send_morning_briefing():
 
 # ── Запуск ────────────────────────────────────────────────────────────────────
 async def main():
-    log.info("HA Bot v2 starting...")
+    log.info("HA Bot v3 starting...")
     asyncio.create_task(alert_loop())
     await bot.send_message(
         ADMIN_ID,
-        "🏠 <b>Home Assistant Bot v2 запущен!</b>\n"
-        "✅ Погода: Open-Meteo (реальная)\n"
-        "✅ ИИ Ассистент: Claude\n"
-        "✅ Авто-алерты: мощность, температура, присутствие\n"
-        "✅ Утренняя сводка в 8:00",
+        "🏠 <b>Home Assistant Bot v3 запущен!</b>\n"
+        "✅ Намаз таймер с уведомлением за 15 мин\n"
+        "✅ Управление телевизором\n"
+        "✅ Семья (местоположение)\n"
+        "✅ Список покупок\n"
+        "✅ Автоматизации с toggle\n"
+        "✅ Inline режим (@бот запрос)\n"
+        "✅ Погода, ИИ Ассистент, Авто-алерты",
         parse_mode="HTML"
     )
     log.info("Start polling")
