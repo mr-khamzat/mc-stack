@@ -382,13 +382,14 @@ def _build_auto_kb(autos: list) -> InlineKeyboardMarkup:
 # ── Главная клавиатура ────────────────────────────────────────────────────────
 def main_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="🏡 Дом"),           KeyboardButton(text="💡 Свет")],
-        [KeyboardButton(text="🌡️ Климат"),        KeyboardButton(text="⚡ Энергия")],
-        [KeyboardButton(text="🌤️ Погода"),        KeyboardButton(text="🕌 Намаз")],
-        [KeyboardButton(text="📺 Телевизор"),     KeyboardButton(text="🤖 Пылесос")],
-        [KeyboardButton(text="👪 Семья"),          KeyboardButton(text="🛒 Покупки")],
-        [KeyboardButton(text="⚙️ Автоматизации"), KeyboardButton(text="📹 Камеры")],
-        [KeyboardButton(text="📊 Статус"),        KeyboardButton(text="🧠 ИИ Ассистент")],
+        [KeyboardButton(text="🏡 Дом")],
+        [KeyboardButton(text="💡 Свет"),           KeyboardButton(text="⚡ Энергия")],
+        [KeyboardButton(text="🌡️ Климат"),         KeyboardButton(text="🌤️ Погода")],
+        [KeyboardButton(text="📺 Телевизор"),      KeyboardButton(text="🤖 Пылесос")],
+        [KeyboardButton(text="👪 Семья"),           KeyboardButton(text="🛒 Покупки")],
+        [KeyboardButton(text="⚙️ Автоматизации"),  KeyboardButton(text="📹 Камеры")],
+        [KeyboardButton(text="🕌 Намаз"),           KeyboardButton(text="📊 Статус")],
+        [KeyboardButton(text="🧠 ИИ Ассистент")],
     ], resize_keyboard=True)
 
 # ── /start ────────────────────────────────────────────────────────────────────
