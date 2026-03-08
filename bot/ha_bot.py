@@ -805,12 +805,19 @@ async def status_refresh(cb: CallbackQuery):
 # ── 💡 Свет + 🛠 Управление устройствами ─────────────────────────────────────
 # Defaults — первый запуск или если devices.json не содержит эти entity
 _DEVICES_DEFAULTS: dict = {
-    "light.svet_krovat":           {"name": "Кровать",        "icon": "🛏️", "section": "lights", "enabled": True,  "order": 1},
-    "switch.vykliuchatel_kukhnia": {"name": "Кухня",          "icon": "🍳", "section": "lights", "enabled": True,  "order": 2},
-    "switch.kabinet_svet_pk_left": {"name": "ПК Левый",       "icon": "🖥️", "section": "lights", "enabled": True,  "order": 3},
-    "switch.kabinet_svet_pk_right":{"name": "ПК Правый",      "icon": "🖥️", "section": "lights", "enabled": True,  "order": 4},
-    "switch.sonoff_100093f84f":    {"name": "Люстра Детская", "icon": "💡", "section": "lights", "enabled": True,  "order": 5},
-    "switch.sonoff_1000a60930":    {"name": "Шкаф",           "icon": "🚪", "section": "lights", "enabled": True,  "order": 6},
+    "light.svet_krovat":           {"name": "Кровать",        "icon": "🛏️", "section": "lights",   "enabled": True,  "order": 1},
+    "switch.vykliuchatel_kukhnia": {"name": "Кухня",          "icon": "🍳", "section": "lights",   "enabled": True,  "order": 2},
+    "switch.kabinet_svet_pk_left": {"name": "ПК Левый",       "icon": "🖥️", "section": "lights",   "enabled": True,  "order": 3},
+    "switch.kabinet_svet_pk_right":{"name": "ПК Правый",      "icon": "🖥️", "section": "lights",   "enabled": True,  "order": 4},
+    "switch.sonoff_100093f84f":    {"name": "Люстра Детская", "icon": "💡", "section": "lights",   "enabled": True,  "order": 5},
+    "switch.sonoff_1000a60930":    {"name": "Шкаф",           "icon": "🚪", "section": "lights",   "enabled": True,  "order": 6},
+    # Frigate cameras
+    "camera.cam_a6810678":                        {"name": "Камера лофт", "icon": "📹", "section": "cameras", "enabled": True, "order": 10},
+    "switch.cam_a6810678_detect":                 {"name": "Детекция",   "icon": "🔍", "section": "cameras", "enabled": True, "order": 11},
+    "switch.cam_a6810678_recordings":             {"name": "Запись",     "icon": "🎬", "section": "cameras", "enabled": True, "order": 12},
+    "switch.cam_a6810678_snapshots":              {"name": "Снимки",     "icon": "📸", "section": "cameras", "enabled": True, "order": 13},
+    "binary_sensor.cam_a6810678_person_occupancy":{"name": "Человек",    "icon": "👤", "section": "cameras", "enabled": True, "order": 14},
+    "binary_sensor.cam_a6810678_motion":          {"name": "Движение",   "icon": "🚶", "section": "cameras", "enabled": True, "order": 15},
 }
 
 LIGHTS: dict      = {}  # {display_name: (domain, entity_id)} — пересобирается из devices.json

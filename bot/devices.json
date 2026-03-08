@@ -61,5 +61,47 @@
     "section": "lights",
     "enabled": true,
     "order": 9
+  },
+  "camera.cam_a6810678": {
+    "name": "Камера лофт",
+    "icon": "📹",
+    "section": "cameras",
+    "enabled": true,
+    "order": 10
+  },
+  "switch.cam_a6810678_detect": {
+    "name": "Детекция",
+    "icon": "🔍",
+    "section": "cameras",
+    "enabled": true,
+    "order": 11
+  },
+  "switch.cam_a6810678_recordings": {
+    "name": "Запись",
+    "icon": "🎬",
+    "section": "cameras",
+    "enabled": true,
+    "order": 12
+  },
+  "switch.cam_a6810678_snapshots": {
+    "name": "Снимки",
+    "icon": "📸",
+    "section": "cameras",
+    "enabled": true,
+    "order": 13
+  },
+  "binary_sensor.cam_a6810678_person_occupancy": {
+    "name": "Человек",
+    "icon": "👤",
+    "section": "cameras",
+    "enabled": true,
+    "order": 14
+  },
+  "binary_sensor.cam_a6810678_motion": {
+    "name": "Движение",
+    "icon": "🚶",
+    "section": "cameras",
+    "enabled": true,
+    "order": 15
   }
 }
