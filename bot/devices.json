@@ -90,16 +90,16 @@
     "enabled": true,
     "order": 13
   },
-  "binary_sensor.cam_a6810678_person_occupancy": {
-    "name": "Человек",
+  "sensor.cam_a6810678_person_count": {
+    "name": "Людей",
     "icon": "👤",
     "section": "cameras",
     "enabled": true,
     "order": 14
   },
-  "binary_sensor.cam_a6810678_motion": {
-    "name": "Движение",
-    "icon": "🚶",
+  "sensor.cam_a6810678_all_count": {
+    "name": "Объектов",
+    "icon": "📦",
     "section": "cameras",
     "enabled": true,
     "order": 15

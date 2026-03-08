@@ -1765,7 +1765,7 @@ async function _loadCamRecordings(camId) {
         ? `<img src="${escapeAttr(r.thumbnail)}" style="width:100%;height:60px;object-fit:cover;border-radius:6px 6px 0 0" onerror="this.style.display='none'">`
         : `<div style="width:100%;height:60px;background:#1a1a2e;border-radius:6px 6px 0 0;display:flex;align-items:center;justify-content:center;font-size:20px">🎬</div>`;
       return `<div style="width:calc(33% - 6px);min-width:90px;background:#12121e;border:1px solid rgba(255,255,255,0.08);border-radius:8px;overflow:hidden;cursor:pointer"
-        onclick="openVideoPlayer('${escapeAttr(r.url)}','${escapeAttr(r.title)}','${escapeAttr(r.url)}')">
+        onclick="openVideoPlayer('${escapeAttr(r.url)}','${escapeAttr(r.title)}','${escapeAttr(r.url)}','${escapeAttr(r.event_id||'')}')">
         ${thumb}
         <div style="padding:4px 6px">
           <div style="font-size:10px;color:#8080a0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.title||'Запись '+(i+1))}</div>
@@ -1803,21 +1803,22 @@ function retryCamera(url) {
   if (err) err.style.display = 'none';
 }
 
-function openVideoPlayer(url, title, clipUrl) {
+function openVideoPlayer(url, title, clipUrl, eventId) {
   document.getElementById('video-player-overlay')?.remove();
   const ov = document.createElement('div');
   ov.id = 'video-player-overlay';
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.96);z-index:5000;display:flex;flex-direction:column;align-items:center;justify-content:center';
+  const evId = eventId || '';
   ov.innerHTML = `
     <div style="width:100%;max-width:600px;padding:0 12px">
       <div style="display:flex;align-items:center;gap:8px;padding:10px 0 8px">
         <span style="font-size:13px;font-weight:700;color:#e0e0f0;flex:1">🎬 ${escapeHtml(title||'Запись')}</span>
-        <button onclick="_sendClipToBot('${escapeAttr(clipUrl)}')" title="Отправить в Telegram"
+        <button onclick="_sendClipToBot('${escapeAttr(clipUrl||'')}','${escapeAttr(evId)}')" title="Отправить в Telegram"
           style="background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);border-radius:8px;padding:5px 10px;color:#a0a0ff;cursor:pointer;font-size:12px">⬇️ В бота</button>
-        <button onclick="document.getElementById('video-player-overlay')?.remove();document.getElementById('video-player-overlay')?.querySelectorAll('video').forEach(v=>{v.pause();v.src=''})"
+        <button onclick="_closeVideoPlayer()"
           style="background:rgba(255,255,255,0.1);border:none;border-radius:8px;padding:6px 12px;color:#c0c0e0;cursor:pointer;font-size:13px">✕</button>
       </div>
-      <video id="vp-video" src="${escapeAttr(url)}" controls autoplay
+      <video id="vp-video" src="${escapeAttr(url||'')}" controls autoplay
         style="width:100%;border-radius:12px;background:#000;max-height:70vh"
         onerror="document.getElementById('vp-err').style.display='block'">
       </video>
@@ -1827,20 +1828,26 @@ function openVideoPlayer(url, title, clipUrl) {
           style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:5px 14px;color:#8080a0;cursor:pointer;font-size:12px">⛶ На весь экран</button>
       </div>
     </div>`;
-  ov.addEventListener('click', e => {
-    if (e.target === ov) {
-      const v = document.getElementById('vp-video');
-      if (v) { v.pause(); v.src = ''; }
-      ov.remove();
-    }
-  });
+  ov.addEventListener('click', e => { if (e.target === ov) _closeVideoPlayer(); });
   document.body.appendChild(ov);
 }
 
-async function _sendClipToBot(clipUrl) {
+function _closeVideoPlayer() {
+  const ov = document.getElementById('video-player-overlay');
+  if (ov) {
+    const v = document.getElementById('vp-video');
+    if (v) { v.pause(); v.src = ''; }
+    ov.remove();
+  }
+}
+
+async function _sendClipToBot(clipUrl, eventId) {
   try {
-    showToast('📤 Отправляю...');
-    await apiPost('/frigate/send', { clip_url: clipUrl });
+    showToast('📤 Отправляю видео...');
+    const payload = {};
+    if (eventId) payload.event_id = eventId;
+    if (clipUrl) payload.clip_url = clipUrl;
+    await apiPost('/frigate/send', payload);
     showToast('✅ Видео отправлено в Telegram');
   } catch(e) { showToast('❌ ' + e.message); }
 }
