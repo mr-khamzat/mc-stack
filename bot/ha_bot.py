@@ -284,28 +284,37 @@ PRAYERS_RU = {
 }
 PRAYERS_ORDER = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
 
+# HA input_datetime entities for prayer times (manually set by user in HA)
+_HA_PRAYER_EIDS = {
+    "Fajr":    "input_datetime.namaz_fadzhr",
+    "Dhuhr":   "input_datetime.namaz_zukhr",
+    "Asr":     "input_datetime.namaz_asr",
+    "Maghrib": "input_datetime.namaz_magrib",
+    "Isha":    "input_datetime.namaz_isha",
+}
+
 _prayer_cache: dict = {"date": None, "timings": None}
 
 async def get_prayer_times() -> dict | None:
+    """Получить времена намаза из HA input_datetime сущностей."""
     today = datetime.now(MSK).date().isoformat()
     if _prayer_cache["date"] == today and _prayer_cache["timings"]:
         return _prayer_cache["timings"]
-    url = (
-        f"https://api.aladhan.com/v1/timings"
-        f"?latitude={LAT}&longitude={LON}"
-        f"&method=3&timezonestring=Europe%2FMoscow"
-    )
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                if r.status == 200:
-                    data = await r.json()
-                    timings = data.get("data", {}).get("timings", {})
-                    _prayer_cache["date"] = today
-                    _prayer_cache["timings"] = timings
-                    return timings
+        results = await asyncio.gather(*[ha_get(f"states/{eid}") for eid in _HA_PRAYER_EIDS.values()])
+        timings = {}
+        for prayer, d in zip(_HA_PRAYER_EIDS.keys(), results):
+            if d:
+                # state = "HH:MM:SS" или "HH:MM"
+                t = d.get("state", "")[:5]   # берём "HH:MM"
+                if t and ":" in t:
+                    timings[prayer] = t
+        if len(timings) == len(_HA_PRAYER_EIDS):
+            _prayer_cache["date"] = today
+            _prayer_cache["timings"] = timings
+            return timings
     except Exception as e:
-        log.error(f"Aladhan API: {e}")
+        log.error(f"Prayer times from HA: {e}")
     return None
 
 def _namaz_remaining(finishes_at: str) -> str:
@@ -975,9 +984,7 @@ async def build_family_text() -> str:
         if not d:
             lines.append(f"{label}: ❓ нет данных")
             continue
-        state  = d.get("state", "?")
-        attrs  = d.get("attributes", {})
-        source = attrs.get("source", "")
+        state = d.get("state", "?")
         if state == "home":
             lines.append(f"{label}: 🏠 <b>Дома</b>")
         elif state == "not_home":
@@ -986,24 +993,60 @@ async def build_family_text() -> str:
             lines.append(f"{label}: 📍 {state}")
     return "\n".join(lines)
 
+def _family_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for label, eid in FAMILY.items():
+        short = label.split(" ", 1)[1]   # "Хамзат", "Айза", ...
+        key   = eid.split(".")[-1]       # "khamzat", "aiza", ...
+        builder.button(text=f"📍 {short}", callback_data=f"fam_loc:{key}")
+    builder.adjust(2)
+    builder.row(InlineKeyboardButton(text="🔄 Обновить", callback_data="family_refresh"))
+    return builder.as_markup()
+
 @dp.message(F.text == "👪 Семья")
 async def family_menu(msg: Message):
     if not is_admin(msg.from_user.id): return
     text = await build_family_text()
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🔄 Обновить", callback_data="family_refresh")
-    ]])
-    await msg.answer(text, parse_mode="HTML", reply_markup=kb)
+    await msg.answer(text, parse_mode="HTML", reply_markup=_family_kb())
 
 @dp.callback_query(F.data == "family_refresh")
 async def family_refresh(cb: CallbackQuery):
     if not is_admin(cb.from_user.id): return
     await cb.answer("Обновляю...")
     text = await build_family_text()
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🔄 Обновить", callback_data="family_refresh")
-    ]])
-    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=_family_kb())
+
+@dp.callback_query(F.data.startswith("fam_loc:"))
+async def family_location(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    key = cb.data.split(":", 1)[1]   # "khamzat"
+    eid = f"person.{key}"
+    label = next((l for l, e in FAMILY.items() if e == eid), eid)
+    d = await ha_get(f"states/{eid}")
+    if not d:
+        await cb.answer("❌ Нет данных", show_alert=True)
+        return
+    attrs = d.get("attributes", {})
+    lat   = attrs.get("latitude")
+    lon   = attrs.get("longitude")
+    state = d.get("state", "?")
+    if lat and lon:
+        maps_url = f"https://www.google.com/maps?q={lat},{lon}"
+        acc      = attrs.get("gps_accuracy", "?")
+        text = (f"📍 <b>{label}</b>\n"
+                f"Статус: {'🏠 Дома' if state == 'home' else '🚗 Вне дома' if state == 'not_home' else state}\n"
+                f"Координаты: <code>{lat:.5f}, {lon:.5f}</code>\n"
+                f"Точность GPS: {acc} м")
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🗺 Открыть карту", url=maps_url)
+        ]])
+        await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
+        await cb.answer()
+    else:
+        await cb.answer(
+            f"📍 {label}: нет координат GPS (статус: {state})",
+            show_alert=True
+        )
 
 # ── 🛒 Покупки ─────────────────────────────────────────────────────────────────
 def _shop_kb(items: list) -> InlineKeyboardMarkup:
@@ -1391,13 +1434,14 @@ async def inline_handler(query: InlineQuery):
 
 # ── Фоновые алерты ────────────────────────────────────────────────────────────
 _alert_state = {
-    "power_high":            False,
-    "temp_low":              False,
-    "temp_high":             False,
-    "person_khamzat":        None,
-    "namaz_notified_prayer": None,   # "2026-03-07_Asr"
-    "last_briefing_day":     None,
-    "last_weekly_report":    None,   # "week_10_2026"
+    "power_high":              False,
+    "temp_low":                False,
+    "temp_high":               False,
+    "person_khamzat":          None,
+    "person_khamzat_notif_ts": None,   # datetime UTC последнего уведомления о присутствии
+    "namaz_notified_prayer":   None,   # "2026-03-07_Asr"
+    "last_briefing_day":       None,
+    "last_weekly_report":      None,   # "week_10_2026"
 }
 
 async def alert_loop():
@@ -1443,15 +1487,22 @@ async def _check_alerts():
     except Exception as e:
         log.error(f"Alert temp check: {e}")
 
-    # 🏠 Приход/уход Хамзата
+    # 🏠 Приход/уход Хамзата (кулдаун 10 мин, чтобы не спамить при колебаниях HA)
     try:
         person = person_d.get("state", "?") if person_d else "?"
         prev   = _alert_state["person_khamzat"]
         if prev is not None and prev != person:
-            if person == "home":
-                await bot.send_message(ADMIN_ID, "🏠 Хамзат <b>дома</b>", parse_mode="HTML")
-            elif prev == "home":
-                await bot.send_message(ADMIN_ID, "🚗 Хамзат <b>ушёл</b>", parse_mode="HTML")
+            last_ts = _alert_state["person_khamzat_notif_ts"]
+            now_utc = datetime.now(timezone.utc)
+            cooldown_ok = (last_ts is None or
+                           (now_utc - last_ts).total_seconds() > 600)
+            if cooldown_ok:
+                if person == "home":
+                    await bot.send_message(ADMIN_ID, "🏠 Хамзат <b>дома</b>", parse_mode="HTML")
+                    _alert_state["person_khamzat_notif_ts"] = now_utc
+                elif prev == "home":
+                    await bot.send_message(ADMIN_ID, "🚗 Хамзат <b>ушёл</b>", parse_mode="HTML")
+                    _alert_state["person_khamzat_notif_ts"] = now_utc
         _alert_state["person_khamzat"] = person
     except Exception as e:
         log.error(f"Alert person check: {e}")
@@ -1581,9 +1632,18 @@ async def _web_index(request: aiohttp_web.Request) -> aiohttp_web.Response:
         headers={"Cache-Control": "no-cache"},
     )
 
+_CORS_HEADERS = {
+    "Access-Control-Allow-Origin":  "*",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+}
+
+async def _web_options(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    return aiohttp_web.Response(status=204, headers=_CORS_HEADERS)
+
 async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
     if not _check_token(request):
-        return aiohttp_web.Response(status=401, text="Unauthorized")
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
     try:
         results = await asyncio.gather(
             ha_get("states/sensor.moshchnost_vsego_doma"),
@@ -1638,34 +1698,38 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
         return aiohttp_web.Response(
             text=json.dumps(payload, ensure_ascii=False),
             content_type="application/json",
+            headers=_CORS_HEADERS,
         )
     except Exception as e:
         log.error(f"web_status error: {e}")
-        return aiohttp_web.Response(status=500, text=str(e))
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
 async def _web_action(request: aiohttp_web.Request) -> aiohttp_web.Response:
     if not _check_token(request):
-        return aiohttp_web.Response(status=401, text="Unauthorized")
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
     try:
         body = await request.json()
         service_str = body.get("service", "")   # e.g. "light.turn_on"
         entity_id   = body.get("entity_id", "")
         extra       = body.get("extra") or {}
         if "." not in service_str or not entity_id:
-            return aiohttp_web.Response(status=400, text="Bad request")
+            return aiohttp_web.Response(status=400, text="Bad request", headers=_CORS_HEADERS)
         domain, service = service_str.split(".", 1)
         await ha_call(domain, service, entity_id, extra or None)
-        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json")
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
     except Exception as e:
         log.error(f"web_action error: {e}")
-        return aiohttp_web.Response(status=500, text=str(e))
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
 async def _start_web():
     app = aiohttp_web.Application()
-    app.router.add_get("/ha-app/",           _web_index)
-    app.router.add_get("/ha-app",            _web_index)
-    app.router.add_get("/ha-app/api/status", _web_status)
-    app.router.add_post("/ha-app/api/action",_web_action)
+    app.router.add_get("/ha-app/",            _web_index)
+    app.router.add_get("/ha-app",             _web_index)
+    app.router.add_get("/ha-app/api/status",  _web_status)
+    app.router.add_post("/ha-app/api/action", _web_action)
+    app.router.add_route("OPTIONS", "/ha-app/api/status",  _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/action",  _web_options)
     runner = aiohttp_web.AppRunner(app)
     await runner.setup()
     site = aiohttp_web.TCPSite(runner, "127.0.0.1", 8766)
