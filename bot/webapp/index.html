@@ -1843,12 +1843,12 @@ function _closeVideoPlayer() {
 
 async function _sendClipToBot(clipUrl, eventId) {
   try {
-    showToast('📤 Отправляю видео...');
+    showToast('⏳ Скачиваю клип (~5-30 сек)...', 35000);
     const payload = {};
     if (eventId) payload.event_id = eventId;
     if (clipUrl) payload.clip_url = clipUrl;
-    await apiPost('/frigate/send', payload);
-    showToast('✅ Видео отправлено в Telegram');
+    const result = await apiPost('/frigate/send', payload);
+    showToast('✅ ' + (result.message || 'Отправлено в Telegram'));
   } catch(e) { showToast('❌ ' + e.message); }
 }
 
