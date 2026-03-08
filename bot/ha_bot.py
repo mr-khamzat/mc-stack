@@ -571,8 +571,8 @@ def main_kb() -> ReplyKeyboardMarkup:
         [KeyboardButton(text="📺 Телевизор"),      KeyboardButton(text="🤖 Пылесос")],
         [KeyboardButton(text="👪 Семья"),           KeyboardButton(text="🛒 Покупки")],
         [KeyboardButton(text="⚙️ Автоматизации"),  KeyboardButton(text="📹 Камеры")],
-        [KeyboardButton(text="🕌 Намаз"),           KeyboardButton(text="📊 Статус")],
-        [KeyboardButton(text="🧠 ИИ Ассистент")],
+        [KeyboardButton(text="🛠 Устройства"),      KeyboardButton(text="📊 Статус")],
+        [KeyboardButton(text="🕌 Намаз"),           KeyboardButton(text="🧠 ИИ Ассистент")],
         [KeyboardButton(text="🖥️ Панель управления", web_app=WebAppInfo(url=WEBAPP_URL))],
     ], resize_keyboard=True)
 
@@ -928,10 +928,12 @@ def lights_kb(states: dict) -> InlineKeyboardMarkup:
     for name, (domain, eid) in LIGHTS.items():
         icon = "🟡" if states.get(eid) == "on" else "⚫"
         builder.button(text=f"{icon} {name}", callback_data=f"lt:{domain}:{eid}")
-    builder.button(text="💡 Всё вкл",  callback_data="lights_all:on")
-    builder.button(text="🌑 Всё выкл", callback_data="lights_all:off")
-    builder.button(text="🔄 Обновить", callback_data="lights_refresh")
-    builder.adjust(2, 2, 2, 2, 1)
+    builder.button(text="💡 Всё вкл",    callback_data="lights_all:on")
+    builder.button(text="🌑 Всё выкл",   callback_data="lights_all:off")
+    builder.button(text="🛠 Настройки",  callback_data="lights_settings")
+    builder.button(text="🔄 Обновить",   callback_data="lights_refresh")
+    n = len(LIGHTS)
+    builder.adjust(*([2] * (n // 2 + n % 2)), 2, 1, 1)
     return builder.as_markup()
 
 @dp.message(F.text == "💡 Свет")
@@ -970,6 +972,14 @@ async def lights_refresh(cb: CallbackQuery):
     states = {e: await ha_state(e) for _, (_, e) in LIGHTS.items()}
     await cb.message.edit_reply_markup(reply_markup=lights_kb(states))
     await cb.answer("Обновлено")
+
+@dp.callback_query(F.data == "lights_settings")
+async def lights_settings(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    devices = _dev_load()
+    await cb.message.answer(_devices_main_text(devices), parse_mode="HTML",
+                             reply_markup=_devices_main_kb(devices))
+    await cb.answer()
 
 @dp.message(Command("lights_sync"))
 async def cmd_lights_sync(msg: Message):
@@ -1036,6 +1046,7 @@ def _devices_main_text(devices: dict) -> str:
     )
 
 @dp.message(Command("devices"))
+@dp.message(F.text == "🛠 Устройства")
 async def cmd_devices(msg: Message):
     if not is_admin(msg.from_user.id): return
     devices = _dev_load()
