@@ -53,10 +53,115 @@ WEBAPP_TOKEN = os.environ.get("WEBAPP_TOKEN", "")
 WEBAPP_URL   = "https://hub.office.mooo.com/ha-app/"
 WEBAPP_DIR   = Path("/opt/ha-bot/webapp")
 
-FAMILY_USERS_FILE = Path("/opt/ha-bot/family_users.json")
-DEVICES_FILE      = Path("/opt/ha-bot/devices.json")
-SECTIONS_FILE     = Path("/opt/ha-bot/sections.json")
-ACTIVITY_LOG_FILE = Path("/opt/ha-bot/activity_log.json")
+FAMILY_USERS_FILE  = Path("/opt/ha-bot/family_users.json")
+DEVICES_FILE       = Path("/opt/ha-bot/devices.json")
+SECTIONS_FILE      = Path("/opt/ha-bot/sections.json")
+ACTIVITY_LOG_FILE  = Path("/opt/ha-bot/activity_log.json")
+ALERTS_CONFIG_FILE = Path("/opt/ha-bot/alerts_config.json")
+SCENES_FILE        = Path("/opt/ha-bot/scenes.json")
+
+_ALERTS_DEFAULTS = {
+    "power_threshold":   3000,
+    "temp_min":          18,
+    "temp_max":          27,
+    "quiet_hours_start": 23,
+    "quiet_hours_end":   7,
+    "enabled": {
+        "power":   True,
+        "temp":    True,
+        "person":  True,
+        "namaz":   True,
+        "morning": True,
+        "frigate": True,
+    }
+}
+
+def _alerts_load() -> dict:
+    if ALERTS_CONFIG_FILE.exists():
+        try:
+            data = json.loads(ALERTS_CONFIG_FILE.read_text())
+            # merge with defaults for missing keys
+            cfg = dict(_ALERTS_DEFAULTS)
+            cfg.update(data)
+            cfg["enabled"] = {**_ALERTS_DEFAULTS["enabled"], **data.get("enabled", {})}
+            return cfg
+        except Exception:
+            pass
+    return dict(_ALERTS_DEFAULTS)
+
+def _alerts_save(cfg: dict):
+    try:
+        ALERTS_CONFIG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
+    except Exception as e:
+        log.error(f"alerts_save: {e}")
+
+# ── Сцены / Режимы ────────────────────────────────────────────────────────────
+_SCENES_DEFAULTS = {
+    "sleep": {
+        "name": "Спать",
+        "icon": "🌙",
+        "description": "Выключить весь свет",
+        "actions": [
+            {"entity_id": "light.svet_krovat",            "service": "light.turn_off"},
+            {"entity_id": "switch.vykliuchatel_kukhnia",  "service": "switch.turn_off"},
+            {"entity_id": "switch.kabinet_svet_pk_left",  "service": "switch.turn_off"},
+            {"entity_id": "switch.kabinet_svet_pk_right", "service": "switch.turn_off"},
+            {"entity_id": "switch.sonoff_100093f84f",     "service": "switch.turn_off"},
+            {"entity_id": "switch.sonoff_1000a60930",     "service": "switch.turn_off"},
+        ]
+    },
+    "away": {
+        "name": "Уходим",
+        "icon": "🚗",
+        "description": "Всё выключить",
+        "actions": [
+            {"entity_id": "light.svet_krovat",            "service": "light.turn_off"},
+            {"entity_id": "switch.vykliuchatel_kukhnia",  "service": "switch.turn_off"},
+            {"entity_id": "switch.kabinet_svet_pk_left",  "service": "switch.turn_off"},
+            {"entity_id": "switch.kabinet_svet_pk_right", "service": "switch.turn_off"},
+            {"entity_id": "switch.sonoff_100093f84f",     "service": "switch.turn_off"},
+            {"entity_id": "switch.sonoff_1000a60930",     "service": "switch.turn_off"},
+            {"entity_id": "media_player.android_tv",      "service": "media_player.turn_off"},
+        ]
+    },
+    "movie": {
+        "name": "Кино",
+        "icon": "🎬",
+        "description": "Приглушить свет, включить TV",
+        "actions": [
+            {"entity_id": "light.svet_krovat",            "service": "light.turn_on",
+             "extra": {"brightness_pct": 30}},
+            {"entity_id": "switch.vykliuchatel_kukhnia",  "service": "switch.turn_off"},
+            {"entity_id": "switch.sonoff_100093f84f",     "service": "switch.turn_off"},
+            {"entity_id": "media_player.android_tv",      "service": "media_player.turn_on"},
+        ]
+    },
+    "evening": {
+        "name": "Вечер",
+        "icon": "🌆",
+        "description": "Мягкий вечерний свет",
+        "actions": [
+            {"entity_id": "light.svet_krovat",            "service": "light.turn_on",
+             "extra": {"brightness_pct": 60, "color_temp": 400}},
+            {"entity_id": "switch.sonoff_100093f84f",     "service": "switch.turn_on"},
+            {"entity_id": "switch.vykliuchatel_kukhnia",  "service": "switch.turn_on"},
+        ]
+    },
+}
+
+def _scenes_load() -> dict:
+    if SCENES_FILE.exists():
+        try:
+            return json.loads(SCENES_FILE.read_text())
+        except Exception:
+            pass
+    return dict(_SCENES_DEFAULTS)
+
+def _scenes_save(scenes: dict):
+    try:
+        SCENES_FILE.write_text(json.dumps(scenes, ensure_ascii=False, indent=2))
+    except Exception as e:
+        log.error(f"scenes_save: {e}")
 
 _BOT_START_TIME   = _time.time()
 _BOT_VERSION      = "3.4"
@@ -629,7 +734,34 @@ def main_kb() -> ReplyKeyboardMarkup:
 # ── /start ────────────────────────────────────────────────────────────────────
 @dp.message(Command("start"))
 async def cmd_start(msg: Message, state: FSMContext):
-    uid = msg.from_user.id
+    uid  = msg.from_user.id
+    args = (msg.text or "").split(maxsplit=1)
+    deep = args[1] if len(args) > 1 else ""
+
+    # Handle invite deep link
+    if deep.startswith("inv_"):
+        code = deep[4:]
+        inv  = _invite_codes.get(code)
+        if inv and (_time.time() - inv["ts"]) < 86400:
+            del _invite_codes[code]
+            role  = inv["role"]
+            fname = msg.from_user.full_name or str(uid)
+            users = _load_family_users()
+            users[str(uid)] = {"name": fname, "role": role, "added_ts": datetime.now().isoformat()}
+            _save_family_users(users)
+            _activity_log("user_joined_invite", f"{fname} [{role}]")
+            kb = main_kb() if role == "admin" else family_kb()
+            await msg.answer(
+                f"✅ <b>Доступ получен!</b>\n"
+                f"Добро пожаловать, {fname}!\nРоль: {role}",
+                parse_mode="HTML", reply_markup=kb
+            )
+            await bot.send_message(ADMIN_ID, f"✅ {fname} (ID: {uid}) присоединился по инвайт [{role}]")
+            return
+        else:
+            await msg.answer("❌ Ссылка недействительна или истекла.")
+            return
+
     if is_admin(uid):
         await state.clear()
         await msg.answer(
@@ -645,8 +777,12 @@ async def cmd_start(msg: Message, state: FSMContext):
         )
         return
     if is_family(uid):
-        name = _user_name(uid)
-        await msg.answer(f"👋 Привет, {name}!", reply_markup=family_kb())
+        users = _load_family_users()
+        info  = users.get(str(uid), {})
+        name  = info.get("name", str(uid))
+        role  = info.get("role", "viewer")
+        kb    = main_kb() if role == "admin" else family_kb()
+        await msg.answer(f"👋 Привет, {name}!", reply_markup=kb)
         return
     # Unknown user — notify admin
     uname  = f"@{msg.from_user.username}" if msg.from_user.username else "—"
@@ -716,16 +852,43 @@ async def cmd_users(msg: Message):
     if not is_admin(msg.from_user.id): return
     users = _load_family_users()
     if not users:
-        await msg.answer("Нет добавленных пользователей.")
+        await msg.answer("Нет добавленных пользователей.\n\n/invite — пригласить нового")
         return
     builder = InlineKeyboardBuilder()
     for fuid, info in users.items():
         uname = info.get("name", fuid)
-        builder.button(text=f"❌ {uname}", callback_data=f"usr:del:{fuid}")
+        role  = info.get("role", "viewer")
+        builder.button(text=f"❌ {uname} [{role}]", callback_data=f"usr:del:{fuid}")
     builder.adjust(1)
-    lines = [f"• <b>{v['name']}</b> (ID: <code>{k}</code>)" for k, v in users.items()]
-    await msg.answer("👥 <b>Пользователи бота:</b>\n" + "\n".join(lines),
-                     parse_mode="HTML", reply_markup=builder.as_markup())
+    lines = [f"• <b>{v.get('name', k)}</b> [{v.get('role','viewer')}] (ID: <code>{k}</code>)"
+             for k, v in users.items()]
+    await msg.answer(
+        "👥 <b>Пользователи бота:</b>\n" + "\n".join(lines) +
+        "\n\n/invite — пригласить нового",
+        parse_mode="HTML", reply_markup=builder.as_markup())
+
+# ── /invite — одноразовая ссылка ──────────────────────────────────────────────
+import secrets as _secrets
+_invite_codes: dict = {}  # {code: {"role": "viewer"|"admin", "ts": float}}
+
+@dp.message(Command("invite"))
+async def cmd_invite(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    parts = (msg.text or "").split()
+    role  = "viewer"
+    if len(parts) > 1 and parts[1] in ("viewer", "admin"):
+        role = parts[1]
+    code = _secrets.token_urlsafe(8)
+    _invite_codes[code] = {"role": role, "ts": _time.time()}
+    # Get bot username for link
+    me = await bot.get_me()
+    link = f"https://t.me/{me.username}?start=inv_{code}"
+    await msg.answer(
+        f"🔗 <b>Ссылка-приглашение [{role}]</b>\n"
+        f"Действует 24 часа:\n\n<code>{link}</code>\n\n"
+        "Отправь эту ссылку пользователю.",
+        parse_mode="HTML"
+    )
 
 @dp.callback_query(F.data.startswith("usr:del:"))
 async def usr_del_cb(cb: CallbackQuery):
@@ -2124,6 +2287,9 @@ _alert_state = {
     "last_briefing_day":       None,
     "last_weekly_report":      None,   # "week_10_2026"
     "last_monthly_report":     None,   # "2026-03"
+    "all_away":                False,  # все ушли из дома
+    "all_away_notif_ts":       None,
+    "last_recognized_face":    None,   # последнее распознанное лицо
 }
 
 async def alert_loop():
@@ -2136,63 +2302,139 @@ async def alert_loop():
         await asyncio.sleep(60)
 
 async def _check_alerts():
-    power_d, temp_d, person_d = await asyncio.gather(
+    family = await get_family()  # {name: entity_id}
+    person_eids = list(family.values()) or ["person.khamzat"]
+    gather_items = [
         ha_get("states/sensor.moshchnost_vsego_doma"),
         ha_get("states/sensor.temp_detskaia_temperature"),
         ha_get("states/person.khamzat"),
-    )
+        ha_get("states/sensor.cam_a6810678_last_recognized_face"),
+        *[ha_get(f"states/{eid}") for eid in person_eids],
+    ]
+    results = await asyncio.gather(*gather_items)
+    power_d  = results[0]
+    temp_d   = results[1]
+    person_d = results[2]
+    face_d   = results[3]
+    all_persons = results[4:]  # parallel to person_eids
+
+    acfg = _alerts_load()
+    now_h = datetime.now(MSK).hour
+    # Quiet hours check
+    qs, qe = acfg["quiet_hours_start"], acfg["quiet_hours_end"]
+    in_quiet = (qs > qe and (now_h >= qs or now_h < qe)) or (qs < qe and qs <= now_h < qe)
 
     # ⚡ Высокая мощность
-    try:
-        power = float(power_d.get("state", 0)) if power_d else 0
-        if power > 3000 and not _alert_state["power_high"]:
-            _alert_state["power_high"] = True
-            await bot.send_message(ADMIN_ID, f"⚡ <b>Высокая нагрузка!</b> {power:.0f} Вт", parse_mode="HTML")
-        elif power <= 3000 and _alert_state["power_high"]:
-            _alert_state["power_high"] = False
-    except Exception as e:
-        log.error(f"Alert power check: {e}")
+    if acfg["enabled"].get("power", True) and not in_quiet:
+        try:
+            power = float(power_d.get("state", 0)) if power_d else 0
+            thr = acfg["power_threshold"]
+            if power > thr and not _alert_state["power_high"]:
+                _alert_state["power_high"] = True
+                await bot.send_message(ADMIN_ID, f"⚡ <b>Высокая нагрузка!</b> {power:.0f} Вт (порог {thr} Вт)", parse_mode="HTML")
+            elif power <= thr and _alert_state["power_high"]:
+                _alert_state["power_high"] = False
+        except Exception as e:
+            log.error(f"Alert power check: {e}")
 
     # 🌡️ Температура детской
-    try:
-        temp = float(temp_d.get("state", 20)) if temp_d else 20
-        if temp < 18 and not _alert_state["temp_low"]:
-            _alert_state["temp_low"] = True
-            await bot.send_message(ADMIN_ID, f"🥶 <b>Холодно в детской!</b> {temp}°C", parse_mode="HTML")
-        elif temp >= 18:
-            _alert_state["temp_low"] = False
-        if temp > 27 and not _alert_state["temp_high"]:
-            _alert_state["temp_high"] = True
-            await bot.send_message(ADMIN_ID, f"🥵 <b>Жарко в детской!</b> {temp}°C", parse_mode="HTML")
-        elif temp <= 27:
-            _alert_state["temp_high"] = False
-    except Exception as e:
-        log.error(f"Alert temp check: {e}")
+    if acfg["enabled"].get("temp", True):
+        try:
+            temp = float(temp_d.get("state", 20)) if temp_d else 20
+            t_min, t_max = acfg["temp_min"], acfg["temp_max"]
+            if temp < t_min and not _alert_state["temp_low"]:
+                _alert_state["temp_low"] = True
+                await bot.send_message(ADMIN_ID, f"🥶 <b>Холодно в детской!</b> {temp}°C (мин {t_min}°C)", parse_mode="HTML")
+            elif temp >= t_min:
+                _alert_state["temp_low"] = False
+            if temp > t_max and not _alert_state["temp_high"]:
+                _alert_state["temp_high"] = True
+                await bot.send_message(ADMIN_ID, f"🥵 <b>Жарко в детской!</b> {temp}°C (макс {t_max}°C)", parse_mode="HTML")
+            elif temp <= t_max:
+                _alert_state["temp_high"] = False
+        except Exception as e:
+            log.error(f"Alert temp check: {e}")
 
     # 🏠 Приход/уход Хамзата (кулдаун 10 мин, чтобы не спамить при колебаниях HA)
+    if acfg["enabled"].get("person", True):
+        try:
+            person = person_d.get("state", "?") if person_d else "?"
+            prev   = _alert_state["person_khamzat"]
+            if prev is not None and prev != person:
+                last_ts = _alert_state["person_khamzat_notif_ts"]
+                now_utc = datetime.now(timezone.utc)
+                cooldown_ok = (last_ts is None or
+                               (now_utc - last_ts).total_seconds() > 600)
+                if cooldown_ok:
+                    if person == "home":
+                        await bot.send_message(ADMIN_ID, "🏠 Хамзат <b>дома</b>", parse_mode="HTML")
+                        _alert_state["person_khamzat_notif_ts"] = now_utc
+                    elif prev == "home":
+                        await bot.send_message(ADMIN_ID, "🚗 Хамзат <b>ушёл</b>", parse_mode="HTML")
+                        _alert_state["person_khamzat_notif_ts"] = now_utc
+            _alert_state["person_khamzat"] = person
+        except Exception as e:
+            log.error(f"Alert person check: {e}")
+
+    # 🏠 Geofencing — все ушли из дома
+    if acfg["enabled"].get("person", True):
+        try:
+            person_states = [d.get("state", "?") if d else "?" for d in all_persons]
+            anyone_home = any(s == "home" for s in person_states)
+            prev_all_away = _alert_state["all_away"]
+            if not anyone_home and not prev_all_away:
+                # Everyone just left
+                _alert_state["all_away"] = True
+                last_ts = _alert_state["all_away_notif_ts"]
+                now_utc = datetime.now(timezone.utc)
+                cooldown_ok = last_ts is None or (now_utc - last_ts).total_seconds() > 1800
+                if cooldown_ok:
+                    _alert_state["all_away_notif_ts"] = now_utc
+                    # Send camera snapshot
+                    cap = "🏃 <b>Все ушли из дома!</b>\nСнимок камеры:"
+                    try:
+                        img_d = await ha_get("states/image.cam_a6810678_person")
+                        if img_d:
+                            tok = img_d.get("attributes", {}).get("access_token", "")
+                            snap_url = f"{HA_URL}/api/image_proxy/image.cam_a6810678_person?token={tok}"
+                            async with aiohttp.ClientSession() as sess:
+                                async with sess.get(snap_url, headers=HA_HEADERS, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                                    if r.status == 200:
+                                        img_bytes = await r.read()
+                                        await bot.send_photo(ADMIN_ID, BufferedInputFile(img_bytes, "geofence.jpg"), caption=cap, parse_mode="HTML")
+                                        _activity_log("geofence_all_away", "snapshot sent")
+                                        _alert_state["all_away"] = True
+                                        return
+                    except Exception:
+                        pass
+                    await bot.send_message(ADMIN_ID, cap, parse_mode="HTML")
+                    _activity_log("geofence_all_away", "text only")
+            elif anyone_home and prev_all_away:
+                _alert_state["all_away"] = False
+        except Exception as e:
+            log.error(f"Alert geofence check: {e}")
+
+    # 📸 Распознавание лиц
     try:
-        person = person_d.get("state", "?") if person_d else "?"
-        prev   = _alert_state["person_khamzat"]
-        if prev is not None and prev != person:
-            last_ts = _alert_state["person_khamzat_notif_ts"]
-            now_utc = datetime.now(timezone.utc)
-            cooldown_ok = (last_ts is None or
-                           (now_utc - last_ts).total_seconds() > 600)
-            if cooldown_ok:
-                if person == "home":
-                    await bot.send_message(ADMIN_ID, "🏠 Хамзат <b>дома</b>", parse_mode="HTML")
-                    _alert_state["person_khamzat_notif_ts"] = now_utc
-                elif prev == "home":
-                    await bot.send_message(ADMIN_ID, "🚗 Хамзат <b>ушёл</b>", parse_mode="HTML")
-                    _alert_state["person_khamzat_notif_ts"] = now_utc
-        _alert_state["person_khamzat"] = person
+        face = face_d.get("state", "") if face_d else ""
+        prev_face = _alert_state["last_recognized_face"]
+        if face and face not in ("unknown", "unavailable", "none", "?", "") and face != prev_face:
+            _alert_state["last_recognized_face"] = face
+            if prev_face is not None:  # skip initial state
+                await bot.send_message(ADMIN_ID, f"👤 <b>Пришёл {face}!</b>\nРаспознан камерой.", parse_mode="HTML")
+                _activity_log("face_recognized", face)
+        elif not face:
+            pass
+        else:
+            _alert_state["last_recognized_face"] = face
     except Exception as e:
-        log.error(f"Alert person check: {e}")
+        log.error(f"Alert face check: {e}")
 
     # 🕌 Намаз — уведомление за 15 минут по расписанию Aladhan
     try:
         now_msk = datetime.now(MSK)
-        timings = await get_prayer_times()
+        timings = await get_prayer_times() if acfg["enabled"].get("namaz", True) else None
+        timings = timings or {}
         if timings:
             for p_name in PRAYERS_ORDER:
                 p_time_str = timings.get(p_name, "")
@@ -2223,7 +2465,7 @@ async def _check_alerts():
 
     # 🌅 Утренняя сводка в 8:00
     now = datetime.now()
-    if now.hour == 8 and now.minute < 1:
+    if acfg["enabled"].get("morning", True) and now.hour == 8 and now.minute < 1:
         today = now.date().isoformat()
         if _alert_state["last_briefing_day"] != today:
             _alert_state["last_briefing_day"] = today
@@ -2425,6 +2667,108 @@ async def _web_health(request: aiohttp_web.Request) -> aiohttp_web.Response:
         headers=_CORS_HEADERS,
     )
 
+async def _web_scenes_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/scenes — список сцен."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    return aiohttp_web.Response(
+        text=json.dumps(_scenes_load(), ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+async def _web_scenes_post(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/scenes — создать/обновить сцену.
+    Body: {id, name, icon, description, actions: [{entity_id, service, extra?}]}"""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body = await request.json()
+        scene_id = body.get("id", "").strip()
+        if not scene_id:
+            return aiohttp_web.Response(status=400, text="id required", headers=_CORS_HEADERS)
+        scenes = _scenes_load()
+        scenes[scene_id] = {
+            "name":        body.get("name", scene_id),
+            "icon":        body.get("icon", "⭐"),
+            "description": body.get("description", ""),
+            "actions":     body.get("actions", []),
+        }
+        _scenes_save(scenes)
+        _activity_log("scene_saved", scene_id)
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+async def _web_scenes_delete(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """DELETE /ha-app/api/scenes/{id} — удалить сцену."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    scene_id = request.match_info.get("scene_id", "")
+    scenes = _scenes_load()
+    if scene_id in scenes:
+        del scenes[scene_id]
+        _scenes_save(scenes)
+        _activity_log("scene_deleted", scene_id)
+    return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                headers=_CORS_HEADERS)
+
+async def _web_scenes_run(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/scenes/{id}/run — запустить сцену."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    scene_id = request.match_info.get("scene_id", "")
+    scenes = _scenes_load()
+    scene = scenes.get(scene_id)
+    if not scene:
+        return aiohttp_web.Response(status=404, text="Scene not found", headers=_CORS_HEADERS)
+    errors = []
+    for action in scene.get("actions", []):
+        eid = action.get("entity_id", "")
+        svc = action.get("service", "")
+        extra = action.get("extra")
+        if not eid or not svc or "." not in svc:
+            continue
+        domain, service = svc.split(".", 1)
+        try:
+            await ha_call(domain, service, eid, extra)
+        except Exception as e:
+            errors.append(str(e))
+    _activity_log("scene_run", scene.get("name", scene_id))
+    # Invalidate status cache
+    _status_cache["ts"] = 0.0
+    result = {"ok": True, "scene": scene.get("name", scene_id), "actions": len(scene.get("actions", []))}
+    if errors:
+        result["errors"] = errors
+    return aiohttp_web.Response(text=json.dumps(result, ensure_ascii=False),
+                                content_type="application/json", headers=_CORS_HEADERS)
+
+async def _web_alerts_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/alerts — текущая конфигурация алертов."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    return aiohttp_web.Response(
+        text=json.dumps(_alerts_load(), ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+async def _web_alerts_post(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/alerts — сохранить конфигурацию алертов."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body = await request.json()
+        cfg  = _alerts_load()
+        for key in ("power_threshold", "temp_min", "temp_max", "quiet_hours_start", "quiet_hours_end"):
+            if key in body:
+                cfg[key] = int(body[key])
+        if "enabled" in body and isinstance(body["enabled"], dict):
+            cfg["enabled"].update(body["enabled"])
+        _alerts_save(cfg)
+        _activity_log("alerts_saved", str(cfg))
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
 async def _web_activity(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/api/activity — последние 50 событий из activity_log.json."""
     if not _check_token(request):
@@ -2443,6 +2787,115 @@ async def _web_activity(request: aiohttp_web.Request) -> aiohttp_web.Response:
         )
     except Exception as e:
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+# ── SSE (Server-Sent Events) real-time ───────────────────────────────────────
+_sse_clients: set = set()  # set of asyncio.Queue
+
+async def _sse_broadcast(entity_id: str, state: str, attrs: dict):
+    """Push state update to all connected SSE clients."""
+    payload = json.dumps({"entity_id": entity_id, "state": state, "attributes": attrs},
+                         ensure_ascii=False)
+    dead = set()
+    for q in _sse_clients:
+        try:
+            q.put_nowait(payload)
+        except asyncio.QueueFull:
+            dead.add(q)
+    _sse_clients -= dead
+
+def _check_token_qs(request: aiohttp_web.Request) -> bool:
+    """Check auth token from Authorization header or ?token= query param."""
+    auth = request.headers.get("Authorization", "")
+    if auth == f"Bearer {WEBAPP_TOKEN}":
+        return True
+    return request.rel_url.query.get("token") == WEBAPP_TOKEN
+
+async def _web_sse(request: aiohttp_web.Request) -> aiohttp_web.StreamResponse:
+    """GET /ha-app/api/events — SSE stream of HA state changes."""
+    if not _check_token_qs(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    headers = {
+        "Content-Type":  "text/event-stream",
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        **{k: v for k, v in _CORS_HEADERS.items()},
+    }
+    response = aiohttp_web.StreamResponse(headers=headers)
+    await response.prepare(request)
+    # Send initial "connected" event
+    await response.write(b"event: connected\ndata: {}\n\n")
+    queue: asyncio.Queue = asyncio.Queue(maxsize=50)
+    _sse_clients.add(queue)
+    try:
+        while True:
+            try:
+                payload = await asyncio.wait_for(queue.get(), timeout=25)
+                await response.write(f"data: {payload}\n\n".encode())
+            except asyncio.TimeoutError:
+                # Keepalive ping
+                await response.write(b": ping\n\n")
+    except (ConnectionResetError, asyncio.CancelledError):
+        pass
+    finally:
+        _sse_clients.discard(queue)
+    return response
+
+async def _ha_state_watch_loop():
+    """Subscribe to HA state_changed events → broadcast via SSE."""
+    if not HAS_WS:
+        return
+    ha_ws = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
+    ssl_ctx = _ssl.create_default_context()
+    watch_eids: set[str] = set()
+
+    while True:
+        try:
+            async with websockets.connect(ha_ws, ssl=ssl_ctx, ping_interval=20, open_timeout=15) as ws:
+                msg = json.loads(await asyncio.wait_for(ws.recv(), 10))
+                await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
+                msg = json.loads(await asyncio.wait_for(ws.recv(), 10))
+                if msg.get("type") != "auth_ok":
+                    await asyncio.sleep(15)
+                    continue
+                # Subscribe to state_changed
+                await ws.send(json.dumps({"id": 1, "type": "subscribe_events",
+                                          "event_type": "state_changed"}))
+                await ws.recv()
+                log.info("HA state watch: subscribed to state_changed")
+                async for raw in ws:
+                    try:
+                        msg = json.loads(raw)
+                        if msg.get("type") != "event":
+                            continue
+                        evt  = msg.get("event", {})
+                        data = evt.get("data", {})
+                        eid  = data.get("entity_id", "")
+                        new_state = data.get("new_state")
+                        if not new_state or not eid:
+                            continue
+                        state  = new_state.get("state", "")
+                        attrs  = new_state.get("attributes", {})
+                        # Only broadcast for entities we track (lights, devices, key sensors)
+                        devs = _dev_load()
+                        relevant = (
+                            eid in devs or
+                            eid.startswith("light.") or
+                            eid.startswith("switch.") or
+                            eid == "sensor.moshchnost_vsego_doma" or
+                            eid == f"{TV_EID}" or
+                            eid.startswith("person.")
+                        )
+                        if relevant and _sse_clients:
+                            # Invalidate status cache on relevant change
+                            _status_cache["ts"] = 0.0
+                            await _sse_broadcast(eid, state, {
+                                "friendly_name": attrs.get("friendly_name", ""),
+                            })
+                    except Exception:
+                        pass
+        except Exception as e:
+            log.warning(f"HA state watch loop: {e}")
+            await asyncio.sleep(10)
 
 async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
     if not _check_token(request):
@@ -2640,6 +3093,7 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
             },
             "prayers": prayers_data,
             "weather": weather_payload,
+            "last_face": _alert_state.get("last_recognized_face") or "",
         }
         payload_json = json.dumps(payload, ensure_ascii=False)
         _status_cache["ts"]   = _time.time()
@@ -3148,8 +3602,15 @@ async def _start_web():
     app = aiohttp_web.Application()
     app.router.add_get("/ha-app/",                  _web_index)
     app.router.add_get("/ha-app",                   _web_index)
-    app.router.add_get("/ha-app/api/health",        _web_health)
-    app.router.add_get("/ha-app/api/activity",      _web_activity)
+    app.router.add_get("/ha-app/api/health",              _web_health)
+    app.router.add_get("/ha-app/api/activity",            _web_activity)
+    app.router.add_get("/ha-app/api/alerts",              _web_alerts_get)
+    app.router.add_post("/ha-app/api/alerts",             _web_alerts_post)
+    app.router.add_get("/ha-app/api/scenes",              _web_scenes_get)
+    app.router.add_post("/ha-app/api/scenes",             _web_scenes_post)
+    app.router.add_delete("/ha-app/api/scenes/{scene_id}", _web_scenes_delete)
+    app.router.add_post("/ha-app/api/scenes/{scene_id}/run", _web_scenes_run)
+    app.router.add_get("/ha-app/api/events",              _web_sse)
     app.router.add_get("/ha-app/api/status",        _web_status)
     app.router.add_post("/ha-app/api/action",       _web_action)
     app.router.add_get("/ha-app/api/devices",       _web_devices_get)
@@ -3173,6 +3634,8 @@ async def _start_web():
     app.router.add_route("OPTIONS", "/ha-app/api/ha_entities",  _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/sections",     _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/activity",     _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/alerts",       _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/scenes",       _web_options)
     runner = aiohttp_web.AppRunner(app)
     await runner.setup()
     site = aiohttp_web.TCPSite(runner, "127.0.0.1", 8766)
@@ -3250,6 +3713,7 @@ async def main():
     asyncio.create_task(alert_loop())
     asyncio.create_task(_start_web())
     asyncio.create_task(_frigate_event_loop())
+    asyncio.create_task(_ha_state_watch_loop())
     _activity_log("bot_start", f"v{_BOT_VERSION}")
     await bot.send_message(
         ADMIN_ID,

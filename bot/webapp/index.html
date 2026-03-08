@@ -546,6 +546,20 @@ body {
 .activity-ts { color: #60608a; white-space: nowrap; }
 .activity-action { color: #c0c0e0; font-weight: 500; flex: 1; }
 .activity-detail { color: #808090; }
+
+/* Scenes */
+.scene-btn { background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(139,92,246,0.15)); border: 1px solid rgba(99,102,241,0.25); border-radius: 14px; padding: 14px 10px; text-align: center; cursor: pointer; transition: all 0.2s; user-select: none; }
+.scene-btn:active { transform: scale(0.96); opacity: 0.85; }
+.scene-btn .scene-icon { font-size: 28px; display: block; margin-bottom: 6px; }
+.scene-btn .scene-name { font-size: 13px; font-weight: 600; color: #d0d0f0; display: block; }
+.scene-btn .scene-desc { font-size: 10px; color: #60608a; display: block; margin-top: 3px; }
+
+/* Alerts config */
+.alert-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.alert-row:last-child { border-bottom: none; }
+.alert-label { flex: 1; font-size: 13px; color: #c0c0e0; }
+.alert-input { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; color: #e0e0f0; font-size: 14px; padding: 4px 8px; width: 70px; text-align: center; }
+.alerts-section-title { font-size: 11px; color: #6060a0; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; margin: 12px 0 6px; }
 </style>
 </head>
 <body>
@@ -770,6 +784,36 @@ body {
 
   <!-- dynamic sections rendered by JS -->
   <div id="dynamic-sections"></div>
+
+  <!-- SCENES -->
+  <div class="section">
+    <div class="section-header" onclick="toggleSection('sec-scenes-body'); if(!_scenesLoaded) loadScenes()">
+      <span>🎭 Сцены / Режимы</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body" id="sec-scenes-body">
+      <div class="section-content">
+        <div id="scenes-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px;grid-column:span 2">Откройте для загрузки</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ALERTS CONFIG -->
+  <div class="section">
+    <div class="section-header" onclick="toggleSection('sec-alerts-body'); if(!_alertsLoaded) loadAlerts()">
+      <span>🔔 Алерты</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body" id="sec-alerts-body">
+      <div class="section-content">
+        <div id="alerts-content">
+          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Откройте для настройки</div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- ACTIVITY LOG -->
   <div class="section">
@@ -1179,6 +1223,53 @@ async function loadStatus() {
   }
 }
 
+// ── SSE real-time updates ──────────────────────────────────────────────────
+let _sseSource = null;
+let _sseReconnectTimer = null;
+
+function startSSE() {
+  if (_sseSource && _sseSource.readyState !== EventSource.CLOSED) return;
+  const url = `${API_BASE}/events?token=${encodeURIComponent(API_TOKEN)}`;
+  _sseSource = new EventSource(url);
+  _sseSource.addEventListener('connected', () => {
+    // console.log('SSE connected');
+  });
+  _sseSource.onmessage = (e) => {
+    try {
+      const d = JSON.parse(e.data);
+      handleSSEUpdate(d);
+    } catch(_) {}
+  };
+  _sseSource.onerror = () => {
+    _sseSource.close();
+    _sseSource = null;
+    if (_sseReconnectTimer) clearTimeout(_sseReconnectTimer);
+    _sseReconnectTimer = setTimeout(startSSE, 8000);
+  };
+}
+
+function handleSSEUpdate(d) {
+  if (!d || !d.entity_id) return;
+  const eid = d.entity_id;
+  const state = d.state;
+  // Update light button if exists
+  const lightBtn = document.getElementById('light-' + eid.replace(/\./g, '_').replace(/[^a-zA-Z0-9_-]/g, ''));
+  if (lightBtn) {
+    const isOn = state === 'on';
+    lightBtn.className = 'light-btn ' + (isOn ? 'on' : 'off');
+  }
+  // Update power stat
+  if (eid === 'sensor.moshchnost_vsego_doma') {
+    const el = document.getElementById('stat-power');
+    if (el) el.innerHTML = parseFloat(state).toFixed(0) + '<span class="stat-unit"> Вт</span>';
+  }
+  // For most entity changes, just refresh full status (cache already invalidated server-side)
+  // Do it with a small debounce to avoid rapid refresh
+  if (_sseRefreshTimer) clearTimeout(_sseRefreshTimer);
+  _sseRefreshTimer = setTimeout(loadStatus, 1500);
+}
+let _sseRefreshTimer = null;
+
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
   const timer = setTimeout(hideLoading, 8000);
@@ -1190,7 +1281,10 @@ async function init() {
     clearTimeout(timer);
     hideLoading();
   }
+  // Fallback polling every 30s (SSE handles real-time updates)
   setInterval(loadStatus, 30000);
+  // Start SSE for real-time updates
+  startSSE();
 }
 
 // ── Actions ────────────────────────────────────────────────────────────────
@@ -1294,6 +1388,139 @@ function toggleSettings() {
   body.classList.toggle('open');
   chevron.textContent = isOpen ? '▾' : '▴';
   if (!isOpen && !settingsLoaded) loadSettings();
+}
+
+// ── Scenes ─────────────────────────────────────────────────────────────────
+let _scenesLoaded = false;
+
+async function loadScenes() {
+  const grid = document.getElementById('scenes-grid');
+  grid.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px;grid-column:span 2">Загрузка...</div>';
+  try {
+    const scenes = await api('/scenes');
+    _scenesLoaded = true;
+    const entries = Object.entries(scenes);
+    if (!entries.length) {
+      grid.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px;grid-column:span 2">Нет сцен</div>';
+      return;
+    }
+    grid.innerHTML = entries.map(([id, s]) => `
+      <div class="scene-btn" onclick="runScene('${escapeAttr(id)}', this)">
+        <span class="scene-icon">${escapeHtml(s.icon || '⭐')}</span>
+        <span class="scene-name">${escapeHtml(s.name || id)}</span>
+        <span class="scene-desc">${escapeHtml(s.description || '')}</span>
+      </div>`).join('') +
+      `<div style="grid-column:span 2;margin-top:6px">
+        <button class="btn btn-neutral" style="width:100%" onclick="loadScenes()">🔄 Обновить</button>
+      </div>`;
+  } catch(e) {
+    grid.innerHTML = '<div style="color:#ef4444;font-size:13px;text-align:center;padding:10px;grid-column:span 2">Ошибка: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+async function runScene(id, btn) {
+  const origHTML = btn.innerHTML;
+  btn.style.opacity = '0.5';
+  btn.style.pointerEvents = 'none';
+  try {
+    const res = await api(`/scenes/${encodeURIComponent(id)}/run`, 'POST', {});
+    showToast(`✅ Сцена "${res.scene}" запущена (${res.actions} действий)`);
+    setTimeout(loadStatus, 1500);
+  } catch(e) {
+    showToast('❌ ' + e.message);
+  } finally {
+    btn.style.opacity = '';
+    btn.style.pointerEvents = '';
+  }
+}
+
+// ── Alerts config ──────────────────────────────────────────────────────────
+let _alertsLoaded = false;
+let _alertsCfg = null;
+
+async function loadAlerts() {
+  const el = document.getElementById('alerts-content');
+  el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div>';
+  try {
+    _alertsCfg = await api('/alerts');
+    _alertsLoaded = true;
+    renderAlerts();
+  } catch(e) {
+    el.innerHTML = '<div style="color:#ef4444;font-size:13px;text-align:center;padding:10px">Ошибка: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function renderAlerts() {
+  const el = document.getElementById('alerts-content');
+  if (!_alertsCfg) return;
+  const c = _alertsCfg;
+  const ena = c.enabled || {};
+  const toggleHtml = (key, label) => {
+    const on = ena[key] !== false;
+    return `<div class="alert-row">
+      <span class="alert-label">${escapeHtml(label)}</span>
+      <label class="dev-toggle"><input type="checkbox" ${on ? 'checked' : ''} onchange="toggleAlert('${escapeAttr(key)}', this.checked)"><span class="dev-toggle-slider"></span></label>
+    </div>`;
+  };
+  el.innerHTML = `
+    <div class="alerts-section-title">Типы алертов</div>
+    ${toggleHtml('power',   '⚡ Высокая мощность')}
+    ${toggleHtml('temp',    '🌡️ Температура детской')}
+    ${toggleHtml('person',  '🏠 Приход/уход Хамзата')}
+    ${toggleHtml('namaz',   '🕌 Напоминание о намазе')}
+    ${toggleHtml('morning', '🌅 Утренняя сводка')}
+    ${toggleHtml('frigate', '📹 Детекция камеры')}
+    <div class="alerts-section-title" style="margin-top:16px">Пороги</div>
+    <div class="alert-row">
+      <span class="alert-label">⚡ Порог мощности (Вт)</span>
+      <input class="alert-input" type="number" value="${c.power_threshold}" min="500" max="10000" step="100" id="alert-power-thr">
+    </div>
+    <div class="alert-row">
+      <span class="alert-label">🥶 Мин. температура (°C)</span>
+      <input class="alert-input" type="number" value="${c.temp_min}" min="5" max="30" step="1" id="alert-temp-min">
+    </div>
+    <div class="alert-row">
+      <span class="alert-label">🥵 Макс. температура (°C)</span>
+      <input class="alert-input" type="number" value="${c.temp_max}" min="15" max="40" step="1" id="alert-temp-max">
+    </div>
+    <div class="alerts-section-title" style="margin-top:16px">Тихие часы (без алертов)</div>
+    <div class="alert-row">
+      <span class="alert-label">С (час)</span>
+      <input class="alert-input" type="number" value="${c.quiet_hours_start}" min="0" max="23" step="1" id="alert-quiet-start">
+    </div>
+    <div class="alert-row">
+      <span class="alert-label">До (час)</span>
+      <input class="alert-input" type="number" value="${c.quiet_hours_end}" min="0" max="23" step="1" id="alert-quiet-end">
+    </div>
+    <div style="margin-top:12px">
+      <button class="btn btn-primary" style="width:100%" onclick="saveAlerts()">💾 Сохранить</button>
+    </div>`;
+}
+
+async function toggleAlert(key, value) {
+  if (!_alertsCfg) return;
+  _alertsCfg.enabled[key] = value;
+  try {
+    await api('/alerts', 'POST', { enabled: { [key]: value } });
+    showToast(value ? `✅ Алерт "${key}" включён` : `🔕 Алерт "${key}" отключён`);
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+async function saveAlerts() {
+  const get = (id) => { const el = document.getElementById(id); return el ? parseInt(el.value) : null; };
+  const body = {
+    power_threshold:   get('alert-power-thr'),
+    temp_min:          get('alert-temp-min'),
+    temp_max:          get('alert-temp-max'),
+    quiet_hours_start: get('alert-quiet-start'),
+    quiet_hours_end:   get('alert-quiet-end'),
+    enabled: _alertsCfg ? _alertsCfg.enabled : {},
+  };
+  try {
+    await api('/alerts', 'POST', body);
+    showToast('✅ Настройки алертов сохранены');
+    await loadAlerts();
+  } catch(e) { showToast('❌ ' + e.message); }
 }
 
 // ── Activity log ────────────────────────────────────────────────────────────
