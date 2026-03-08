@@ -468,6 +468,71 @@ body {
 .forecast-label { font-size: 11px; color: #6060a0; margin-bottom: 4px; }
 .forecast-icon  { font-size: 22px; margin: 3px 0; }
 .forecast-range { font-size: 12px; font-weight: 600; color: #c0c0e0; }
+
+/* Settings / Devices section */
+.dev-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  transition: opacity 0.2s;
+}
+.dev-icon-btn {
+  font-size: 22px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  width: 34px;
+  flex-shrink: 0;
+  text-align: center;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+.dev-info { flex: 1; min-width: 0; cursor: pointer; }
+.dev-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #c0c0e0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dev-eid { font-size: 10px; color: #50508a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dev-controls { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.dev-section-btn {
+  font-size: 15px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  width: 32px; height: 32px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.dev-section-btn.section-hidden  { background: rgba(239,68,68,0.1);  border-color: rgba(239,68,68,0.25); }
+.dev-section-btn.section-lights  { background: rgba(234,179,8,0.1);  border-color: rgba(234,179,8,0.25); }
+.dev-divider { height: 1px; background: rgba(255,255,255,0.05); margin: 0; }
+
+/* Toggle switch */
+.dev-toggle { position: relative; display: inline-block; width: 38px; height: 22px; flex-shrink: 0; }
+.dev-toggle input { display: none; }
+.dev-toggle-slider {
+  position: absolute; inset: 0;
+  background: rgba(255,255,255,0.1);
+  border-radius: 11px; cursor: pointer;
+  transition: background 0.2s;
+  border: 1px solid rgba(255,255,255,0.15);
+}
+.dev-toggle-slider::after {
+  content: '';
+  position: absolute; left: 3px; top: 50%;
+  transform: translateY(-50%);
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #666680; transition: left 0.2s, background 0.2s;
+}
+.dev-toggle input:checked + .dev-toggle-slider { background: rgba(99,102,241,0.4); border-color: rgba(99,102,241,0.5); }
+.dev-toggle input:checked + .dev-toggle-slider::after { left: 19px; background: #6366f1; }
+
+#sec-settings-body.open { max-height: 4000px; }
 </style>
 </head>
 <body>
@@ -681,6 +746,25 @@ body {
       <div class="section-content">
         <div id="weather-content">
           <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 9. SETTINGS -->
+  <div class="section">
+    <div class="section-header" onclick="toggleSettings()">
+      <span>⚙️ Устройства</span>
+      <span class="chevron" id="settings-chevron">▾</span>
+    </div>
+    <div class="section-body" id="sec-settings-body">
+      <div class="section-content">
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <button class="btn btn-primary" style="flex:1" onclick="settingsScan(event)">🔍 Найти новые</button>
+          <button class="btn btn-neutral" onclick="loadSettings()">↺</button>
+        </div>
+        <div id="settings-list">
+          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Нажмите ↺ для загрузки</div>
         </div>
       </div>
     </div>
@@ -1128,6 +1212,201 @@ function tvMuteToggle() {
 function vacuumAction(service) {
   const btn = event.target.closest('button');
   callAction(btn, service, VACUUM_ENTITY);
+}
+
+// ── Settings / Devices ─────────────────────────────────────────────────────
+let settingsData = null;
+let settingsLoaded = false;
+
+function toggleSettings() {
+  const body = document.getElementById('sec-settings-body');
+  const chevron = document.getElementById('settings-chevron');
+  const isOpen = body.classList.contains('open');
+  body.classList.toggle('open');
+  chevron.textContent = isOpen ? '▾' : '▴';
+  if (!isOpen && !settingsLoaded) loadSettings();
+}
+
+async function loadSettings() {
+  const el = document.getElementById('settings-list');
+  el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div>';
+  try {
+    settingsData = await api('/devices');
+    settingsLoaded = true;
+    renderSettings();
+  } catch(e) {
+    el.innerHTML = '<div style="color:#ef4444;font-size:13px;text-align:center;padding:10px">Ошибка: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function renderSettings() {
+  const el = document.getElementById('settings-list');
+  if (!settingsData || Object.keys(settingsData).length === 0) {
+    el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Нет устройств</div>';
+    return;
+  }
+  const sorted = Object.entries(settingsData).sort((a, b) => (a[1].order || 99) - (b[1].order || 99));
+  el.innerHTML = sorted.map(([eid, cfg], idx) => {
+    const section  = cfg.section || 'lights';
+    const isHidden = section === 'hidden';
+    const enabled  = !isHidden && cfg.enabled !== false;
+    const icon     = cfg.icon || '💡';
+    const name     = cfg.name || eid;
+    const sid      = sanitizeId(eid);
+    return `${idx > 0 ? '<div class="dev-divider"></div>' : ''}
+    <div class="dev-item" id="devitem-${sid}" style="opacity:${isHidden ? 0.45 : 1}">
+      <button class="dev-icon-btn" onclick="editDevIcon('${escapeAttr(eid)}')" title="Иконка">${icon}</button>
+      <div class="dev-info" onclick="editDevName('${escapeAttr(eid)}')">
+        <div class="dev-name" id="devname-${sid}">${escapeHtml(name)}</div>
+        <div class="dev-eid">${escapeHtml(eid)}</div>
+      </div>
+      <div class="dev-controls">
+        <button class="dev-section-btn ${isHidden ? 'section-hidden' : 'section-lights'}"
+          onclick="toggleDevSection('${escapeAttr(eid)}')"
+          title="${isHidden ? 'Скрыто — нажать чтобы показать' : 'Свет — нажать чтобы скрыть'}">
+          ${isHidden ? '🙈' : '💡'}
+        </button>
+        <label class="dev-toggle" title="${enabled ? 'Включено' : 'Выключено'}">
+          <input type="checkbox" ${enabled ? 'checked' : ''}
+            onchange="toggleDevEnabled('${escapeAttr(eid)}', this.checked)">
+          <span class="dev-toggle-slider"></span>
+        </label>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function toggleDevEnabled(eid, enabled) {
+  try {
+    await api('/devices', 'POST', { entity_id: eid, enabled });
+    if (settingsData && settingsData[eid]) settingsData[eid].enabled = enabled;
+    const item = document.getElementById('devitem-' + sanitizeId(eid));
+    if (item) item.style.opacity = enabled ? 1 : 0.45;
+    showToast(enabled ? '✅ Включено' : '🔕 Выключено');
+    setTimeout(loadStatus, 800);
+  } catch(e) {
+    showToast('❌ ' + e.message);
+  }
+}
+
+async function toggleDevSection(eid) {
+  if (!settingsData || !settingsData[eid]) return;
+  const cur  = settingsData[eid].section || 'lights';
+  const next = cur === 'hidden' ? 'lights' : 'hidden';
+  try {
+    await api('/devices', 'POST', { entity_id: eid, section: next });
+    settingsData[eid].section = next;
+    settingsData[eid].enabled = (next !== 'hidden');
+    renderSettings();
+    showToast(next === 'hidden' ? '🙈 Устройство скрыто' : '💡 Добавлено в Свет');
+    setTimeout(loadStatus, 800);
+  } catch(e) {
+    showToast('❌ ' + e.message);
+  }
+}
+
+function editDevName(eid) {
+  const nameEl = document.getElementById('devname-' + sanitizeId(eid));
+  if (!nameEl || nameEl.querySelector('input')) return;
+  const curName = nameEl.textContent;
+  nameEl.innerHTML = `<input type="text" class="dev-name-input" value="${escapeAttr(curName)}"
+    onblur="saveDevName('${escapeAttr(eid)}', this)"
+    onkeydown="if(event.key==='Enter')this.blur();if(event.key==='Escape'){this.value='${escapeAttr(curName)}';this.blur();}"
+    style="width:100%;background:rgba(255,255,255,0.08);border:1px solid rgba(99,102,241,0.5);border-radius:6px;padding:3px 6px;color:#e0e0f0;font-size:13px;font-family:inherit;outline:none;">`;
+  setTimeout(() => { const inp = nameEl.querySelector('input'); if (inp) { inp.focus(); inp.select(); } }, 10);
+}
+
+async function saveDevName(eid, input) {
+  const newName = input.value.trim() || (settingsData && settingsData[eid] ? settingsData[eid].name : eid);
+  const nameEl = document.getElementById('devname-' + sanitizeId(eid));
+  if (nameEl) nameEl.textContent = newName;
+  if (settingsData && settingsData[eid]) settingsData[eid].name = newName;
+  try {
+    await api('/devices', 'POST', { entity_id: eid, name: newName });
+    showToast('✅ Имя сохранено');
+    setTimeout(loadStatus, 800);
+  } catch(e) {
+    showToast('❌ ' + e.message);
+  }
+}
+
+function editDevIcon(eid) {
+  const cfg = settingsData && settingsData[eid];
+  if (!cfg) return;
+  const cur = cfg.icon || '💡';
+  // Use a simple emoji picker overlay
+  showIconPicker(eid, cur);
+}
+
+const COMMON_ICONS = ['💡','🛏️','🍳','🖥️','🚪','🛋️','🏠','🌙','☀️','🔆','🕯️','🔦','💫','⚡','🌟','🎮','📺','🎵','❄️','🔥','🌡️','🛁','🚿','🪴','🪞','🔌'];
+
+function showIconPicker(eid, current) {
+  // Remove any existing picker
+  const old = document.getElementById('icon-picker-overlay');
+  if (old) old.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'icon-picker-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:3000;display:flex;align-items:flex-end;justify-content:center';
+  overlay.innerHTML = `
+    <div style="background:#1a1a2e;border-radius:18px 18px 0 0;padding:16px;width:100%;max-width:480px;max-height:60vh;overflow-y:auto">
+      <div style="font-size:13px;color:#a0a0c0;margin-bottom:10px;font-weight:600">Выберите иконку</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
+        ${COMMON_ICONS.map(ic => `<button onclick="pickIcon('${escapeAttr(eid)}','${ic}')"
+          style="font-size:24px;background:${ic===current ? 'rgba(99,102,241,0.3)' : 'rgba(255,255,255,0.06)'};border:1px solid rgba(255,255,255,0.1);border-radius:10px;width:44px;height:44px;cursor:pointer;">${ic}</button>`).join('')}
+      </div>
+      <div style="display:flex;gap:8px">
+        <input id="custom-icon-input" type="text" placeholder="Свой emoji..." value="${escapeAttr(current)}"
+          style="flex:1;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:8px 10px;color:#e0e0f0;font-size:16px;font-family:inherit;outline:none;">
+        <button onclick="pickIconCustom('${escapeAttr(eid)}')" class="btn btn-primary" style="padding:8px 14px">✓</button>
+        <button onclick="document.getElementById('icon-picker-overlay').remove()" class="btn btn-neutral" style="padding:8px 14px">✕</button>
+      </div>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
+async function pickIcon(eid, icon) {
+  document.getElementById('icon-picker-overlay')?.remove();
+  await saveDevIcon(eid, icon);
+}
+
+async function pickIconCustom(eid) {
+  const val = (document.getElementById('custom-icon-input')?.value || '').trim();
+  if (!val) return;
+  document.getElementById('icon-picker-overlay')?.remove();
+  await saveDevIcon(eid, val);
+}
+
+async function saveDevIcon(eid, icon) {
+  try {
+    await api('/devices', 'POST', { entity_id: eid, icon });
+    if (settingsData && settingsData[eid]) settingsData[eid].icon = icon;
+    renderSettings();
+    showToast('✅ Иконка сохранена');
+    setTimeout(loadStatus, 800);
+  } catch(e) {
+    showToast('❌ ' + e.message);
+  }
+}
+
+async function settingsScan(evt) {
+  const btn = evt && evt.target ? evt.target.closest('button') : null;
+  if (btn) btn.classList.add('pending');
+  showToast('🔍 Сканирую HA...');
+  try {
+    const result = await api('/ha_scan');
+    if (result.found > 0) {
+      showToast('✅ Найдено новых: ' + result.found);
+      await loadSettings();
+    } else {
+      showToast('ℹ️ Новых устройств не найдено');
+    }
+  } catch(e) {
+    showToast('❌ ' + e.message);
+  } finally {
+    if (btn) btn.classList.remove('pending');
+  }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────

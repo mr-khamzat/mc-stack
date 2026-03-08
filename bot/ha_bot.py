@@ -2431,14 +2431,77 @@ async def _web_action(request: aiohttp_web.Request) -> aiohttp_web.Response:
         log.error(f"web_action error: {e}")
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
+async def _web_devices_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/devices — вернуть конфиг всех устройств."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    devices = _dev_load()
+    return aiohttp_web.Response(
+        text=json.dumps(devices, ensure_ascii=False),
+        content_type="application/json",
+        headers=_CORS_HEADERS,
+    )
+
+async def _web_devices_post(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/devices — обновить параметры устройства.
+    Body: {entity_id, name?, icon?, section?, enabled?}
+    """
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body = await request.json()
+        eid  = body.get("entity_id", "")
+        if not eid:
+            return aiohttp_web.Response(status=400, text="entity_id required", headers=_CORS_HEADERS)
+        devices = _dev_load()
+        if eid not in devices:
+            return aiohttp_web.Response(status=404, text="Not found", headers=_CORS_HEADERS)
+        for field in ("name", "icon", "section", "enabled", "order"):
+            if field in body:
+                devices[eid][field] = body[field]
+        # enabled = (section != "hidden")
+        if "section" in body:
+            devices[eid]["enabled"] = (body["section"] != "hidden")
+        _dev_save(devices)
+        _dev_rebuild_lights(devices)
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    except Exception as e:
+        log.error(f"web_devices_post error: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+async def _web_ha_scan(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/ha_scan — запустить сканирование HA, вернуть новые сущности."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        before = set(_dev_load().keys())
+        await _refresh_lights()
+        after = _dev_load()
+        new_eids = [eid for eid in after if eid not in before]
+        result = {eid: after[eid] for eid in new_eids}
+        return aiohttp_web.Response(
+            text=json.dumps({"found": len(new_eids), "devices": result}, ensure_ascii=False),
+            content_type="application/json",
+            headers=_CORS_HEADERS,
+        )
+    except Exception as e:
+        log.error(f"web_ha_scan error: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
 async def _start_web():
     app = aiohttp_web.Application()
-    app.router.add_get("/ha-app/",            _web_index)
-    app.router.add_get("/ha-app",             _web_index)
-    app.router.add_get("/ha-app/api/status",  _web_status)
-    app.router.add_post("/ha-app/api/action", _web_action)
-    app.router.add_route("OPTIONS", "/ha-app/api/status",  _web_options)
-    app.router.add_route("OPTIONS", "/ha-app/api/action",  _web_options)
+    app.router.add_get("/ha-app/",                  _web_index)
+    app.router.add_get("/ha-app",                   _web_index)
+    app.router.add_get("/ha-app/api/status",        _web_status)
+    app.router.add_post("/ha-app/api/action",       _web_action)
+    app.router.add_get("/ha-app/api/devices",       _web_devices_get)
+    app.router.add_post("/ha-app/api/devices",      _web_devices_post)
+    app.router.add_get("/ha-app/api/ha_scan",       _web_ha_scan)
+    app.router.add_route("OPTIONS", "/ha-app/api/status",   _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/action",   _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/devices",  _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/ha_scan",  _web_options)
     runner = aiohttp_web.AppRunner(app)
     await runner.setup()
     site = aiohttp_web.TCPSite(runner, "127.0.0.1", 8766)
