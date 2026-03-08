@@ -56,6 +56,14 @@ WEBAPP_DIR   = Path("/opt/ha-bot/webapp")
 FAMILY_USERS_FILE = Path("/opt/ha-bot/family_users.json")
 DEVICES_FILE      = Path("/opt/ha-bot/devices.json")
 SECTIONS_FILE     = Path("/opt/ha-bot/sections.json")
+ACTIVITY_LOG_FILE = Path("/opt/ha-bot/activity_log.json")
+
+_BOT_START_TIME   = _time.time()
+_BOT_VERSION      = "3.4"
+
+# Status API cache (5 sec TTL)
+_status_cache: dict = {"ts": 0.0, "data": None}
+_STATUS_CACHE_TTL   = 5
 
 _SECTIONS_DEFAULTS: dict = {
     "cameras":     {"name": "📹 Камеры",      "icon": "📹", "enabled": False, "order": 10},
@@ -433,6 +441,26 @@ _HA_PRAYER_EIDS = {
 }
 
 _prayer_cache: dict = {"date": None, "timings": None}
+
+# ── Журнал активности ─────────────────────────────────────────────────────────
+def _activity_log(action: str, detail: str = ""):
+    """Append event to activity_log.json, keep last 200 entries."""
+    try:
+        entries: list = []
+        if ACTIVITY_LOG_FILE.exists():
+            try:
+                entries = json.loads(ACTIVITY_LOG_FILE.read_text())
+            except Exception:
+                entries = []
+        entries.append({
+            "ts":     datetime.now(MSK).strftime("%Y-%m-%d %H:%M:%S"),
+            "action": action,
+            "detail": detail,
+        })
+        entries = entries[-200:]
+        ACTIVITY_LOG_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2))
+    except Exception as e:
+        log.error(f"activity_log: {e}")
 
 async def get_prayer_times() -> dict | None:
     """Получить времена намаза из HA input_datetime сущностей."""
@@ -2095,6 +2123,7 @@ _alert_state = {
     "namaz_notified_prayer":   None,   # "2026-03-07_Asr"
     "last_briefing_day":       None,
     "last_weekly_report":      None,   # "week_10_2026"
+    "last_monthly_report":     None,   # "2026-03"
 }
 
 async def alert_loop():
@@ -2208,6 +2237,13 @@ async def _check_alerts():
             _alert_state["last_weekly_report"] = week_key
             await _send_weekly_report()
 
+    # 📅 Ежемесячный отчёт — 1-е число месяца 09:00 МСК
+    if now.day == 1 and now.hour == 9 and now.minute < 1:
+        month_key = now.strftime("%Y-%m")
+        if _alert_state["last_monthly_report"] != month_key:
+            _alert_state["last_monthly_report"] = month_key
+            await _send_monthly_report()
+
 async def _send_morning_briefing():
     try:
         status_text  = await build_status_text()
@@ -2296,6 +2332,46 @@ async def _send_weekly_report():
     except Exception as e:
         log.error(f"Weekly report error: {e}")
 
+async def _send_monthly_report():
+    """Ежемесячный отчёт: 1-е число месяца в 09:00 МСК."""
+    try:
+        now = datetime.now(MSK)
+        # Прошлый месяц
+        first_this = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        last_month_end = first_this - timedelta(seconds=1)
+        last_month_start = last_month_end.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        month_name = last_month_end.strftime("%B %Y")
+
+        month_d, day_d = await asyncio.gather(
+            ha_state("sensor.elektroenergiia_stoimost_za_mesiats"),
+            ha_state("sensor.elektroenergiia_stoimost_za_den"),
+        )
+
+        # История за 30 дней
+        points = await ha_history("sensor.moshchnost_vsego_doma", hours=720)
+
+        text = (
+            f"📅 <b>Ежемесячный отчёт — {month_name}</b>\n\n"
+            f"💰 Накоплено за месяц: <b>{month_d} ₽</b>\n"
+            f"⚡ Потребление за сегодня: <b>{day_d} ₽</b>\n\n"
+            f"Следующий отчёт — 1-е числа следующего месяца"
+        )
+        if points:
+            img = _make_chart(points, f"⚡ Мощность дома — {month_name}", "Вт", "#60a5fa")
+            if img:
+                await bot.send_photo(
+                    ADMIN_ID,
+                    BufferedInputFile(img, filename="monthly.png"),
+                    caption=text,
+                    parse_mode="HTML"
+                )
+                _activity_log("monthly_report", month_name)
+                return
+        await bot.send_message(ADMIN_ID, text, parse_mode="HTML")
+        _activity_log("monthly_report", month_name)
+    except Exception as e:
+        log.error(f"Monthly report error: {e}")
+
 # ── Web App handlers ──────────────────────────────────────────────────────────
 def _check_token(request: aiohttp_web.Request) -> bool:
     auth = request.headers.get("Authorization", "")
@@ -2320,9 +2396,65 @@ _CORS_HEADERS = {
 async def _web_options(request: aiohttp_web.Request) -> aiohttp_web.Response:
     return aiohttp_web.Response(status=204, headers=_CORS_HEADERS)
 
+async def _web_health(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/health — healthcheck без аутентификации."""
+    uptime_sec = int(_time.time() - _BOT_START_TIME)
+    h = uptime_sec // 3600; m = (uptime_sec % 3600) // 60; s = uptime_sec % 60
+    uptime_str = f"{h}ч {m:02d}м {s:02d}с"
+    # Лёгкая проверка HA: GET /api/
+    ha_ok = False
+    try:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(
+                f"{HA_URL}/api/", headers=HA_HEADERS,
+                timeout=aiohttp.ClientTimeout(total=5)
+            ) as r:
+                ha_ok = r.status == 200
+    except Exception:
+        pass
+    payload = {
+        "ok":           True,
+        "version":      _BOT_VERSION,
+        "uptime":       uptime_str,
+        "uptime_sec":   uptime_sec,
+        "ha_connected": ha_ok,
+    }
+    return aiohttp_web.Response(
+        text=json.dumps(payload, ensure_ascii=False),
+        content_type="application/json",
+        headers=_CORS_HEADERS,
+    )
+
+async def _web_activity(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/activity — последние 50 событий из activity_log.json."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        entries: list = []
+        if ACTIVITY_LOG_FILE.exists():
+            try:
+                entries = json.loads(ACTIVITY_LOG_FILE.read_text())
+            except Exception:
+                entries = []
+        return aiohttp_web.Response(
+            text=json.dumps(entries[-50:][::-1], ensure_ascii=False),
+            content_type="application/json",
+            headers=_CORS_HEADERS,
+        )
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
 async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
     if not _check_token(request):
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    # 5-second cache
+    now_ts = _time.time()
+    if _status_cache["data"] is not None and (now_ts - _status_cache["ts"]) < _STATUS_CACHE_TTL:
+        return aiohttp_web.Response(
+            text=_status_cache["data"],
+            content_type="application/json",
+            headers=_CORS_HEADERS,
+        )
     try:
         family = await get_family()
         # Build list of custom-section devices (not lights, not hidden)
@@ -2470,6 +2602,18 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
                     "devices": custom_sections.get(sect_id, {}),
                 })
 
+        # Energy phases (vvod_1/2/3)
+        vvod1_d, vvod2_d, vvod3_d = await asyncio.gather(
+            ha_get("states/sensor.vvod_1_moshchnost"),
+            ha_get("states/sensor.vvod_2_moshchnost"),
+            ha_get("states/sensor.vvod_3_moshchnost"),
+        )
+        phases_data = [
+            {"name": "Фаза 1", "power": st(vvod1_d)},
+            {"name": "Фаза 2", "power": st(vvod2_d)},
+            {"name": "Фаза 3", "power": st(vvod3_d)},
+        ]
+
         payload = {
             "power":         st(power_d),
             "temp_detskaia": st(temp_d),
@@ -2484,6 +2628,7 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
             "family":        family_data,
             "lights":        lights_data,
             "sections":      active_sects,
+            "phases":        phases_data,
             "tv": {
                 "state":  st(tv_d),
                 "title":  tv_attrs.get("media_title", ""),
@@ -2496,8 +2641,11 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
             "prayers": prayers_data,
             "weather": weather_payload,
         }
+        payload_json = json.dumps(payload, ensure_ascii=False)
+        _status_cache["ts"]   = _time.time()
+        _status_cache["data"] = payload_json
         return aiohttp_web.Response(
-            text=json.dumps(payload, ensure_ascii=False),
+            text=payload_json,
             content_type="application/json",
             headers=_CORS_HEADERS,
         )
@@ -2517,6 +2665,7 @@ async def _web_action(request: aiohttp_web.Request) -> aiohttp_web.Response:
             return aiohttp_web.Response(status=400, text="Bad request", headers=_CORS_HEADERS)
         domain, service = service_str.split(".", 1)
         await ha_call(domain, service, entity_id, extra or None)
+        _activity_log(f"webapp:{service_str}", entity_id)
         return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
                                     headers=_CORS_HEADERS)
     except Exception as e:
@@ -2999,6 +3148,8 @@ async def _start_web():
     app = aiohttp_web.Application()
     app.router.add_get("/ha-app/",                  _web_index)
     app.router.add_get("/ha-app",                   _web_index)
+    app.router.add_get("/ha-app/api/health",        _web_health)
+    app.router.add_get("/ha-app/api/activity",      _web_activity)
     app.router.add_get("/ha-app/api/status",        _web_status)
     app.router.add_post("/ha-app/api/action",       _web_action)
     app.router.add_get("/ha-app/api/devices",       _web_devices_get)
@@ -3021,11 +3172,66 @@ async def _start_web():
     app.router.add_route("OPTIONS", "/ha-app/api/ha_scan",      _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/ha_entities",  _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/sections",     _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/activity",     _web_options)
     runner = aiohttp_web.AppRunner(app)
     await runner.setup()
     site = aiohttp_web.TCPSite(runner, "127.0.0.1", 8766)
     await site.start()
     log.info("WebApp server started on 127.0.0.1:8766")
+
+# ── /backup и /restore ────────────────────────────────────────────────────────
+@dp.message(Command("backup"))
+async def cmd_backup(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    files = [DEVICES_FILE, SECTIONS_FILE, ACTIVITY_LOG_FILE]
+    sent = 0
+    for f in files:
+        if f.exists():
+            await msg.answer_document(
+                BufferedInputFile(f.read_bytes(), filename=f.name),
+                caption=f"📦 {f.name}"
+            )
+            sent += 1
+    if sent == 0:
+        await msg.answer("❌ Нет файлов для бекапа")
+    else:
+        _activity_log("backup", f"sent {sent} files")
+
+@dp.message(Command("restore"))
+async def cmd_restore(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    await msg.answer(
+        "📥 Отправь JSON-файл для восстановления.\n"
+        "Поддерживаемые файлы: <code>devices.json</code>, <code>sections.json</code>",
+        parse_mode="HTML"
+    )
+
+@dp.message(F.document)
+async def handle_document(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    doc = msg.document
+    if not doc or not doc.file_name or not doc.file_name.endswith(".json"):
+        return
+    fname = doc.file_name
+    if fname not in ("devices.json", "sections.json"):
+        await msg.answer(f"⚠️ Неизвестный файл: {fname}\nОжидается devices.json или sections.json")
+        return
+    try:
+        file_info = await bot.get_file(doc.file_id)
+        raw = await bot.download_file(file_info.file_path)
+        content = raw.read()
+        data = json.loads(content)  # validate JSON
+        if fname == "devices.json":
+            DEVICES_FILE.write_bytes(content)
+            _dev_init()
+            _activity_log("restore", "devices.json")
+            await msg.answer(f"✅ <b>devices.json</b> восстановлен ({len(data)} устройств)", parse_mode="HTML")
+        elif fname == "sections.json":
+            SECTIONS_FILE.write_bytes(content)
+            _activity_log("restore", "sections.json")
+            await msg.answer(f"✅ <b>sections.json</b> восстановлен ({len(data)} секций)", parse_mode="HTML")
+    except Exception as e:
+        await msg.answer(f"❌ Ошибка восстановления: {e}")
 
 # ── /app command ──────────────────────────────────────────────────────────────
 @dp.message(Command("app"))
@@ -3038,24 +3244,27 @@ async def cmd_app(msg: Message):
 
 # ── Запуск ────────────────────────────────────────────────────────────────────
 async def main():
-    log.info("HA Bot v3.3 starting...")
+    log.info(f"HA Bot v{_BOT_VERSION} starting...")
     _dev_init()            # загрузить devices.json → заполнить LIGHTS/LIGHTS_ICON
     await _refresh_lights()  # сканировать HA, добавить новые устройства
     asyncio.create_task(alert_loop())
     asyncio.create_task(_start_web())
     asyncio.create_task(_frigate_event_loop())
+    _activity_log("bot_start", f"v{_BOT_VERSION}")
     await bot.send_message(
         ADMIN_ID,
-        "🏠 <b>Home Assistant Bot v3.3 запущен!</b>\n"
+        f"🏠 <b>Home Assistant Bot v{_BOT_VERSION} запущен!</b>\n"
         "✅ Намаз по Aladhan API, алерт за 15 мин\n"
         "✅ 📊 Графики энергии (24ч / 7 дней)\n"
-        "✅ 📈 История температуры (24ч)\n"
-        "✅ 🗓️ Еженедельный отчёт (воскресенье 20:00)\n"
-        "✅ Телевизор, Семья, Покупки, Автоматизации\n"
-        "✅ ИИ Ассистент, Погода, Авто-алерты\n"
+        "✅ 🗓️ Еженедельный и ежемесячный отчёты\n"
+        "✅ 📹 Frigate детекция + авто-уведомления\n"
+        "✅ 💾 /backup /restore конфигов\n"
+        "✅ ⚡ Разбивка по фазам энергии\n"
+        "✅ 📋 Журнал активности\n"
         "✅ 🖥️ Telegram Mini App панель управления",
         parse_mode="HTML"
     )
+    _activity_log("bot_ready", f"v{_BOT_VERSION}")
     log.info("Start polling")
     await dp.start_polling(bot)
 

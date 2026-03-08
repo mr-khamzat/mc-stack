@@ -533,6 +533,19 @@ body {
 .dev-toggle input:checked + .dev-toggle-slider::after { left: 19px; background: #6366f1; }
 
 #sec-settings-body.open { max-height: 4000px; }
+
+/* Phase bars */
+.phase-row { margin-bottom: 8px; }
+.phase-label { display: flex; justify-content: space-between; font-size: 12px; color: #b0b0d0; margin-bottom: 3px; }
+.phase-bar-bg { background: rgba(255,255,255,0.07); border-radius: 4px; height: 8px; overflow: hidden; }
+.phase-bar-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
+
+/* Activity log */
+.activity-item { display: flex; gap: 10px; padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 12px; }
+.activity-item:last-child { border-bottom: none; }
+.activity-ts { color: #60608a; white-space: nowrap; }
+.activity-action { color: #c0c0e0; font-weight: 500; flex: 1; }
+.activity-detail { color: #808090; }
 </style>
 </head>
 <body>
@@ -585,6 +598,10 @@ body {
               <span><span class="stat-value" id="stat-cost-day" style="font-size:20px">—</span><span class="stat-unit"> ₽ сегодня</span></span>
               <span id="stat-cost-month" style="font-size:13px;color:#6060a0">месяц: — ₽</span>
             </div>
+          </div>
+          <div class="stat-card" style="grid-column: span 3" id="phases-card">
+            <div class="stat-label">⚡ Нагрузка по фазам</div>
+            <div id="phases-bars" style="margin-top:6px"></div>
           </div>
         </div>
       </div>
@@ -753,6 +770,24 @@ body {
 
   <!-- dynamic sections rendered by JS -->
   <div id="dynamic-sections"></div>
+
+  <!-- ACTIVITY LOG -->
+  <div class="section">
+    <div class="section-header" onclick="toggleSection('sec-activity-body'); if(document.getElementById('activity-list').childElementCount===0) loadActivity()">
+      <span>📋 История активности</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body" id="sec-activity-body">
+      <div class="section-content">
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <button class="btn btn-neutral" style="flex:1" onclick="loadActivity()">🔄 Обновить</button>
+        </div>
+        <div id="activity-list">
+          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Нажмите Обновить</div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- 9. SETTINGS -->
   <div class="section">
@@ -966,6 +1001,24 @@ function applyStatus(d) {
   if (d.cost_month != null) {
     const cm = parseFloat(d.cost_month);
     document.getElementById('stat-cost-month').textContent = 'месяц: ' + (isNaN(cm) ? d.cost_month : cm.toFixed(0)) + ' ₽';
+  }
+
+  // --- Energy phases ---
+  if (d.phases && d.phases.length) {
+    const totalPower = d.phases.reduce((s, p) => s + (parseFloat(p.power) || 0), 0);
+    const colors = ['#f59e0b', '#60a5fa', '#34d399'];
+    const barsEl = document.getElementById('phases-bars');
+    if (barsEl) {
+      barsEl.innerHTML = d.phases.map((ph, i) => {
+        const w = parseFloat(ph.power) || 0;
+        const pct = totalPower > 0 ? Math.round(w / totalPower * 100) : 0;
+        const barW = totalPower > 0 ? Math.round(w / Math.max(totalPower, 1) * 100) : 0;
+        return `<div class="phase-row">
+          <div class="phase-label"><span>${ph.name}</span><span>${w.toFixed(0)} Вт (${pct}%)</span></div>
+          <div class="phase-bar-bg"><div class="phase-bar-fill" style="width:${barW}%;background:${colors[i]}"></div></div>
+        </div>`;
+      }).join('');
+    }
   }
 
   // --- Climate section ---
@@ -1241,6 +1294,36 @@ function toggleSettings() {
   body.classList.toggle('open');
   chevron.textContent = isOpen ? '▾' : '▴';
   if (!isOpen && !settingsLoaded) loadSettings();
+}
+
+// ── Activity log ────────────────────────────────────────────────────────────
+async function loadActivity() {
+  const el = document.getElementById('activity-list');
+  el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div>';
+  try {
+    const entries = await api('/activity');
+    if (!entries || entries.length === 0) {
+      el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Нет событий</div>';
+      return;
+    }
+    const actionLabels = {
+      'bot_start':    '🚀 Запуск бота',
+      'bot_ready':    '✅ Бот готов',
+      'backup':       '💾 Бекап',
+      'restore':      '📥 Восстановление',
+      'monthly_report': '📅 Месячный отчёт',
+    };
+    el.innerHTML = entries.map(e => {
+      const label = actionLabels[e.action] || (e.action.startsWith('webapp:') ? '🖥️ ' + e.action.replace('webapp:', '') : '📌 ' + e.action);
+      return `<div class="activity-item">
+        <span class="activity-ts">${escapeHtml(e.ts.slice(11,16))}</span>
+        <span class="activity-action">${escapeHtml(label)}</span>
+        <span class="activity-detail">${escapeHtml(e.detail || '')}</span>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = '<div style="color:#ef4444;font-size:13px;text-align:center;padding:10px">Ошибка: ' + escapeHtml(e.message) + '</div>';
+  }
 }
 
 async function loadSettings() {
