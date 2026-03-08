@@ -55,6 +55,28 @@ WEBAPP_DIR   = Path("/opt/ha-bot/webapp")
 
 FAMILY_USERS_FILE = Path("/opt/ha-bot/family_users.json")
 DEVICES_FILE      = Path("/opt/ha-bot/devices.json")
+SECTIONS_FILE     = Path("/opt/ha-bot/sections.json")
+
+_SECTIONS_DEFAULTS: dict = {
+    "cameras":     {"name": "📹 Камеры",      "icon": "📹", "enabled": False, "order": 10},
+    "automations": {"name": "🤖 Автоматизации","icon": "🤖", "enabled": False, "order": 11},
+    "sensors":     {"name": "📊 Сенсоры",      "icon": "📊", "enabled": False, "order": 12},
+    "media":       {"name": "📺 Медиа",        "icon": "📺", "enabled": False, "order": 13},
+}
+
+def _sect_load() -> dict:
+    if SECTIONS_FILE.exists():
+        try:
+            return json.loads(SECTIONS_FILE.read_text())
+        except Exception as e:
+            log.error(f"sections_load: {e}")
+    return dict(_SECTIONS_DEFAULTS)
+
+def _sect_save(d: dict):
+    try:
+        SECTIONS_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2))
+    except Exception as e:
+        log.error(f"sections_save: {e}")
 
 # Weather cache
 _weather_cache: dict | None = None
@@ -2270,6 +2292,14 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
     try:
         family = await get_family()
+        # Build list of custom-section devices (not lights, not hidden)
+        devices_cfg = _dev_load()
+        sections_cfg = _sect_load()
+        custom_sect_eids: list[str] = [
+            eid for eid, cfg in devices_cfg.items()
+            if cfg.get("section", "lights") not in ("lights", "hidden") and cfg.get("enabled", True)
+        ]
+
         results = await asyncio.gather(
             ha_get("states/sensor.moshchnost_vsego_doma"),
             ha_get("states/sensor.temp_detskaia_temperature"),
@@ -2283,15 +2313,18 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
             *[ha_get(f"states/{eid}") for eid in family.values()],
             *[ha_get(f"states/{eid}") for _, (_, eid) in LIGHTS.items()],
             *[ha_get(f"states/{eid}") for eid in _HA_PRAYER_EIDS.values()],
+            *[ha_get(f"states/{eid}") for eid in custom_sect_eids],
         )
         n_fixed = 9
         n_family = len(family)
         n_lights = len(LIGHTS)
         n_prayers = len(_HA_PRAYER_EIDS)
+        n_custom = len(custom_sect_eids)
         power_d, temp_d, hum_d, inet_d, floor_d, tv_d, vac_d, cost_day_d, cost_month_d = results[:n_fixed]
         family_results  = results[n_fixed:n_fixed + n_family]
         lights_results  = results[n_fixed + n_family:n_fixed + n_family + n_lights]
-        prayer_results  = results[n_fixed + n_family + n_lights:]
+        prayer_results  = results[n_fixed + n_family + n_lights:n_fixed + n_family + n_lights + n_prayers]
+        custom_results  = results[n_fixed + n_family + n_lights + n_prayers:]
 
         def st(d): return d.get("state", "?") if d else "?"
 
@@ -2379,6 +2412,31 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
         except Exception:
             pass
 
+        # Custom sections data: group by section_id
+        custom_sections: dict = {}
+        for eid, d in zip(custom_sect_eids, custom_results):
+            cfg = devices_cfg.get(eid, {})
+            sect = cfg.get("section", "other")
+            if sect not in custom_sections:
+                custom_sections[sect] = {}
+            custom_sections[sect][eid] = {
+                "state":  st(d),
+                "name":   cfg.get("name", eid),
+                "icon":   cfg.get("icon", "📦"),
+                "domain": eid.split(".")[0] if "." in eid else "unknown",
+            }
+
+        # Sections metadata for frontend rendering
+        active_sects = []
+        for sect_id, sect_cfg in sorted(sections_cfg.items(), key=lambda x: x[1].get("order", 99)):
+            if sect_cfg.get("enabled", False) or sect_id in custom_sections:
+                active_sects.append({
+                    "id":      sect_id,
+                    "name":    sect_cfg.get("name", sect_id),
+                    "icon":    sect_cfg.get("icon", "📦"),
+                    "devices": custom_sections.get(sect_id, {}),
+                })
+
         payload = {
             "power":         st(power_d),
             "temp_detskaia": st(temp_d),
@@ -2392,6 +2450,7 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
             "outdoor_temp":  outdoor_temp,
             "family":        family_data,
             "lights":        lights_data,
+            "sections":      active_sects,
             "tv": {
                 "state":  st(tv_d),
                 "title":  tv_attrs.get("media_title", ""),
@@ -2479,6 +2538,47 @@ async def _web_devices_post(request: aiohttp_web.Request) -> aiohttp_web.Respons
         log.error(f"web_devices_post error: {e}")
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
+async def _web_sections_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/sections — список всех секций."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    sections = _sect_load()
+    return aiohttp_web.Response(
+        text=json.dumps(sections, ensure_ascii=False),
+        content_type="application/json",
+        headers=_CORS_HEADERS,
+    )
+
+async def _web_sections_post(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/sections — создать/обновить/удалить секцию.
+    Body: {id, name?, icon?, enabled?, order?, delete?}
+    """
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body    = await request.json()
+        sect_id = body.get("id", "").strip().lower().replace(" ", "_")
+        if not sect_id:
+            return aiohttp_web.Response(status=400, text="id required", headers=_CORS_HEADERS)
+        sections = _sect_load()
+        if body.get("delete"):
+            sections.pop(sect_id, None)
+        else:
+            if sect_id not in sections:
+                max_ord = max((v.get("order", 0) for v in sections.values()), default=9) + 1
+                sections[sect_id] = {"name": body.get("name", sect_id), "icon": body.get("icon", "📦"),
+                                     "enabled": True, "order": max_ord}
+            else:
+                for field in ("name", "icon", "enabled", "order"):
+                    if field in body:
+                        sections[sect_id][field] = body[field]
+        _sect_save(sections)
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    except Exception as e:
+        log.error(f"web_sections_post error: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
 async def _web_ha_entities(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/api/ha_entities — все сущности HA, сгруппированные по домену.
     Параметр ?exclude_known=1 исключает уже добавленные в devices.json.
@@ -2546,11 +2646,14 @@ async def _start_web():
     app.router.add_post("/ha-app/api/devices",      _web_devices_post)
     app.router.add_get("/ha-app/api/ha_scan",       _web_ha_scan)
     app.router.add_get("/ha-app/api/ha_entities",   _web_ha_entities)
+    app.router.add_get("/ha-app/api/sections",      _web_sections_get)
+    app.router.add_post("/ha-app/api/sections",     _web_sections_post)
     app.router.add_route("OPTIONS", "/ha-app/api/status",       _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/action",       _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/devices",      _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/ha_scan",      _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/ha_entities",  _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/sections",     _web_options)
     runner = aiohttp_web.AppRunner(app)
     await runner.setup()
     site = aiohttp_web.TCPSite(runner, "127.0.0.1", 8766)

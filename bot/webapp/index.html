@@ -751,6 +751,9 @@ body {
     </div>
   </div>
 
+  <!-- dynamic sections rendered by JS -->
+  <div id="dynamic-sections"></div>
+
   <!-- 9. SETTINGS -->
   <div class="section">
     <div class="section-header" onclick="toggleSettings()">
@@ -759,10 +762,13 @@ body {
     </div>
     <div class="section-body" id="sec-settings-body">
       <div class="section-content">
-        <div style="display:flex;gap:8px;margin-bottom:12px">
+        <div style="display:flex;gap:8px;margin-bottom:8px">
           <button class="btn btn-primary" style="flex:1" onclick="openEntityBrowser()">➕ Из HA</button>
-          <button class="btn btn-neutral" style="flex:1" onclick="settingsScan(event)">🔍 Авто-поиск</button>
+          <button class="btn btn-neutral" style="flex:1" onclick="settingsScan(event)">🔍 Авто</button>
           <button class="btn btn-neutral" onclick="loadSettings()">↺</button>
+        </div>
+        <div style="margin-bottom:12px">
+          <button class="btn btn-neutral" style="width:100%;border-style:dashed" onclick="openCreateSection()">📂 Создать новый раздел</button>
         </div>
         <div id="settings-list">
           <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Нажмите ↺ для загрузки</div>
@@ -1100,6 +1106,9 @@ function applyStatus(d) {
       ${forecastHtml}`;
   }
 
+  // --- Dynamic sections ---
+  if (d.sections) renderDynamicSections(d.sections);
+
   // Update timestamp
   const now2 = new Date();
   document.getElementById('last-updated').textContent =
@@ -1403,7 +1412,7 @@ const DOMAIN_LABELS = {
   timer: '⏱️ Таймеры', counter: '🔢 Счётчики', todo: '📝 Задачи',
   number: '🔢 Числовые', select: '📋 Выбор', button: '🔘 Кнопки',
 };
-const SECTION_LABELS = {
+let SECTION_LABELS = {
   lights: '💡 Свет', cameras: '📹 Камеры', automations: '🤖 Авто',
   sensors: '📊 Сенсоры', media: '📺 Медиа', hidden: '🙈 Скрыто',
 };
@@ -1602,6 +1611,98 @@ async function settingsScan(evt) {
     showToast('❌ ' + e.message);
   } finally {
     if (btn) btn.classList.remove('pending');
+  }
+}
+
+// ── Dynamic sections ───────────────────────────────────────────────────────
+function renderDynamicSections(sections) {
+  const container = document.getElementById('dynamic-sections');
+  if (!container) return;
+  if (!sections || sections.length === 0) { container.innerHTML = ''; return; }
+
+  container.innerHTML = sections.map(sect => {
+    const sid = 'dyn-' + sect.id.replace(/[^a-z0-9]/g, '_');
+    const devices = sect.devices || {};
+    const devCount = Object.keys(devices).length;
+    if (devCount === 0 && !sect.show_empty) return '';
+
+    const devHtml = devCount === 0
+      ? '<div style="color:#60608a;font-size:13px;text-align:center;padding:12px">Нет устройств</div>'
+      : Object.entries(devices).map(([eid, info]) => {
+          const isOn = info.state === 'on' || info.state === 'streaming' || info.state === 'home';
+          const stateLabel = info.state || '—';
+          return `<div style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:10px;margin-bottom:6px">
+            <span style="font-size:22px">${info.icon || '📦'}</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;font-weight:600;color:#c0c0e0">${escapeHtml(info.name || eid)}</div>
+              <div style="font-size:11px;color:#50508a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(eid)}</div>
+            </div>
+            <span style="font-size:12px;font-weight:600;color:${isOn ? '#22c55e' : '#60608a'}">${escapeHtml(stateLabel)}</span>
+          </div>`;
+        }).join('');
+
+    return `<div class="section" style="margin-bottom:10px">
+      <div class="section-header" onclick="toggleSection('${sid}-body')">
+        <span>${escapeHtml(sect.name || sect.id)}</span>
+        <span class="chevron">▾</span>
+      </div>
+      <div class="section-body" id="${sid}-body">
+        <div class="section-content">${devHtml}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Sections management ────────────────────────────────────────────────────
+function openCreateSection() {
+  document.getElementById('entity-browser-overlay')?.remove();
+  const ov = document.createElement('div');
+  ov.id = 'entity-browser-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:3000;display:flex;flex-direction:column;align-items:stretch;justify-content:flex-end';
+  ov.innerHTML = `<div style="background:#12121e;border-radius:18px 18px 0 0;padding:20px">
+    <div style="font-size:15px;font-weight:700;color:#e0e0f0;margin-bottom:16px">📂 Новый раздел</div>
+
+    <div style="margin-bottom:12px">
+      <div style="font-size:11px;color:#60608a;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.5px">Иконка и название</div>
+      <div style="display:flex;gap:8px">
+        <input id="new-sect-icon" type="text" placeholder="📁" maxlength="4" value="📁"
+          oninput="document.getElementById('new-sect-icon-preview').textContent=this.value||'📁'"
+          style="width:52px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px;color:#e0e0f0;font-size:18px;font-family:inherit;outline:none;text-align:center">
+        <input id="new-sect-name" type="text" placeholder="Например: Камеры"
+          style="flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 12px;color:#e0e0f0;font-size:14px;font-family:inherit;outline:none">
+      </div>
+    </div>
+
+    <div style="font-size:11px;color:#50508a;margin-bottom:16px">
+      После создания раздела добавьте в него устройства через «➕ Из HA»
+    </div>
+
+    <div style="display:flex;gap:8px">
+      <button onclick="confirmCreateSection()" class="btn btn-primary" style="flex:1;padding:13px">✓ Создать</button>
+      <button onclick="document.getElementById('entity-browser-overlay').remove()" class="btn btn-neutral" style="padding:13px">Отмена</button>
+    </div>
+  </div>`;
+  ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+  document.body.appendChild(ov);
+  setTimeout(() => document.getElementById('new-sect-name')?.focus(), 50);
+}
+
+async function confirmCreateSection() {
+  const icon = (document.getElementById('new-sect-icon')?.value || '📁').trim();
+  const name = (document.getElementById('new-sect-name')?.value || '').trim();
+  if (!name) { showToast('❌ Введите название раздела'); return; }
+  const id = name.toLowerCase().replace(/[^a-zа-яё0-9]/gi, '_').replace(/_+/g,'_');
+  try {
+    await api('/sections', 'POST', { id, name: icon + ' ' + name, icon, enabled: true });
+    document.getElementById('entity-browser-overlay')?.remove();
+    showToast('✅ Раздел «' + name + '» создан');
+    // Reload sections label in entity browser selector
+    if (entityBrowserData !== null) {
+      // Update SECTION_LABELS
+      SECTION_LABELS[id] = icon + ' ' + name;
+    }
+  } catch(e) {
+    showToast('❌ ' + e.message);
   }
 }
 
