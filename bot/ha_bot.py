@@ -384,6 +384,24 @@ async def ha_ws_get_todo_items(entity_id: str) -> list:
 def is_admin(uid: int) -> bool:
     return uid == ADMIN_ID
 
+def _get_user_role(uid: int) -> str:
+    """Вернуть роль пользователя: 'owner' | 'admin' | 'viewer' | None."""
+    if uid == ADMIN_ID:
+        return "owner"
+    users = _load_family_users()
+    info = users.get(str(uid))
+    if info:
+        return info.get("role", "viewer")
+    return None
+
+def is_bot_admin(uid: int) -> bool:
+    """Owner или admin-роль (может управлять устройствами)."""
+    return uid == ADMIN_ID or _get_user_role(uid) == "admin"
+
+def is_viewer(uid: int) -> bool:
+    """Только просмотр, без управления."""
+    return _get_user_role(uid) == "viewer"
+
 def _load_family_users() -> dict:
     try:
         if FAMILY_USERS_FILE.exists():
@@ -784,54 +802,67 @@ async def cmd_start(msg: Message, state: FSMContext):
         kb    = main_kb() if role == "admin" else family_kb()
         await msg.answer(f"👋 Привет, {name}!", reply_markup=kb)
         return
-    # Unknown user — notify admin
+    # Unknown user — notify admin with role selection
     uname  = f"@{msg.from_user.username}" if msg.from_user.username else "—"
     fname  = msg.from_user.full_name or str(uid)
     req_kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✅ Добавить", callback_data=f"usr:add:{uid}"),
-        InlineKeyboardButton(text="❌ Отклонить", callback_data=f"usr:rej:{uid}"),
+        InlineKeyboardButton(text="👁️ Viewer",     callback_data=f"usr:approve:{uid}:viewer"),
+        InlineKeyboardButton(text="👑 Бот-Админ",  callback_data=f"usr:approve:{uid}:admin"),
+        InlineKeyboardButton(text="❌ Отклонить",  callback_data=f"usr:rej:{uid}"),
     ]])
     await bot.send_message(
         ADMIN_ID,
         f"👤 <b>Новый запрос доступа</b>\n"
         f"Имя: <b>{fname}</b>\n"
         f"Username: {uname}\n"
-        f"ID: <code>{uid}</code>",
+        f"ID: <code>{uid}</code>\n\n"
+        f"<i>Viewer — только просмотр\nБот-Админ — полный доступ</i>",
         parse_mode="HTML",
         reply_markup=req_kb,
     )
     await msg.answer("⏳ Запрос отправлен администратору. Ожидайте подтверждения.")
 
-@dp.callback_query(F.data.startswith("usr:add:"))
-async def usr_add_cb(cb: CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data.startswith("usr:approve:"))
+async def usr_approve_cb(cb: CallbackQuery):
     if not is_admin(cb.from_user.id): return
-    uid = int(cb.data.split(":")[2])
-    await state.set_state(AddFamilyMember.waiting_name)
-    await state.update_data(target_uid=uid)
-    await cb.message.edit_reply_markup(reply_markup=None)
-    await cb.message.answer(f"Введите имя для пользователя (ID: <code>{uid}</code>):", parse_mode="HTML")
-    await cb.answer()
+    # Format: usr:approve:{uid}:{role}
+    parts = cb.data.split(":")
+    uid  = int(parts[2])
+    role = parts[3] if len(parts) > 3 else "viewer"
 
-@dp.message(StateFilter(AddFamilyMember.waiting_name))
-async def usr_add_name(msg: Message, state: FSMContext):
-    if not is_admin(msg.from_user.id): return
-    data = await state.get_data()
-    uid  = data.get("target_uid")
-    if not uid:
-        await state.clear()
-        return
-    name = msg.text.strip()
+    # Try to get user's Telegram name from the request message text
+    fname = str(uid)
+    try:
+        text = cb.message.text or ""
+        for line in text.splitlines():
+            if line.startswith("Имя:"):
+                fname = line.replace("Имя:", "").strip()
+                break
+    except Exception:
+        pass
+
     users = _load_family_users()
-    users[str(uid)] = {"name": name, "added_ts": datetime.now().isoformat()}
+    users[str(uid)] = {"name": fname, "role": role, "added_ts": datetime.now().isoformat()}
     _save_family_users(users)
-    await state.clear()
-    await msg.answer(f"✅ <b>{name}</b> добавлен в семью.", parse_mode="HTML")
+    _activity_log("user_approved", f"{fname} [{role}]")
+
+    role_label = "👑 Бот-Админ" if role == "admin" else "👁️ Viewer"
+    await cb.message.edit_text(
+        cb.message.text + f"\n\n✅ <b>Принят как {role_label}</b>",
+        parse_mode="HTML", reply_markup=None
+    )
+    await cb.answer(f"Добавлен как {role}")
+
+    # Notify new user
+    kb = main_kb() if role == "admin" else family_kb()
+    role_desc = "полный доступ к боту" if role == "admin" else "доступ к просмотру данных дома"
     try:
         await bot.send_message(
             uid,
-            f"✅ Добро пожаловать, <b>{name}</b>!\nТеперь вы можете использовать бота.",
+            f"✅ <b>Добро пожаловать, {fname}!</b>\n"
+            f"Вам выдан {role_desc}.",
             parse_mode="HTML",
-            reply_markup=family_kb(),
+            reply_markup=kb,
         )
     except Exception:
         pass
@@ -847,25 +878,67 @@ async def usr_rej_cb(cb: CallbackQuery):
     except Exception:
         pass
 
+def _users_text(users: dict) -> str:
+    if not users:
+        return "Нет пользователей."
+    role_icon = {"admin": "👑", "viewer": "👁️"}
+    lines = []
+    for k, v in users.items():
+        icon = role_icon.get(v.get("role", "viewer"), "👤")
+        lines.append(f"{icon} <b>{v.get('name', k)}</b> — {v.get('role','viewer')} (ID: <code>{k}</code>)")
+    return "👥 <b>Пользователи бота:</b>\n" + "\n".join(lines)
+
+def _users_kb(users: dict) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for fuid, info in users.items():
+        name = info.get("name", fuid)
+        role = info.get("role", "viewer")
+        # Toggle role button
+        new_role  = "admin" if role == "viewer" else "viewer"
+        role_icon = "👁️→👑" if role == "viewer" else "👑→👁️"
+        builder.button(text=f"{role_icon} {name}", callback_data=f"usr:role:{fuid}:{new_role}")
+        builder.button(text="❌", callback_data=f"usr:del:{fuid}")
+    builder.adjust(2)
+    return builder.as_markup()
+
 @dp.message(Command("users"))
 async def cmd_users(msg: Message):
     if not is_admin(msg.from_user.id): return
     users = _load_family_users()
-    if not users:
-        await msg.answer("Нет добавленных пользователей.\n\n/invite — пригласить нового")
-        return
-    builder = InlineKeyboardBuilder()
-    for fuid, info in users.items():
-        uname = info.get("name", fuid)
-        role  = info.get("role", "viewer")
-        builder.button(text=f"❌ {uname} [{role}]", callback_data=f"usr:del:{fuid}")
-    builder.adjust(1)
-    lines = [f"• <b>{v.get('name', k)}</b> [{v.get('role','viewer')}] (ID: <code>{k}</code>)"
-             for k, v in users.items()]
     await msg.answer(
-        "👥 <b>Пользователи бота:</b>\n" + "\n".join(lines) +
-        "\n\n/invite — пригласить нового",
-        parse_mode="HTML", reply_markup=builder.as_markup())
+        _users_text(users) + "\n\n<i>Кнопка 👁️→👑 / 👑→👁️ меняет роль\n❌ — удалить</i>",
+        parse_mode="HTML",
+        reply_markup=_users_kb(users) if users else None
+    )
+
+@dp.callback_query(F.data.startswith("usr:role:"))
+async def usr_role_cb(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    parts    = cb.data.split(":")
+    fuid     = parts[2]
+    new_role = parts[3]
+    users    = _load_family_users()
+    if fuid in users:
+        old_role = users[fuid].get("role", "viewer")
+        users[fuid]["role"] = new_role
+        _save_family_users(users)
+        name = users[fuid].get("name", fuid)
+        _activity_log("user_role_changed", f"{name}: {old_role}→{new_role}")
+        await cb.answer(f"Роль изменена: {new_role}")
+        # Notify user of role change
+        kb = main_kb() if new_role == "admin" else family_kb()
+        try:
+            await bot.send_message(
+                int(fuid),
+                f"🔄 Ваша роль изменена: <b>{new_role}</b>",
+                parse_mode="HTML", reply_markup=kb
+            )
+        except Exception:
+            pass
+    await cb.message.edit_text(
+        _users_text(users) + "\n\n<i>Кнопка 👁️→👑 / 👑→👁️ меняет роль\n❌ — удалить</i>",
+        parse_mode="HTML", reply_markup=_users_kb(users)
+    )
 
 # ── /invite — одноразовая ссылка ──────────────────────────────────────────────
 import secrets as _secrets
@@ -893,22 +966,22 @@ async def cmd_invite(msg: Message):
 @dp.callback_query(F.data.startswith("usr:del:"))
 async def usr_del_cb(cb: CallbackQuery):
     if not is_admin(cb.from_user.id): return
-    fuid = cb.data.split(":")[2]
+    fuid  = cb.data.split(":")[2]
     users = _load_family_users()
-    name = users.pop(fuid, {}).get("name", fuid)
+    info  = users.pop(fuid, {})
+    name  = info.get("name", fuid)
     _save_family_users(users)
+    _activity_log("user_deleted", name)
     await cb.answer(f"Удалён: {name}")
-    if not users:
-        await cb.message.edit_text("Нет добавленных пользователей.", reply_markup=None)
-        return
-    builder = InlineKeyboardBuilder()
-    for fuid2, info in users.items():
-        uname = info.get("name", fuid2)
-        builder.button(text=f"❌ {uname}", callback_data=f"usr:del:{fuid2}")
-    builder.adjust(1)
-    lines = [f"• <b>{v['name']}</b> (ID: <code>{k}</code>)" for k, v in users.items()]
-    await cb.message.edit_text("👥 <b>Пользователи бота:</b>\n" + "\n".join(lines),
-                               parse_mode="HTML", reply_markup=builder.as_markup())
+    try:
+        await bot.send_message(int(fuid), "❌ Ваш доступ к боту отозван.")
+    except Exception:
+        pass
+    await cb.message.edit_text(
+        _users_text(users) + ("\n\n<i>Кнопка 👁️→👑 / 👑→👁️ меняет роль\n❌ — удалить</i>" if users else ""),
+        parse_mode="HTML",
+        reply_markup=_users_kb(users) if users else None
+    )
 
 # ── 📊 Статус ─────────────────────────────────────────────────────────────────
 async def build_status_text() -> str:
@@ -1158,14 +1231,17 @@ def lights_kb(states: dict) -> InlineKeyboardMarkup:
 
 @dp.message(F.text == "💡 Свет")
 async def lights_menu(msg: Message):
-    if not is_admin(msg.from_user.id): return
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
     states = {e: await ha_state(e) for _, (_, e) in LIGHTS.items()}
     await msg.answer("💡 <b>Управление светом</b>", parse_mode="HTML",
                      reply_markup=lights_kb(states))
 
 @dp.callback_query(F.data.startswith("lt:"))
 async def light_toggle(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
     _, domain, eid = cb.data.split(":", 2)
     state   = await ha_state(eid)
     service = "turn_off" if state == "on" else "turn_on"
@@ -1177,7 +1253,8 @@ async def light_toggle(cb: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("lights_all:"))
 async def lights_all(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
     action = cb.data.split(":")[1]
     for _, (domain, eid) in LIGHTS.items():
         await ha_call(domain, f"turn_{action}", eid)
@@ -1188,7 +1265,8 @@ async def lights_all(cb: CallbackQuery):
 
 @dp.callback_query(F.data == "lights_refresh")
 async def lights_refresh(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
     states = {e: await ha_state(e) for _, (_, e) in LIGHTS.items()}
     await cb.message.edit_reply_markup(reply_markup=lights_kb(states))
     await cb.answer("Обновлено")
@@ -1462,13 +1540,16 @@ def _climate_kb() -> InlineKeyboardMarkup:
 
 @dp.message(F.text == "🌡️ Климат")
 async def climate_menu(msg: Message):
-    if not is_admin(msg.from_user.id): return
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
     text = await build_climate_text()
     await msg.answer(text, parse_mode="HTML", reply_markup=_climate_kb())
 
 @dp.callback_query(F.data.in_({"floor_on", "floor_off", "climate_refresh"}))
 async def climate_basic(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
     if cb.data == "floor_on":
         await ha_call("climate", "turn_on", "climate.teplyi_pol_lodzhiia")
         await cb.answer("🔥 Тёплый пол включён")
@@ -1483,7 +1564,8 @@ async def climate_basic(cb: CallbackQuery):
 
 @dp.callback_query(F.data == "temp_chart")
 async def temp_chart_cb(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
     await cb.answer("📈 Строю график температуры...")
     points = await ha_history("sensor.temp_detskaia_temperature", hours=24)
     if not points:
@@ -1501,7 +1583,8 @@ async def temp_chart_cb(cb: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("floor_temp:"))
 async def floor_temp_adjust(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
     delta = int(cb.data.split(":")[1])
     d = await ha_get("states/climate.teplyi_pol_lodzhiia")
     if d:
@@ -1589,20 +1672,24 @@ def _energy_kb() -> InlineKeyboardMarkup:
 
 @dp.message(F.text == "⚡ Энергия")
 async def energy_menu(msg: Message):
-    if not is_admin(msg.from_user.id): return
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
     text = await build_energy_text()
     await msg.answer(text, parse_mode="HTML", reply_markup=_energy_kb())
 
 @dp.callback_query(F.data == "energy_refresh")
 async def energy_refresh(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
     await cb.answer("Обновляю...")
     text = await build_energy_text()
     await cb.message.edit_text(text, parse_mode="HTML", reply_markup=_energy_kb())
 
 @dp.callback_query(F.data.startswith("energy_chart:"))
 async def energy_chart_cb(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
     hours = int(cb.data.split(":")[1])
     label = "24 ч" if hours == 24 else "7 дней"
     await cb.answer(f"📊 Строю график {label}...")
@@ -1658,7 +1745,9 @@ async def namaz_refresh(cb: CallbackQuery):
 # ── 📺 Телевизор ──────────────────────────────────────────────────────────────
 @dp.message(F.text == "📺 Телевизор")
 async def tv_menu(msg: Message):
-    if not is_admin(msg.from_user.id): return
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
     d     = await ha_get(f"states/{TV_EID}")
     state = d.get("state", "off") if d else "off"
     text  = await build_tv_text()
@@ -1666,7 +1755,8 @@ async def tv_menu(msg: Message):
 
 @dp.callback_query(F.data.startswith("tv:"))
 async def tv_action(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
     action = cb.data.split(":", 1)[1]
     if action == "turn_on":
         await ha_call("media_player", "turn_on", TV_EID)
@@ -1706,7 +1796,9 @@ async def tv_action(cb: CallbackQuery):
 # ── 🏡 Дом ────────────────────────────────────────────────────────────────────
 @dp.message(F.text == "🏡 Дом")
 async def home_menu(msg: Message):
-    if not is_admin(msg.from_user.id): return
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
     khamzat, inet, dl, ul, tv, vacuum = await asyncio.gather(
         ha_state("person.khamzat"),
         ha_state("binary_sensor.keenetic_gateway_wan_status_2"),
@@ -1732,7 +1824,8 @@ async def home_menu(msg: Message):
 
 @dp.callback_query(F.data == "home_refresh")
 async def home_refresh(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
     khamzat, inet, dl, ul, tv, vacuum = await asyncio.gather(
         ha_state("person.khamzat"),
         ha_state("binary_sensor.keenetic_gateway_wan_status_2"),
@@ -1759,7 +1852,8 @@ async def home_refresh(cb: CallbackQuery):
 
 @dp.callback_query(F.data == "news_refresh")
 async def news_refresh(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
     await ha_call("input_boolean", "turn_on",  "input_boolean.news_refresh_trigger")
     await asyncio.sleep(0.5)
     await ha_call("input_boolean", "turn_off", "input_boolean.news_refresh_trigger")
@@ -1785,7 +1879,9 @@ async def build_vacuum_text() -> str:
 
 @dp.message(F.text == "🤖 Пылесос")
 async def vacuum_menu(msg: Message):
-    if not is_admin(msg.from_user.id): return
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
     text = await build_vacuum_text()
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -1801,7 +1897,8 @@ async def vacuum_menu(msg: Message):
 
 @dp.callback_query(F.data.startswith("vac:"))
 async def vacuum_actions(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
     action = cb.data.split(":")[1]
     if action == "start":
         await ha_call("vacuum", "start", "vacuum.pylik")
@@ -1929,14 +2026,17 @@ async def build_shopping_text(items: list) -> str:
 
 @dp.message(F.text == "🛒 Покупки")
 async def shopping_menu(msg: Message):
-    if not is_admin(msg.from_user.id): return
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
     items = await ha_ws_get_todo_items(SHOP_EID)
     text  = await build_shopping_text(items)
     await msg.answer(text, parse_mode="HTML", reply_markup=_shop_kb(items))
 
 @dp.callback_query(F.data == "shop:refresh")
 async def shop_refresh(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
     await cb.answer("Обновляю...")
     items = await ha_ws_get_todo_items(SHOP_EID)
     text  = await build_shopping_text(items)
@@ -1944,7 +2044,8 @@ async def shop_refresh(cb: CallbackQuery):
 
 @dp.callback_query(F.data == "shop:add")
 async def shop_add_start(cb: CallbackQuery, state: FSMContext):
-    if not is_admin(cb.from_user.id): return
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
     await state.set_state(ShoppingAdd.waiting)
     await cb.answer()
     await cb.message.answer(
@@ -1954,7 +2055,7 @@ async def shop_add_start(cb: CallbackQuery, state: FSMContext):
 
 @dp.message(Command("cancel"))
 async def cmd_cancel(msg: Message, state: FSMContext):
-    if not is_admin(msg.from_user.id): return
+    if not is_allowed(msg.from_user.id): return
     current = await state.get_state()
     await state.clear()
     if current:
@@ -1964,7 +2065,7 @@ async def cmd_cancel(msg: Message, state: FSMContext):
 
 @dp.message(StateFilter(ShoppingAdd.waiting))
 async def shop_add_item(msg: Message, state: FSMContext):
-    if not is_admin(msg.from_user.id): return
+    if not is_bot_admin(msg.from_user.id): return
     item_text = (msg.text or "").strip()
     if not item_text or item_text.startswith("/"):
         await state.clear()
@@ -1986,7 +2087,8 @@ async def shop_add_item(msg: Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("shop:done:"))
 async def shop_done_item(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
     name = cb.data[10:]
     # Toggle: check current status
     items = await ha_ws_get_todo_items(SHOP_EID)
@@ -2005,7 +2107,8 @@ async def shop_done_item(cb: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("shop:del:"))
 async def shop_del_item(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
     name = cb.data[9:]
     items = await ha_ws_get_todo_items(SHOP_EID)
     full_name = next((i["summary"] for i in items if i.get("summary", "").startswith(name[:40])), name)
@@ -2019,7 +2122,8 @@ async def shop_del_item(cb: CallbackQuery):
 
 @dp.callback_query(F.data == "shop:clear")
 async def shop_clear(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
     # Remove all completed items
     items = await ha_ws_get_todo_items(SHOP_EID)
     done  = [i["summary"] for i in items if i.get("status") == "completed"]
@@ -2035,7 +2139,9 @@ async def shop_clear(cb: CallbackQuery):
 @dp.message(F.text == "⚙️ Автоматизации")
 async def automations_menu(msg: Message):
     global _autos_cache
-    if not is_admin(msg.from_user.id): return
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
     _autos_cache = await _fetch_automations()
     if not _autos_cache:
         await msg.answer("❌ Нет автоматизаций")
@@ -2049,7 +2155,8 @@ async def automations_menu(msg: Message):
 @dp.callback_query(F.data.startswith("auto:"))
 async def automation_action(cb: CallbackQuery):
     global _autos_cache
-    if not is_admin(cb.from_user.id): return
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
     val = cb.data[5:]
 
     if val == "r":
@@ -2080,7 +2187,9 @@ async def automation_action(cb: CallbackQuery):
 # ── 📹 Камеры ─────────────────────────────────────────────────────────────────
 @dp.message(F.text == "📹 Камеры")
 async def cameras_menu(msg: Message):
-    if not is_admin(msg.from_user.id): return
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📹 Камеры в HA",  url=f"{HA_URL}/lovelace/cameras")],
         [InlineKeyboardButton(text="🎞 Frigate",       url=f"{HA_URL}/ccab4aaf_frigate-fa")],
@@ -2151,7 +2260,9 @@ async def ask_claude(question: str, context: str) -> str:
 
 @dp.message(F.text == "🧠 ИИ Ассистент")
 async def ai_enter(msg: Message, state: FSMContext):
-    if not is_admin(msg.from_user.id): return
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
     await state.set_state(AIChat.active)
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="❌ Выйти из чата с ИИ", callback_data="ai_exit")
@@ -2169,7 +2280,8 @@ async def ai_enter(msg: Message, state: FSMContext):
 
 @dp.callback_query(F.data == "ai_exit")
 async def ai_exit_cb(cb: CallbackQuery, state: FSMContext):
-    if not is_admin(cb.from_user.id): return
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
     await state.clear()
     await cb.message.edit_text("✅ Вышел из режима ИИ")
     await cb.message.answer("🏠 Главное меню:", reply_markup=main_kb())
@@ -2177,7 +2289,7 @@ async def ai_exit_cb(cb: CallbackQuery, state: FSMContext):
 
 @dp.message(StateFilter(AIChat.active))
 async def ai_chat(msg: Message, state: FSMContext):
-    if not is_admin(msg.from_user.id): return
+    if not is_bot_admin(msg.from_user.id): return
     question = msg.text or ""
     if question.startswith("/"):
         await state.clear()
