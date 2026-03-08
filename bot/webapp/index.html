@@ -760,7 +760,8 @@ body {
     <div class="section-body" id="sec-settings-body">
       <div class="section-content">
         <div style="display:flex;gap:8px;margin-bottom:12px">
-          <button class="btn btn-primary" style="flex:1" onclick="settingsScan(event)">🔍 Найти новые</button>
+          <button class="btn btn-primary" style="flex:1" onclick="openEntityBrowser()">➕ Из HA</button>
+          <button class="btn btn-neutral" style="flex:1" onclick="settingsScan(event)">🔍 Авто-поиск</button>
           <button class="btn btn-neutral" onclick="loadSettings()">↺</button>
         </div>
         <div id="settings-list">
@@ -1384,6 +1385,201 @@ async function saveDevIcon(eid, icon) {
     if (settingsData && settingsData[eid]) settingsData[eid].icon = icon;
     renderSettings();
     showToast('✅ Иконка сохранена');
+    setTimeout(loadStatus, 800);
+  } catch(e) {
+    showToast('❌ ' + e.message);
+  }
+}
+
+// ── Entity browser (add any HA entity) ────────────────────────────────────
+const DOMAIN_LABELS = {
+  light: '💡 Свет', switch: '🔌 Выключатели', camera: '📹 Камеры',
+  automation: '🤖 Автоматизации', script: '📜 Скрипты', scene: '🎬 Сцены',
+  sensor: '📊 Сенсоры', binary_sensor: '🔘 Бинарные', input_boolean: '☑️ Флаги',
+  input_number: '🔢 Числа', input_text: '🔤 Текст', input_select: '📋 Выбор',
+  media_player: '📺 Медиа', climate: '🌡️ Климат', fan: '💨 Вентилятор',
+  cover: '🪟 Шторы/ворота', lock: '🔒 Замки', alarm_control_panel: '🚨 Охрана',
+  vacuum: '🤖 Пылесос', weather: '🌤️ Погода', person: '👤 Персоны',
+  timer: '⏱️ Таймеры', counter: '🔢 Счётчики', todo: '📝 Задачи',
+  number: '🔢 Числовые', select: '📋 Выбор', button: '🔘 Кнопки',
+};
+const SECTION_LABELS = {
+  lights: '💡 Свет', cameras: '📹 Камеры', automations: '🤖 Авто',
+  sensors: '📊 Сенсоры', media: '📺 Медиа', hidden: '🙈 Скрыто',
+};
+const DOMAIN_DEFAULT_SECTION = {
+  light: 'lights', switch: 'lights', camera: 'cameras',
+  automation: 'automations', script: 'automations', scene: 'automations',
+  sensor: 'sensors', binary_sensor: 'sensors',
+  media_player: 'media', climate: 'sensors',
+};
+const DOMAIN_DEFAULT_ICON = {
+  light: '💡', switch: '🔌', camera: '📹', automation: '🤖', script: '📜',
+  scene: '🎬', sensor: '📊', binary_sensor: '🔘', input_boolean: '☑️',
+  media_player: '📺', climate: '🌡️', fan: '💨', cover: '🪟',
+  lock: '🔒', vacuum: '🤖', weather: '🌤️', person: '👤', timer: '⏱️',
+};
+
+let entityBrowserData = null;
+let entityBrowserFilter = '';
+let entityBrowserDomain = 'all';
+let entityBrowserSelected = null; // {entity_id, name, domain}
+
+async function openEntityBrowser() {
+  // Show overlay with spinner first
+  showEntityBrowserOverlay('<div style="text-align:center;padding:24px;color:#60608a">Загрузка...</div>');
+  try {
+    entityBrowserData = await api('/ha_entities?exclude_known=1');
+    entityBrowserDomain = 'all';
+    entityBrowserFilter = '';
+    renderEntityBrowser();
+  } catch(e) {
+    showEntityBrowserOverlay('<div style="text-align:center;padding:24px;color:#ef4444">Ошибка: ' + escapeHtml(e.message) + '</div>');
+  }
+}
+
+function showEntityBrowserOverlay(innerHtml) {
+  document.getElementById('entity-browser-overlay')?.remove();
+  const ov = document.createElement('div');
+  ov.id = 'entity-browser-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:3000;display:flex;flex-direction:column;align-items:stretch;justify-content:flex-end';
+  ov.innerHTML = `<div id="entity-browser-sheet" style="background:#12121e;border-radius:18px 18px 0 0;padding:0;max-height:88vh;display:flex;flex-direction:column;overflow:hidden">
+    <div style="padding:14px 16px 10px;border-bottom:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;gap:10px;flex-shrink:0">
+      <span style="font-size:15px;font-weight:700;color:#e0e0f0;flex:1">➕ Добавить из HA</span>
+      <button onclick="document.getElementById('entity-browser-overlay').remove()" style="background:rgba(255,255,255,0.08);border:none;border-radius:8px;width:30px;height:30px;color:#a0a0c0;font-size:16px;cursor:pointer">✕</button>
+    </div>
+    <div id="entity-browser-inner" style="flex:1;overflow-y:auto;overscroll-behavior:contain">${innerHtml}</div>
+  </div>`;
+  ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+  document.body.appendChild(ov);
+}
+
+function renderEntityBrowser() {
+  if (!entityBrowserData) return;
+  const domains = Object.keys(entityBrowserData).sort();
+  const domainBtns = ['all', ...domains].map(d => {
+    const lbl = d === 'all' ? '🌐 Все' : (DOMAIN_LABELS[d] || d);
+    const count = d === 'all' ? Object.values(entityBrowserData).reduce((s,a)=>s+a.length,0) : entityBrowserData[d].length;
+    const active = entityBrowserDomain === d;
+    return `<button onclick="setEntityDomain('${d}')"
+      style="white-space:nowrap;padding:6px 12px;border-radius:20px;border:1px solid ${active ? 'rgba(99,102,241,0.6)' : 'rgba(255,255,255,0.1)'};background:${active ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.04)'};color:${active ? '#a0a0ff' : '#80809a'};font-size:12px;cursor:pointer;font-family:inherit">
+      ${lbl} <span style="opacity:0.6">${count}</span>
+    </button>`;
+  }).join('');
+
+  // Filtered list
+  const q = entityBrowserFilter.toLowerCase();
+  let items = [];
+  for (const [dom, arr] of Object.entries(entityBrowserData)) {
+    if (entityBrowserDomain !== 'all' && dom !== entityBrowserDomain) continue;
+    for (const e of arr) {
+      if (q && !e.name.toLowerCase().includes(q) && !e.entity_id.toLowerCase().includes(q)) continue;
+      items.push({...e, domain: dom});
+    }
+  }
+
+  const listHtml = items.length === 0
+    ? '<div style="text-align:center;padding:24px;color:#60608a;font-size:13px">Нет сущностей</div>'
+    : items.map(e => {
+        const icon = DOMAIN_DEFAULT_ICON[e.domain] || '📦';
+        return `<div onclick="selectEntityToAdd('${escapeAttr(e.entity_id)}','${escapeAttr(e.name)}','${e.domain}')"
+          style="display:flex;align-items:center;gap:10px;padding:10px 16px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);-webkit-tap-highlight-color:transparent"
+          onmouseenter="this.style.background='rgba(255,255,255,0.04)'" onmouseleave="this.style.background=''">
+          <span style="font-size:20px;width:28px;text-align:center;flex-shrink:0">${icon}</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:600;color:#c0c0e0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(e.name)}</div>
+            <div style="font-size:10px;color:#50508a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(e.entity_id)}</div>
+          </div>
+          <span style="font-size:11px;color:#40406a;flex-shrink:0">${e.state || ''}</span>
+        </div>`;
+      }).join('');
+
+  const html = `
+    <div style="padding:10px 16px;display:flex;gap:8px;flex-shrink:0;border-bottom:1px solid rgba(255,255,255,0.05)">
+      <input id="entity-search" type="text" placeholder="🔍 Поиск..." value="${escapeAttr(entityBrowserFilter)}"
+        oninput="entityBrowserFilter=this.value;renderEntityBrowser()"
+        style="flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:7px 10px;color:#e0e0f0;font-size:13px;font-family:inherit;outline:none">
+    </div>
+    <div style="display:flex;gap:6px;padding:8px 16px;overflow-x:auto;flex-shrink:0;border-bottom:1px solid rgba(255,255,255,0.05);scrollbar-width:none">
+      ${domainBtns}
+    </div>
+    <div style="flex:1">${listHtml}</div>`;
+
+  const inner = document.getElementById('entity-browser-inner');
+  if (inner) inner.innerHTML = html;
+  // Keep focus on search if was typing
+  if (entityBrowserFilter) {
+    const inp = document.getElementById('entity-search');
+    if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+  }
+}
+
+function setEntityDomain(d) {
+  entityBrowserDomain = d;
+  renderEntityBrowser();
+}
+
+function selectEntityToAdd(eid, name, domain) {
+  entityBrowserSelected = {eid, name, domain};
+  const defSection = DOMAIN_DEFAULT_SECTION[domain] || 'hidden';
+  const defIcon    = DOMAIN_DEFAULT_ICON[domain] || '📦';
+
+  const sectionOpts = Object.entries(SECTION_LABELS).map(([k, v]) =>
+    `<option value="${k}" ${k === defSection ? 'selected' : ''}>${v}</option>`
+  ).join('');
+
+  const inner = document.getElementById('entity-browser-inner');
+  if (!inner) return;
+  inner.innerHTML = `
+    <div style="padding:16px">
+      <button onclick="renderEntityBrowser()" style="background:none;border:none;color:#6060a0;font-size:13px;cursor:pointer;padding:0 0 12px;font-family:inherit">← Назад</button>
+      <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px;margin-bottom:14px">
+        <div style="font-size:12px;color:#50508a;margin-bottom:3px">${escapeHtml(eid)}</div>
+        <div style="font-size:14px;font-weight:600;color:#c0c0e0">${escapeHtml(name)}</div>
+      </div>
+
+      <div style="margin-bottom:12px">
+        <div style="font-size:11px;color:#60608a;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.5px">Название</div>
+        <input id="add-ent-name" type="text" value="${escapeAttr(name)}"
+          style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 12px;color:#e0e0f0;font-size:14px;font-family:inherit;outline:none">
+      </div>
+
+      <div style="margin-bottom:12px">
+        <div style="font-size:11px;color:#60608a;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.5px">Иконка</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span id="add-ent-icon-preview" style="font-size:28px">${defIcon}</span>
+          <input id="add-ent-icon" type="text" value="${escapeAttr(defIcon)}" maxlength="4"
+            oninput="document.getElementById('add-ent-icon-preview').textContent=this.value||'📦'"
+            style="width:70px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 12px;color:#e0e0f0;font-size:16px;font-family:inherit;outline:none;text-align:center">
+          <span style="font-size:12px;color:#50508a">← введите emoji</span>
+        </div>
+      </div>
+
+      <div style="margin-bottom:20px">
+        <div style="font-size:11px;color:#60608a;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.5px">Раздел</div>
+        <select id="add-ent-section"
+          style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 12px;color:#e0e0f0;font-size:14px;font-family:inherit;outline:none">
+          ${sectionOpts}
+        </select>
+      </div>
+
+      <button onclick="confirmAddEntity()" class="btn btn-primary" style="width:100%;padding:13px">
+        ➕ Добавить в устройства
+      </button>
+    </div>`;
+}
+
+async function confirmAddEntity() {
+  if (!entityBrowserSelected) return;
+  const eid     = entityBrowserSelected.eid;
+  const name    = document.getElementById('add-ent-name')?.value.trim()    || entityBrowserSelected.name;
+  const icon    = document.getElementById('add-ent-icon')?.value.trim()    || '📦';
+  const section = document.getElementById('add-ent-section')?.value        || 'hidden';
+  try {
+    await api('/devices', 'POST', { entity_id: eid, name, icon, section });
+    document.getElementById('entity-browser-overlay')?.remove();
+    showToast('✅ Добавлено: ' + name);
+    await loadSettings();
     setTimeout(loadStatus, 800);
   } catch(e) {
     showToast('❌ ' + e.message);

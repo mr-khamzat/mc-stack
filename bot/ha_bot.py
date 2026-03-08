@@ -2455,19 +2455,66 @@ async def _web_devices_post(request: aiohttp_web.Request) -> aiohttp_web.Respons
             return aiohttp_web.Response(status=400, text="entity_id required", headers=_CORS_HEADERS)
         devices = _dev_load()
         if eid not in devices:
-            return aiohttp_web.Response(status=404, text="Not found", headers=_CORS_HEADERS)
-        for field in ("name", "icon", "section", "enabled", "order"):
-            if field in body:
-                devices[eid][field] = body[field]
-        # enabled = (section != "hidden")
-        if "section" in body:
-            devices[eid]["enabled"] = (body["section"] != "hidden")
+            # Добавляем новую сущность
+            max_order = max((v.get("order", 0) for v in devices.values()), default=0) + 1
+            devices[eid] = {
+                "name":    body.get("name", eid),
+                "icon":    body.get("icon", "📦"),
+                "section": body.get("section", "hidden"),
+                "enabled": body.get("section", "hidden") != "hidden",
+                "order":   max_order,
+            }
+        else:
+            for field in ("name", "icon", "section", "enabled", "order"):
+                if field in body:
+                    devices[eid][field] = body[field]
+            # enabled = (section != "hidden")
+            if "section" in body:
+                devices[eid]["enabled"] = (body["section"] != "hidden")
         _dev_save(devices)
         _dev_rebuild_lights(devices)
         return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
                                     headers=_CORS_HEADERS)
     except Exception as e:
         log.error(f"web_devices_post error: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+async def _web_ha_entities(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/ha_entities — все сущности HA, сгруппированные по домену.
+    Параметр ?exclude_known=1 исключает уже добавленные в devices.json.
+    """
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        states = await ha_get("states")
+        if not states:
+            return aiohttp_web.Response(text='{}', content_type="application/json", headers=_CORS_HEADERS)
+        exclude_known = request.rel_url.query.get("exclude_known", "0") == "1"
+        known = set(_dev_load().keys()) if exclude_known else set()
+        grouped: dict = {}
+        for s in states:
+            eid = s.get("entity_id", "")
+            if not eid or eid in known:
+                continue
+            domain = eid.split(".")[0]
+            attrs  = s.get("attributes", {})
+            fn     = attrs.get("friendly_name", eid)
+            if domain not in grouped:
+                grouped[domain] = []
+            grouped[domain].append({
+                "entity_id": eid,
+                "name":      fn,
+                "state":     s.get("state", ""),
+            })
+        for d in grouped:
+            grouped[d].sort(key=lambda x: x["name"].lower())
+        return aiohttp_web.Response(
+            text=json.dumps(grouped, ensure_ascii=False),
+            content_type="application/json",
+            headers=_CORS_HEADERS,
+        )
+    except Exception as e:
+        log.error(f"web_ha_entities error: {e}")
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
 async def _web_ha_scan(request: aiohttp_web.Request) -> aiohttp_web.Response:
@@ -2498,10 +2545,12 @@ async def _start_web():
     app.router.add_get("/ha-app/api/devices",       _web_devices_get)
     app.router.add_post("/ha-app/api/devices",      _web_devices_post)
     app.router.add_get("/ha-app/api/ha_scan",       _web_ha_scan)
-    app.router.add_route("OPTIONS", "/ha-app/api/status",   _web_options)
-    app.router.add_route("OPTIONS", "/ha-app/api/action",   _web_options)
-    app.router.add_route("OPTIONS", "/ha-app/api/devices",  _web_options)
-    app.router.add_route("OPTIONS", "/ha-app/api/ha_scan",  _web_options)
+    app.router.add_get("/ha-app/api/ha_entities",   _web_ha_entities)
+    app.router.add_route("OPTIONS", "/ha-app/api/status",       _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/action",       _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/devices",      _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/ha_scan",      _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/ha_entities",  _web_options)
     runner = aiohttp_web.AppRunner(app)
     await runner.setup()
     site = aiohttp_web.TCPSite(runner, "127.0.0.1", 8766)
