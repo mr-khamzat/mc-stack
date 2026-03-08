@@ -828,6 +828,7 @@ function toggleSection(id) {
 }
 
 // ── API ────────────────────────────────────────────────────────────────────
+async function apiPost(path, body) { return api(path, 'POST', body); }
 async function api(path, method = 'GET', body = null) {
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), 15000);
@@ -1140,6 +1141,13 @@ async function init() {
 }
 
 // ── Actions ────────────────────────────────────────────────────────────────
+async function callService(service, entity_id) {
+  try {
+    await api('/action', 'POST', { service, entity_id, extra: {} });
+    setTimeout(loadStatus, 800);
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
 async function callAction(btnEl, service, entity_id, extra = {}) {
   if (btnEl) {
     btnEl.classList.add('pending');
@@ -1640,25 +1648,39 @@ function renderDynamicSections(sections) {
     const devHtml = Object.entries(devices).map(([eid, info]) => {
       const domain = info.domain || eid.split('.')[0];
       const isCamera = domain === 'camera';
+      const isSwitch = domain === 'switch' || domain === 'light';
+      const isBinarySensor = domain === 'binary_sensor';
       const isOn = info.state === 'on' || info.state === 'streaming' || info.state === 'home';
       const stateLabel = info.state || '—';
 
-      const cameraButtons = isCamera
-        ? `<div style="display:flex;gap:6px;flex-shrink:0">
+      let ctrlHtml;
+      if (isCamera) {
+        ctrlHtml = `<div style="display:flex;gap:6px;flex-shrink:0">
             <button onclick="openCameraModal('${escapeAttr(eid)}')"
               style="background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);border-radius:8px;padding:5px 10px;color:#a0a0ff;cursor:pointer;font-size:12px">▶</button>
             <button onclick="openFrigateEvents('${escapeAttr(eid)}')"
               style="background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.3);border-radius:8px;padding:5px 10px;color:#fbbf24;cursor:pointer;font-size:12px">🎞</button>
-          </div>`
-        : `<span style="font-size:12px;font-weight:600;color:${isOn ? '#22c55e' : '#60608a'}">${escapeHtml(stateLabel)}</span>`;
+          </div>`;
+      } else if (isSwitch) {
+        const svc = isOn ? (domain + '.turn_off') : (domain + '.turn_on');
+        ctrlHtml = `<label class="toggle-wrap" style="flex-shrink:0">
+            <input type="checkbox" ${isOn ? 'checked' : ''} onchange="callService('${escapeAttr(svc)}','${escapeAttr(eid)}')">
+            <span class="toggle-slider"></span>
+          </label>`;
+      } else if (isBinarySensor) {
+        const dot = isOn ? '🟢' : '⚪';
+        ctrlHtml = `<span style="font-size:18px">${dot}</span>`;
+      } else {
+        ctrlHtml = `<span style="font-size:12px;font-weight:600;color:${isOn ? '#22c55e' : '#60608a'}">${escapeHtml(stateLabel)}</span>`;
+      }
 
       return `<div style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:10px;margin-bottom:6px">
         <span style="font-size:22px">${info.icon || '📦'}</span>
         <div style="flex:1;min-width:0">
           <div style="font-size:13px;font-weight:600;color:#c0c0e0">${escapeHtml(info.name || eid)}</div>
-          <div style="font-size:11px;color:#50508a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(eid)}</div>
+          <div style="font-size:11px;color:#50508a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(stateLabel)}</div>
         </div>
-        ${cameraButtons}
+        ${ctrlHtml}
       </div>`;
     }).join('');
 
@@ -1689,38 +1711,86 @@ async function openCameraModal(eid) {
   document.getElementById('cam-modal-overlay')?.remove();
   const ov = document.createElement('div');
   ov.id = 'cam-modal-overlay';
-  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:4000;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:4000;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:0';
+
+  const camId = eid.replace('camera.', '');
   ov.innerHTML = `
-    <div style="width:100%;max-width:500px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-        <span style="font-size:14px;font-weight:700;color:#e0e0f0">📹 ${escapeHtml(camName)}</span>
-        <button onclick="closeCameraModal()" style="background:rgba(255,255,255,0.1);border:none;border-radius:8px;padding:6px 12px;color:#c0c0e0;cursor:pointer;font-size:13px">✕ Закрыть</button>
+    <div style="width:100%;max-width:600px;display:flex;flex-direction:column;height:100%">
+      <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;flex-shrink:0">
+        <span style="font-size:14px;font-weight:700;color:#e0e0f0;flex:1">📹 ${escapeHtml(camName)}</span>
+        <button onclick="expandCamFullscreen()" title="На весь экран"
+          style="background:rgba(255,255,255,0.1);border:none;border-radius:8px;width:32px;height:32px;color:#c0c0e0;cursor:pointer;font-size:16px">⛶</button>
+        <button onclick="closeCameraModal()"
+          style="background:rgba(255,255,255,0.1);border:none;border-radius:8px;padding:6px 12px;color:#c0c0e0;cursor:pointer;font-size:13px">✕</button>
       </div>
-      <div style="position:relative;background:#000;border-radius:14px;overflow:hidden;min-height:200px">
+      <div id="cam-stream-wrap" style="position:relative;background:#000;flex-shrink:0">
         <img id="cam-modal-img" src="${streamUrl}" alt="camera stream"
-          style="width:100%;display:block;max-height:70vh;object-fit:contain"
+          style="width:100%;display:block;max-height:55vh;object-fit:contain"
           onerror="document.getElementById('cam-modal-err').style.display='flex'">
         <div id="cam-modal-err" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:#6060a0;font-size:13px">
-          <span style="font-size:30px">📷</span>
-          <span>Поток недоступен</span>
+          <span style="font-size:30px">📷</span><span>Поток недоступен</span>
           <button onclick="retryCamera('${escapeAttr(streamUrl)}')" class="btn btn-neutral" style="margin-top:4px">↺ Повторить</button>
         </div>
       </div>
-      <div style="margin-top:10px;font-size:11px;color:#50508a;text-align:center">
-        Прямой поток · нажмите ✕ для остановки
+      <div style="flex:1;overflow-y:auto;padding:10px 16px">
+        <div style="font-size:12px;color:#50508a;margin-bottom:8px">📼 Последние записи</div>
+        <div id="cam-recordings-list" style="display:flex;gap:8px;flex-wrap:wrap">
+          <div style="color:#50508a;font-size:12px">Загрузка...</div>
+        </div>
+      </div>
+      <div style="padding:8px 16px 12px;font-size:11px;color:#50508a;text-align:center;flex-shrink:0">
+        Прямой поток MJPEG · нажмите ✕ для остановки
       </div>
     </div>`;
+
   ov.addEventListener('click', e => { if (e.target === ov) closeCameraModal(); });
   document.body.appendChild(ov);
   _camModal = ov;
+
+  // Load recordings async
+  _loadCamRecordings(camId);
+}
+
+async function _loadCamRecordings(camId) {
+  const el = document.getElementById('cam-recordings-list');
+  if (!el) return;
+  try {
+    const recs = await api('/frigate/recordings?camera=' + camId);
+    if (!recs || recs.length === 0) {
+      el.innerHTML = '<div style="color:#50508a;font-size:12px">Записей нет</div>';
+      return;
+    }
+    el.innerHTML = recs.map((r, i) => {
+      const thumb = r.thumbnail
+        ? `<img src="${escapeAttr(r.thumbnail)}" style="width:100%;height:60px;object-fit:cover;border-radius:6px 6px 0 0" onerror="this.style.display='none'">`
+        : `<div style="width:100%;height:60px;background:#1a1a2e;border-radius:6px 6px 0 0;display:flex;align-items:center;justify-content:center;font-size:20px">🎬</div>`;
+      return `<div style="width:calc(33% - 6px);min-width:90px;background:#12121e;border:1px solid rgba(255,255,255,0.08);border-radius:8px;overflow:hidden;cursor:pointer"
+        onclick="openVideoPlayer('${escapeAttr(r.url)}','${escapeAttr(r.title)}','${escapeAttr(r.url)}')">
+        ${thumb}
+        <div style="padding:4px 6px">
+          <div style="font-size:10px;color:#8080a0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.title||'Запись '+(i+1))}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    if (el) el.innerHTML = `<div style="color:#50508a;font-size:12px">Ошибка: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function expandCamFullscreen() {
+  const wrap = document.getElementById('cam-stream-wrap');
+  if (!wrap) return;
+  if (wrap.requestFullscreen) wrap.requestFullscreen();
+  else if (wrap.webkitRequestFullscreen) wrap.webkitRequestFullscreen();
 }
 
 function closeCameraModal() {
   const ov = document.getElementById('cam-modal-overlay');
   if (ov) {
-    // Stop stream by clearing src
     const img = ov.querySelector('#cam-modal-img');
     if (img) img.src = '';
+    // Stop any video players
+    ov.querySelectorAll('video').forEach(v => { v.pause(); v.src = ''; });
     ov.remove();
   }
   _camModal = null;
@@ -1731,6 +1801,56 @@ function retryCamera(url) {
   const err = document.getElementById('cam-modal-err');
   if (img) { img.src = url + '&t=' + Date.now(); }
   if (err) err.style.display = 'none';
+}
+
+function openVideoPlayer(url, title, clipUrl) {
+  document.getElementById('video-player-overlay')?.remove();
+  const ov = document.createElement('div');
+  ov.id = 'video-player-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.96);z-index:5000;display:flex;flex-direction:column;align-items:center;justify-content:center';
+  ov.innerHTML = `
+    <div style="width:100%;max-width:600px;padding:0 12px">
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 0 8px">
+        <span style="font-size:13px;font-weight:700;color:#e0e0f0;flex:1">🎬 ${escapeHtml(title||'Запись')}</span>
+        <button onclick="_sendClipToBot('${escapeAttr(clipUrl)}')" title="Отправить в Telegram"
+          style="background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);border-radius:8px;padding:5px 10px;color:#a0a0ff;cursor:pointer;font-size:12px">⬇️ В бота</button>
+        <button onclick="document.getElementById('video-player-overlay')?.remove();document.getElementById('video-player-overlay')?.querySelectorAll('video').forEach(v=>{v.pause();v.src=''})"
+          style="background:rgba(255,255,255,0.1);border:none;border-radius:8px;padding:6px 12px;color:#c0c0e0;cursor:pointer;font-size:13px">✕</button>
+      </div>
+      <video id="vp-video" src="${escapeAttr(url)}" controls autoplay
+        style="width:100%;border-radius:12px;background:#000;max-height:70vh"
+        onerror="document.getElementById('vp-err').style.display='block'">
+      </video>
+      <div id="vp-err" style="display:none;color:#ef4444;font-size:13px;text-align:center;padding:16px">Не удалось загрузить видео</div>
+      <div style="text-align:center;margin-top:8px">
+        <button onclick="document.getElementById('vp-video').requestFullscreen&&document.getElementById('vp-video').requestFullscreen()"
+          style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:5px 14px;color:#8080a0;cursor:pointer;font-size:12px">⛶ На весь экран</button>
+      </div>
+    </div>`;
+  ov.addEventListener('click', e => {
+    if (e.target === ov) {
+      const v = document.getElementById('vp-video');
+      if (v) { v.pause(); v.src = ''; }
+      ov.remove();
+    }
+  });
+  document.body.appendChild(ov);
+}
+
+async function _sendClipToBot(clipUrl) {
+  try {
+    showToast('📤 Отправляю...');
+    await apiPost('/frigate/send', { clip_url: clipUrl });
+    showToast('✅ Видео отправлено в Telegram');
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+async function _frigatesSendSnapshot(camera, label) {
+  try {
+    showToast('📤 Отправляю снимок...');
+    await apiPost('/frigate/send', { camera, label });
+    showToast('✅ Фото отправлено в Telegram');
+  } catch(e) { showToast('❌ ' + e.message); }
 }
 
 async function openFrigateEvents(eid) {
@@ -1765,13 +1885,17 @@ async function openFrigateEvents(eid) {
       const timeStr = dt.toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
       const labels = {'person':'👤 Человек','car':'🚗 Авто','dog':'🐕 Собака','cat':'🐱 Кот'};
       const labelStr = labels[ev.label] || ('📦 ' + ev.label);
+      const cam = escapeAttr(ev.camera||'');
+      const lbl = escapeAttr(ev.label||'person');
       return `<div style="display:flex;align-items:center;gap:10px;padding:10px;border:1px solid rgba(255,255,255,0.07);border-radius:10px;margin-bottom:8px">
         <div style="font-size:22px">${labelStr.split(' ')[0]}</div>
         <div style="flex:1;min-width:0">
           <div style="font-size:13px;font-weight:600;color:#c0c0e0">${labelStr}</div>
           <div style="font-size:11px;color:#50508a">${timeStr} · ${ev.score}% · ${escapeHtml(ev.camera||'')}</div>
         </div>
-        ${ev.snapshot_url ? `<img src="${ev.snapshot_url}" style="width:60px;height:45px;object-fit:cover;border-radius:6px;border:1px solid rgba(255,255,255,0.1)" onerror="this.style.display='none'">` : ''}
+        ${ev.snapshot_url ? `<img src="${ev.snapshot_url}" style="width:60px;height:45px;object-fit:cover;border-radius:6px;border:1px solid rgba(255,255,255,0.1);cursor:pointer" onclick="openVideoPlayer('','${escapeAttr(ev.snapshot_url)}','${escapeAttr(ev.snapshot_url)}')" onerror="this.style.display='none'">` : ''}
+        <button onclick="_frigatesSendSnapshot('${cam}','${lbl}')"
+          style="background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);border-radius:8px;width:30px;height:30px;color:#a0a0ff;cursor:pointer;font-size:14px;flex-shrink:0">⬇️</button>
       </div>`;
     }).join('');
   } catch(e) {

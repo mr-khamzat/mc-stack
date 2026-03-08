@@ -1,0 +1,65 @@
+{
+  "light.svet_krovat": {
+    "name": "Кровать",
+    "icon": "🛏️",
+    "section": "lights",
+    "enabled": true,
+    "order": 1
+  },
+  "switch.vykliuchatel_kukhnia": {
+    "name": "Кухня",
+    "icon": "🍳",
+    "section": "lights",
+    "enabled": true,
+    "order": 2
+  },
+  "switch.kabinet_svet_pk_left": {
+    "name": "ПК Левый",
+    "icon": "🖥️",
+    "section": "lights",
+    "enabled": true,
+    "order": 3
+  },
+  "switch.kabinet_svet_pk_right": {
+    "name": "ПК Правый",
+    "icon": "🖥️",
+    "section": "lights",
+    "enabled": true,
+    "order": 4
+  },
+  "switch.sonoff_100093f84f": {
+    "name": "Люстра Детская",
+    "icon": "💡",
+    "section": "lights",
+    "enabled": true,
+    "order": 5
+  },
+  "switch.sonoff_1000a60930": {
+    "name": "Шкаф",
+    "icon": "🚪",
+    "section": "lights",
+    "enabled": true,
+    "order": 6
+  },
+  "switch.gostinaia": {
+    "name": "Гостиная",
+    "icon": "🛋️",
+    "section": "lights",
+    "enabled": true,
+    "order": 7
+  },
+  "light.yeelink_ceiling1_b72a_light": {
+    "name": "Yeelight Ceiling Light Light",
+    "icon": "💡",
+    "section": "lights",
+    "enabled": true,
+    "order": 8
+  },
+  "light.yeelink_mono1_fa20_light": {
+    "name": "Ночник спальня Light",
+    "icon": "🛏️",
+    "section": "lights",
+    "enabled": true,
+    "order": 9
+  }
+}
