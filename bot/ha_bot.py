@@ -1712,7 +1712,12 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
         family_data = {}
         for (name, _), d in zip(FAMILY.items(), family_results):
             clean_name = name.split(" ", 1)[1] if " " in name else name
-            family_data[clean_name] = st(d)
+            attrs_f = d.get("attributes", {}) if d else {}
+            family_data[clean_name] = {
+                "state": st(d),
+                "lat":   attrs_f.get("latitude"),
+                "lon":   attrs_f.get("longitude"),
+            }
 
         lights_data = {}
         for (name, (domain, eid)), d in zip(LIGHTS.items(), lights_results):

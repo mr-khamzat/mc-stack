@@ -394,6 +394,30 @@ body {
   background: rgba(255,255,255,0.06);
   margin: 10px 0;
 }
+
+/* Family map link */
+.map-link {
+  font-size: 18px;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(99,102,241,0.15);
+  border: 1px solid rgba(99,102,241,0.3);
+  transition: background 0.15s;
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+.map-link:active { background: rgba(99,102,241,0.35); }
+.map-link-off {
+  opacity: 0.25;
+  pointer-events: none;
+  background: rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.1);
+}
 </style>
 </head>
 <body>
@@ -717,15 +741,26 @@ function applyStatus(d) {
   // --- Family section ---
   const familyEl = document.getElementById('family-list');
   if (d.family && Object.keys(d.family).length > 0) {
-    const icons = { 'home': '🏠', 'not_home': '🚗', 'unavailable': '❓', 'unknown': '❓' };
-    familyEl.innerHTML = Object.entries(d.family).map(([name, state]) => {
+    familyEl.innerHTML = Object.entries(d.family).map(([name, info]) => {
+      // info может быть объектом {state, lat, lon} или строкой (старый формат)
+      const state = (typeof info === 'object') ? info.state : info;
+      const lat   = (typeof info === 'object') ? info.lat   : null;
+      const lon   = (typeof info === 'object') ? info.lon   : null;
+
       let cls = 'badge-unknown', label = '—';
-      if (state === 'home')       { cls = 'badge-home'; label = '🏠 Дома'; }
+      if (state === 'home')          { cls = 'badge-home'; label = '🏠 Дома'; }
       else if (state === 'not_home') { cls = 'badge-away'; label = '🚗 Нет'; }
-      else { label = '❓ Нет данных'; }
+      else                           { label = '❓'; }
+
+      const mapUrl = (lat && lon) ? `https://www.google.com/maps?q=${lat},${lon}` : null;
+      const mapBtn = mapUrl
+        ? `<a href="${mapUrl}" target="_blank" rel="noopener" class="map-link" title="Открыть на карте">📍</a>`
+        : `<span class="map-link map-link-off" title="Нет координат">📍</span>`;
+
       return `<div class="family-item">
         <span class="family-name">${escapeHtml(name)}</span>
         <span class="badge ${cls}">${label}</span>
+        ${mapBtn}
       </div>`;
     }).join('');
   } else {
