@@ -10,6 +10,7 @@ import json
 import logging
 import ssl as _ssl
 import subprocess
+import time as _time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -61,13 +62,10 @@ TV_EID    = "media_player.android_tv"
 NAMAZ_EID = "timer.namaz_obratnyi_otschet"
 SHOP_EID  = "todo.shopping_list"
 
-# Семья
-FAMILY = {
-    "👨 Хамзат": "person.khamzat",
-    "👩 Айза":   "person.aiza",
-    "👦 Сулим":  "person.sulim",
-    "👧 Камила": "person.kamila",
-}
+# Семья — auto-discovered from HA person.* entities (cached 1 hour)
+_family_cache: dict = {}       # {display_name: entity_id}
+_family_cache_ts: float = 0.0
+_FAMILY_CACHE_TTL = 3600
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -236,6 +234,37 @@ async def ha_ws_get_todo_items(entity_id: str) -> list:
 # ── Auth ──────────────────────────────────────────────────────────────────────
 def is_admin(uid: int) -> bool:
     return uid == ADMIN_ID
+
+# ── Семья — auto-discovery ─────────────────────────────────────────────────────
+async def get_family() -> dict:
+    """Fetch all person.* entities from HA. Returns {friendly_name: entity_id}."""
+    global _family_cache, _family_cache_ts
+    now = _time.monotonic()
+    if _family_cache and now - _family_cache_ts < _FAMILY_CACHE_TTL:
+        return _family_cache
+    try:
+        all_states = await ha_get("states")
+        if isinstance(all_states, list):
+            members = {}
+            for s in all_states:
+                eid = s.get("entity_id", "")
+                if eid.startswith("person."):
+                    name = (s.get("attributes", {}).get("friendly_name")
+                            or eid.split(".")[-1].capitalize())
+                    members[name] = eid
+            if members:
+                _family_cache = members
+                _family_cache_ts = now
+                return members
+    except Exception as e:
+        log.error(f"get_family: {e}")
+    # fallback to last good cache or hardcoded defaults
+    return _family_cache or {
+        "Хамзат": "person.khamzat",
+        "Айза":   "person.aiza",
+        "Сулим":  "person.sulim",
+        "Камила": "person.kamila",
+    }
 
 # ── Погода Open-Meteo ─────────────────────────────────────────────────────────
 WMO_CODES = {
@@ -1016,27 +1045,28 @@ async def vacuum_actions(cb: CallbackQuery):
 
 # ── 👪 Семья ──────────────────────────────────────────────────────────────────
 async def build_family_text() -> str:
-    person_states = await asyncio.gather(*[ha_get(f"states/{eid}") for eid in FAMILY.values()])
+    family = await get_family()
+    person_states = await asyncio.gather(*[ha_get(f"states/{eid}") for eid in family.values()])
     lines = ["👪 <b>Семья</b>\n"]
-    for (label, eid), d in zip(FAMILY.items(), person_states):
+    for (label, eid), d in zip(family.items(), person_states):
         if not d:
-            lines.append(f"{label}: ❓ нет данных")
+            lines.append(f"👤 {label}: ❓ нет данных")
             continue
         state = d.get("state", "?")
         if state == "home":
-            lines.append(f"{label}: 🏠 <b>Дома</b>")
+            lines.append(f"👤 {label}: 🏠 <b>Дома</b>")
         elif state == "not_home":
-            lines.append(f"{label}: 🚗 Вне дома")
+            lines.append(f"👤 {label}: 🚗 Вне дома")
         else:
-            lines.append(f"{label}: 📍 {state}")
+            lines.append(f"👤 {label}: 📍 {state}")
     return "\n".join(lines)
 
-def _family_kb() -> InlineKeyboardMarkup:
+async def _family_kb() -> InlineKeyboardMarkup:
+    family = await get_family()
     builder = InlineKeyboardBuilder()
-    for label, eid in FAMILY.items():
-        short = label.split(" ", 1)[1]   # "Хамзат", "Айза", ...
-        key   = eid.split(".")[-1]       # "khamzat", "aiza", ...
-        builder.button(text=f"📍 {short}", callback_data=f"fam_loc:{key}")
+    for label, eid in family.items():
+        key = eid.split(".")[-1]       # "khamzat", "aiza", ...
+        builder.button(text=f"📍 {label}", callback_data=f"fam_loc:{key}")
     builder.adjust(2)
     builder.row(InlineKeyboardButton(text="🔄 Обновить", callback_data="family_refresh"))
     return builder.as_markup()
@@ -1045,21 +1075,22 @@ def _family_kb() -> InlineKeyboardMarkup:
 async def family_menu(msg: Message):
     if not is_admin(msg.from_user.id): return
     text = await build_family_text()
-    await msg.answer(text, parse_mode="HTML", reply_markup=_family_kb())
+    await msg.answer(text, parse_mode="HTML", reply_markup=await _family_kb())
 
 @dp.callback_query(F.data == "family_refresh")
 async def family_refresh(cb: CallbackQuery):
     if not is_admin(cb.from_user.id): return
     await cb.answer("Обновляю...")
     text = await build_family_text()
-    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=_family_kb())
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=await _family_kb())
 
 @dp.callback_query(F.data.startswith("fam_loc:"))
 async def family_location(cb: CallbackQuery):
     if not is_admin(cb.from_user.id): return
     key = cb.data.split(":", 1)[1]   # "khamzat"
     eid = f"person.{key}"
-    label = next((l for l, e in FAMILY.items() if e == eid), eid)
+    family = await get_family()
+    label = next((l for l, e in family.items() if e == eid), eid)
     d = await ha_get(f"states/{eid}")
     if not d:
         await cb.answer("❌ Нет данных", show_alert=True)
@@ -1683,6 +1714,7 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
     if not _check_token(request):
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
     try:
+        family = await get_family()
         results = await asyncio.gather(
             ha_get("states/sensor.moshchnost_vsego_doma"),
             ha_get("states/sensor.temp_detskaia_temperature"),
@@ -1691,12 +1723,12 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
             ha_get("states/climate.teplyi_pol_lodzhiia"),
             ha_get(f"states/{TV_EID}"),
             ha_get("states/vacuum.pylik"),
-            *[ha_get(f"states/{eid}") for eid in FAMILY.values()],
+            *[ha_get(f"states/{eid}") for eid in family.values()],
             *[ha_get(f"states/{eid}") for _, (_, eid) in LIGHTS.items()],
             *[ha_get(f"states/{eid}") for eid in _HA_PRAYER_EIDS.values()],
         )
         n_fixed = 7
-        n_family = len(FAMILY)
+        n_family = len(family)
         n_lights = len(LIGHTS)
         n_prayers = len(_HA_PRAYER_EIDS)
         power_d, temp_d, hum_d, inet_d, floor_d, tv_d, vac_d = results[:n_fixed]
@@ -1710,10 +1742,9 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
         tv_attrs    = tv_d.get("attributes", {}) if tv_d else {}
 
         family_data = {}
-        for (name, _), d in zip(FAMILY.items(), family_results):
-            clean_name = name.split(" ", 1)[1] if " " in name else name
+        for (name, _), d in zip(family.items(), family_results):
             attrs_f = d.get("attributes", {}) if d else {}
-            family_data[clean_name] = {
+            family_data[name] = {
                 "state": st(d),
                 "lat":   attrs_f.get("latitude"),
                 "lon":   attrs_f.get("longitude"),
