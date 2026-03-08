@@ -228,7 +228,7 @@ body {
 /* Climate section */
 .climate-stats {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 8px;
   margin-bottom: 12px;
 }
@@ -514,6 +514,13 @@ body {
             <div class="stat-value" id="stat-floor" style="font-size:18px">—</div>
             <div class="stat-sub" id="stat-floor-sub">—</div>
           </div>
+          <div class="stat-card" style="grid-column: span 2">
+            <div class="stat-label">💰 Расход электроэнергии</div>
+            <div style="display:flex;align-items:baseline;gap:16px">
+              <span><span class="stat-value" id="stat-cost-day" style="font-size:20px">—</span><span class="stat-unit"> ₽ сегодня</span></span>
+              <span id="stat-cost-month" style="font-size:13px;color:#6060a0">месяц: — ₽</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -559,9 +566,14 @@ body {
       <div class="section-content">
         <div class="climate-stats">
           <div class="clim-card">
-            <div class="clim-icon">🌡️</div>
+            <div class="clim-icon">🏠</div>
             <div class="clim-val" id="clim-temp">—</div>
-            <div class="clim-label">Темп °C</div>
+            <div class="clim-label">Дома °C</div>
+          </div>
+          <div class="clim-card">
+            <div class="clim-icon">🌤️</div>
+            <div class="clim-val" id="clim-outdoor">—</div>
+            <div class="clim-label">Улица °C</div>
           </div>
           <div class="clim-card">
             <div class="clim-icon">💧</div>
@@ -835,12 +847,16 @@ function applyStatus(d) {
   // --- Lights section ---
   const lightsEl = document.getElementById('lights-grid');
   if (d.lights && Object.keys(d.lights).length > 0) {
-    lightsEl.innerHTML = Object.entries(d.lights).map(([entity, state]) => {
-      const label = LIGHTS_MAP[entity] || entity;
+    lightsEl.innerHTML = Object.entries(d.lights).map(([entity, info]) => {
+      // Support both new format {state,name,icon,domain} and old string format
+      const state = typeof info === 'object' ? info.state : info;
+      const rawName = typeof info === 'object' ? (info.name || entity) : (LIGHTS_MAP[entity] || entity);
+      const icon = typeof info === 'object' ? (info.icon || '💡') : (() => {
+        const parts = rawName.match(/^(\S+)\s/);
+        return parts ? parts[1] : '💡';
+      })();
+      const name = rawName.replace(/^\S+\s/, '');  // strip leading emoji if present
       const isOn = state === 'on';
-      const parts = label.match(/^(\S+)\s(.+)$/);
-      const icon = parts ? parts[1] : '💡';
-      const name = parts ? parts[2] : label;
       return `<button class="light-btn ${isOn ? 'on' : 'off'}"
         onclick="toggleLight('${escapeAttr(entity)}')"
         id="light-${sanitizeId(entity)}">
@@ -852,9 +868,22 @@ function applyStatus(d) {
     lightsEl.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:8px;grid-column:span 3">Нет данных</div>';
   }
 
+  // --- Energy cost in status ---
+  if (d.cost_day != null) {
+    const cd = parseFloat(d.cost_day);
+    document.getElementById('stat-cost-day').textContent = isNaN(cd) ? d.cost_day : cd.toFixed(0);
+  }
+  if (d.cost_month != null) {
+    const cm = parseFloat(d.cost_month);
+    document.getElementById('stat-cost-month').textContent = 'месяц: ' + (isNaN(cm) ? d.cost_month : cm.toFixed(0)) + ' ₽';
+  }
+
   // --- Climate section ---
   if (d.temp_detskaia != null) {
     document.getElementById('clim-temp').textContent = parseFloat(d.temp_detskaia).toFixed(1);
+  }
+  if (d.outdoor_temp != null) {
+    document.getElementById('clim-outdoor').textContent = Math.round(d.outdoor_temp);
   }
   if (d.humidity != null) {
     document.getElementById('clim-humid').textContent = d.humidity;
@@ -1039,7 +1068,14 @@ async function callAction(btnEl, service, entity_id, extra = {}) {
 function toggleLight(entity) {
   const btn = document.getElementById('light-' + sanitizeId(entity));
   const isOn = btn && btn.classList.contains('on');
-  const domain = LIGHTS_DOMAIN[entity] || 'switch';
+  // Prefer domain from server payload, fall back to hardcoded map
+  let domain = 'switch';
+  if (lastStatus && lastStatus.lights && lastStatus.lights[entity]) {
+    const info = lastStatus.lights[entity];
+    domain = (typeof info === 'object' && info.domain) ? info.domain : (LIGHTS_DOMAIN[entity] || 'switch');
+  } else {
+    domain = LIGHTS_DOMAIN[entity] || 'switch';
+  }
   const service = domain + '.' + (isOn ? 'turn_off' : 'turn_on');
   callAction(btn, service, entity);
 }

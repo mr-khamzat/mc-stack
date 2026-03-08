@@ -732,6 +732,19 @@ async def build_status_text() -> str:
             rem = _namaz_remaining(str(finishes))
             namaz_str = f"\n🕌 До намаза: <b>{rem}</b>"
 
+    # Fix daily cost if stuck at 0
+    try:
+        if float(day) < 0.1:
+            kwh = await _ha_today_kwh()
+            if kwh is not None and kwh > 0:
+                try:
+                    tariff = max(float(await ha_state("input_number.tarif_den_kvt_ch")), 0.5)
+                except Exception:
+                    tariff = 5.68
+                day = f"{kwh * tariff:.2f}"
+    except Exception:
+        pass
+
     return (
         f"📊 <b>Статус дома</b> — {datetime.now().strftime('%H:%M')}\n"
         f"\n⚡ Мощность: <b>{power} Вт</b>"
@@ -764,7 +777,7 @@ async def status_refresh(cb: CallbackQuery):
     await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
 # ── 💡 Свет ───────────────────────────────────────────────────────────────────
-LIGHTS = {
+LIGHTS: dict = {
     "Кровать":        ("light",  "light.svet_krovat"),
     "Кухня":          ("switch", "switch.vykliuchatel_kukhnia"),
     "ПК Левый":       ("switch", "switch.kabinet_svet_pk_left"),
@@ -772,6 +785,57 @@ LIGHTS = {
     "Люстра Детская": ("switch", "switch.sonoff_100093f84f"),
     "Шкаф":           ("switch", "switch.sonoff_1000a60930"),
 }
+# Icons for webapp display (entity_id → emoji)
+LIGHTS_ICON: dict = {
+    "light.svet_krovat":            "🛏️",
+    "switch.vykliuchatel_kukhnia":  "🍳",
+    "switch.kabinet_svet_pk_left":  "🖥️",
+    "switch.kabinet_svet_pk_right": "🖥️",
+    "switch.sonoff_100093f84f":     "💡",
+    "switch.sonoff_1000a60930":     "🚪",
+}
+
+def _guess_light_icon(name: str, eid: str) -> str:
+    s = (name + " " + eid).lower()
+    if any(x in s for x in ["кроват", "krovat", "bed", "спальн", "spaln"]):     return "🛏️"
+    if any(x in s for x in ["кухн", "kukhn", "kitchen"]):                        return "🍳"
+    if any(x in s for x in ["_pk", "pk_", "_пк", "пк_", "монитор"]):            return "🖥️"
+    if any(x in s for x in ["люстр", "chandelier"]):                             return "💡"
+    if any(x in s for x in ["шкаф", "shkaf", "wardrobe"]):                       return "🚪"
+    if any(x in s for x in ["детск", "detsk", "child", "kids"]):                 return "👶"
+    if any(x in s for x in ["ванн", "bath"]):                                     return "🚿"
+    if any(x in s for x in ["туалет", "toilet"]):                                return "🚽"
+    if any(x in s for x in ["лоджи", "lodzhi", "балкон", "balkon", "balcon"]):  return "🌿"
+    if any(x in s for x in ["зал", "гостин", "hall", "living"]):                 return "🛋️"
+    if any(x in s for x in ["коридор", "corridor"]):                             return "🚶"
+    if any(x in s for x in ["кабинет", "kabinet", "office"]):                    return "📋"
+    if any(x in s for x in ["прихожа", "prikhozh", "entranc"]):                  return "🚪"
+    return "💡"
+
+async def _refresh_lights():
+    """Auto-discover new light.* entities from HA and add to LIGHTS/LIGHTS_ICON."""
+    try:
+        states = await ha_get("states")
+        if not states:
+            return
+        existing_eids = {eid for _, (_, eid) in LIGHTS.items()}
+        added = 0
+        for s in states:
+            eid = s.get("entity_id", "")
+            if not eid.startswith("light."):
+                continue
+            if eid in existing_eids:
+                continue
+            fn = s.get("attributes", {}).get("friendly_name", eid)
+            icon = _guess_light_icon(fn, eid)
+            LIGHTS[fn] = ("light", eid)
+            LIGHTS_ICON[eid] = icon
+            existing_eids.add(eid)
+            added += 1
+        if added:
+            log.info(f"Lights auto-discovery: added {added} new light entities")
+    except Exception as e:
+        log.error(f"_refresh_lights error: {e}")
 
 def lights_kb(states: dict) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
@@ -821,13 +885,23 @@ async def lights_refresh(cb: CallbackQuery):
     await cb.message.edit_reply_markup(reply_markup=lights_kb(states))
     await cb.answer("Обновлено")
 
+@dp.message(Command("lights_sync"))
+async def cmd_lights_sync(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    await _refresh_lights()
+    lines = "\n".join(f"  {n}: {eid}" for n, (_, eid) in LIGHTS.items())
+    await msg.answer(f"✅ Свет синхронизирован ({len(LIGHTS)} шт):\n{lines}")
+
 # ── 🌡️ Климат ─────────────────────────────────────────────────────────────────
 async def build_climate_text() -> str:
-    temp, hum, floor, floor_t = await asyncio.gather(
-        ha_state("sensor.temp_detskaia_temperature"),
-        ha_state("sensor.temp_detskaia_humidity"),
-        ha_state("climate.teplyi_pol_lodzhiia"),
-        ha_attr("climate.teplyi_pol_lodzhiia", "current_temperature"),
+    (temp, hum, floor, floor_t), weather_data = await asyncio.gather(
+        asyncio.gather(
+            ha_state("sensor.temp_detskaia_temperature"),
+            ha_state("sensor.temp_detskaia_humidity"),
+            ha_state("climate.teplyi_pol_lodzhiia"),
+            ha_attr("climate.teplyi_pol_lodzhiia", "current_temperature"),
+        ),
+        get_weather(),
     )
     rising  = await ha_state("sensor.sun_next_rising")
     setting = await ha_state("sensor.sun_next_setting")
@@ -848,9 +922,21 @@ async def build_climate_text() -> str:
     except Exception:
         pass
 
+    outdoor_line = ""
+    if weather_data:
+        outdoor_t = weather_data.get("current", {}).get("temperature_2m")
+        if outdoor_t is not None:
+            try:
+                diff = float(temp) - float(outdoor_t)
+                diff_str = f" (+{diff:.0f}° теплее)" if diff > 0 else f" ({diff:.0f}° холоднее)"
+            except Exception:
+                diff_str = ""
+            outdoor_line = f"\n🌤️ На улице: <b>{outdoor_t:.0f}°C</b>{diff_str}"
+
     return (
         f"🌡️ <b>Климат</b>\n\n"
-        f"🏠 Детская: <b>{temp}°C</b>{temp_alert}, влажность {hum}%\n"
+        f"🏠 Детская: <b>{temp}°C</b>{temp_alert}, влажность {hum}%"
+        f"{outdoor_line}\n"
         f"{floor_icon} Тёплый пол (лоджия): <b>{floor}</b>, {floor_t}°C\n"
         f"🌅 Восход: {fmt_time(rising)}  🌇 Закат: {fmt_time(setting)}"
     )
@@ -924,6 +1010,30 @@ async def floor_temp_adjust(cb: CallbackQuery):
         await cb.answer("❌ Не удалось")
 
 # ── ⚡ Энергия ────────────────────────────────────────────────────────────────
+async def _ha_today_kwh() -> float | None:
+    """Compute today's kWh from dom_energiia_vsego history (from midnight MSK)."""
+    try:
+        now_msk = datetime.now(MSK)
+        midnight = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
+        start = midnight.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        data = await ha_get(
+            f"history/period/{start}?filter_entity_id=sensor.dom_energiia_vsego&minimal_response=true"
+        )
+        if not data or not isinstance(data, list) or not data[0]:
+            return None
+        vals = []
+        for x in data[0]:
+            try:
+                vals.append(float(x["state"]))
+            except Exception:
+                pass
+        if len(vals) < 2:
+            return None
+        return max(0.0, vals[-1] - vals[0])
+    except Exception as e:
+        log.warning(f"_ha_today_kwh error: {e}")
+        return None
+
 async def build_energy_text() -> str:
     power, v1, v2, v3, day, month, prog = await asyncio.gather(
         ha_state("sensor.moshchnost_vsego_doma"),
@@ -938,6 +1048,18 @@ async def build_energy_text() -> str:
     try:
         if float(power) > 3000:
             power_alert = " ⚠️"
+    except Exception:
+        pass
+    # Fix: if daily cost sensor is stuck at 0, compute from history
+    try:
+        if float(day) < 0.1:
+            kwh = await _ha_today_kwh()
+            if kwh is not None and kwh > 0:
+                try:
+                    tariff = max(float(await ha_state("input_number.tarif_den_kvt_ch")), 0.5)
+                except Exception:
+                    tariff = 5.68
+                day = f"{kwh * tariff:.2f}"
     except Exception:
         pass
     return (
@@ -1871,15 +1993,17 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
             ha_get("states/climate.teplyi_pol_lodzhiia"),
             ha_get(f"states/{TV_EID}"),
             ha_get("states/vacuum.pylik"),
+            ha_get("states/sensor.elektroenergiia_stoimost_za_den"),
+            ha_get("states/sensor.elektroenergiia_stoimost_za_mesiats"),
             *[ha_get(f"states/{eid}") for eid in family.values()],
             *[ha_get(f"states/{eid}") for _, (_, eid) in LIGHTS.items()],
             *[ha_get(f"states/{eid}") for eid in _HA_PRAYER_EIDS.values()],
         )
-        n_fixed = 7
+        n_fixed = 9
         n_family = len(family)
         n_lights = len(LIGHTS)
         n_prayers = len(_HA_PRAYER_EIDS)
-        power_d, temp_d, hum_d, inet_d, floor_d, tv_d, vac_d = results[:n_fixed]
+        power_d, temp_d, hum_d, inet_d, floor_d, tv_d, vac_d, cost_day_d, cost_month_d = results[:n_fixed]
         family_results  = results[n_fixed:n_fixed + n_family]
         lights_results  = results[n_fixed + n_family:n_fixed + n_family + n_lights]
         prayer_results  = results[n_fixed + n_family + n_lights:]
@@ -1900,7 +2024,8 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
 
         lights_data = {}
         for (name, (domain, eid)), d in zip(LIGHTS.items(), lights_results):
-            lights_data[eid] = st(d)
+            icon = LIGHTS_ICON.get(eid, "💡")
+            lights_data[eid] = {"state": st(d), "name": name, "icon": icon, "domain": domain}
 
         # Prayers: {ru_name: "HH:MM"}
         prayer_names_ru = {"Fajr": "Фаджр", "Dhuhr": "Зухр",
@@ -1950,6 +2075,25 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
                 "forecast":  wforecast,
             }
 
+        outdoor_temp = None
+        if weather_payload:
+            outdoor_temp = weather_payload.get("temp")
+
+        # Daily cost: fix if sensor stuck at 0
+        cost_day_raw = st(cost_day_d)
+        cost_day_val = cost_day_raw
+        try:
+            if float(cost_day_raw) < 0.1:
+                kwh = await _ha_today_kwh()
+                if kwh is not None and kwh > 0:
+                    try:
+                        tariff = max(float(await ha_state("input_number.tarif_den_kvt_ch")), 0.5)
+                    except Exception:
+                        tariff = 5.68
+                    cost_day_val = f"{kwh * tariff:.2f}"
+        except Exception:
+            pass
+
         payload = {
             "power":         st(power_d),
             "temp_detskaia": st(temp_d),
@@ -1958,6 +2102,9 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
             "floor_heating": st(floor_d),
             "floor_setpoint": str(floor_attrs.get("temperature", "?")),
             "floor_temp":    str(floor_attrs.get("current_temperature", "?")),
+            "cost_day":      cost_day_val,
+            "cost_month":    st(cost_month_d),
+            "outdoor_temp":  outdoor_temp,
             "family":        family_data,
             "lights":        lights_data,
             "tv": {
@@ -2025,6 +2172,7 @@ async def cmd_app(msg: Message):
 # ── Запуск ────────────────────────────────────────────────────────────────────
 async def main():
     log.info("HA Bot v3.3 starting...")
+    await _refresh_lights()
     asyncio.create_task(alert_loop())
     asyncio.create_task(_start_web())
     await bot.send_message(
