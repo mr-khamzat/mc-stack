@@ -54,6 +54,7 @@ WEBAPP_URL   = "https://hub.office.mooo.com/ha-app/"
 WEBAPP_DIR   = Path("/opt/ha-bot/webapp")
 
 FAMILY_USERS_FILE = Path("/opt/ha-bot/family_users.json")
+DEVICES_FILE      = Path("/opt/ha-bot/devices.json")
 
 # Weather cache
 _weather_cache: dict | None = None
@@ -89,6 +90,9 @@ class ShoppingAdd(StatesGroup):
 
 class AddFamilyMember(StatesGroup):
     waiting_name = State()
+
+class DeviceMgmt(StatesGroup):
+    rename_wait = State()   # ожидаем новое имя устройства
 
 # ── HA REST API ───────────────────────────────────────────────────────────────
 async def ha_get(path: str) -> dict | list | None:
@@ -776,24 +780,61 @@ async def status_refresh(cb: CallbackQuery):
     ]])
     await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
-# ── 💡 Свет ───────────────────────────────────────────────────────────────────
-LIGHTS: dict = {
-    "Кровать":        ("light",  "light.svet_krovat"),
-    "Кухня":          ("switch", "switch.vykliuchatel_kukhnia"),
-    "ПК Левый":       ("switch", "switch.kabinet_svet_pk_left"),
-    "ПК Правый":      ("switch", "switch.kabinet_svet_pk_right"),
-    "Люстра Детская": ("switch", "switch.sonoff_100093f84f"),
-    "Шкаф":           ("switch", "switch.sonoff_1000a60930"),
+# ── 💡 Свет + 🛠 Управление устройствами ─────────────────────────────────────
+# Defaults — первый запуск или если devices.json не содержит эти entity
+_DEVICES_DEFAULTS: dict = {
+    "light.svet_krovat":           {"name": "Кровать",        "icon": "🛏️", "section": "lights", "enabled": True,  "order": 1},
+    "switch.vykliuchatel_kukhnia": {"name": "Кухня",          "icon": "🍳", "section": "lights", "enabled": True,  "order": 2},
+    "switch.kabinet_svet_pk_left": {"name": "ПК Левый",       "icon": "🖥️", "section": "lights", "enabled": True,  "order": 3},
+    "switch.kabinet_svet_pk_right":{"name": "ПК Правый",      "icon": "🖥️", "section": "lights", "enabled": True,  "order": 4},
+    "switch.sonoff_100093f84f":    {"name": "Люстра Детская", "icon": "💡", "section": "lights", "enabled": True,  "order": 5},
+    "switch.sonoff_1000a60930":    {"name": "Шкаф",           "icon": "🚪", "section": "lights", "enabled": True,  "order": 6},
 }
-# Icons for webapp display (entity_id → emoji)
-LIGHTS_ICON: dict = {
-    "light.svet_krovat":            "🛏️",
-    "switch.vykliuchatel_kukhnia":  "🍳",
-    "switch.kabinet_svet_pk_left":  "🖥️",
-    "switch.kabinet_svet_pk_right": "🖥️",
-    "switch.sonoff_100093f84f":     "💡",
-    "switch.sonoff_1000a60930":     "🚪",
-}
+
+LIGHTS: dict      = {}  # {display_name: (domain, entity_id)} — пересобирается из devices.json
+LIGHTS_ICON: dict = {}  # {entity_id: icon}                   — пересобирается из devices.json
+
+# ── devices.json helpers ──────────────────────────────────────────────────────
+
+def _dev_load() -> dict:
+    """Загрузить devices.json → dict {entity_id: {name,icon,section,enabled,order}}."""
+    if DEVICES_FILE.exists():
+        try:
+            return json.loads(DEVICES_FILE.read_text())
+        except Exception as e:
+            log.error(f"devices_load: {e}")
+    return {}
+
+def _dev_save(d: dict):
+    try:
+        DEVICES_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2))
+    except Exception as e:
+        log.error(f"devices_save: {e}")
+
+def _dev_rebuild_lights(devices: dict):
+    """Пересобрать LIGHTS/LIGHTS_ICON из devices (section=lights, enabled=True)."""
+    LIGHTS.clear()
+    LIGHTS_ICON.clear()
+    items = sorted(devices.items(), key=lambda x: x[1].get("order", 99))
+    for eid, cfg in items:
+        if cfg.get("section") == "lights" and cfg.get("enabled", True):
+            domain = eid.split(".")[0]
+            name   = cfg.get("name", eid.split(".", 1)[-1])
+            icon   = cfg.get("icon", "💡")
+            LIGHTS[name]    = (domain, eid)
+            LIGHTS_ICON[eid] = icon
+
+def _dev_init():
+    """При старте: дополнить devices.json дефолтами, пересобрать LIGHTS."""
+    devices = _dev_load()
+    changed = False
+    for eid, cfg in _DEVICES_DEFAULTS.items():
+        if eid not in devices:
+            devices[eid] = dict(cfg)
+            changed = True
+    if changed:
+        _dev_save(devices)
+    _dev_rebuild_lights(devices)
 
 def _guess_light_icon(name: str, eid: str) -> str:
     s = (name + " " + eid).lower()
@@ -838,14 +879,14 @@ def _is_switch_a_light(attrs: dict, eid: str) -> bool:
                                     "лампа", "подсветк", "торшер"])
 
 async def _refresh_lights():
-    """Auto-discover new light.* and light-switch entities from HA."""
+    """Сканировать HA, добавить новые light/switch в devices.json и пересобрать LIGHTS."""
     try:
         states = await ha_get("states")
         if not states:
             return
-        existing_eids = {eid for _, (_, eid) in LIGHTS.items()}
-        # Collect all light.* entity base names to skip duplicate switch.*
-        light_entity_ids = {s["entity_id"] for s in states if s.get("entity_id", "").startswith("light.")}
+        devices = _dev_load()
+        light_eids = {s["entity_id"] for s in states if s.get("entity_id","").startswith("light.")}
+        max_order  = max((v.get("order", 0) for v in devices.values()), default=6)
         added = 0
         for s in states:
             eid   = s.get("entity_id", "")
@@ -856,23 +897,29 @@ async def _refresh_lights():
             is_switch = domain == "switch" and _is_switch_a_light(attrs, eid)
             if not (is_light or is_switch):
                 continue
-            if eid in existing_eids:
-                continue
-            # If there's a light.X entity for the same device, prefer it over switch.X
+            if eid in devices:
+                continue  # уже в конфиге (пользователь мог скрыть — не трогаем)
+            # Если есть light.X для того же устройства — предпочитаем его
             if is_switch:
                 suffix = eid.split(".", 1)[1] if "." in eid else eid
-                if any(leid.split(".", 1)[1] == suffix for leid in light_entity_ids):
-                    continue  # will be added when we process the light.X
+                if any(le.split(".", 1)[1] == suffix for le in light_eids):
+                    continue
 
-            fn   = attrs.get("friendly_name", eid)
-            icon = _guess_light_icon(fn, eid)
-            LIGHTS[fn] = (domain, eid)
-            LIGHTS_ICON[eid] = icon
-            existing_eids.add(eid)
+            fn = attrs.get("friendly_name", eid)
+            max_order += 1
+            devices[eid] = {
+                "name":    fn,
+                "icon":    _guess_light_icon(fn, eid),
+                "section": "lights",
+                "enabled": True,
+                "order":   max_order,
+            }
             added += 1
             log.info(f"Lights auto-discovery: +{domain} {eid} ({fn})")
         if added:
+            _dev_save(devices)
             log.info(f"Lights auto-discovery total: +{added}")
+        _dev_rebuild_lights(devices)
     except Exception as e:
         log.error(f"_refresh_lights error: {e}")
 
@@ -930,6 +977,194 @@ async def cmd_lights_sync(msg: Message):
     await _refresh_lights()
     lines = "\n".join(f"  {n}: {eid}" for n, (_, eid) in LIGHTS.items())
     await msg.answer(f"✅ Свет синхронизирован ({len(LIGHTS)} шт):\n{lines}")
+
+# ── 🛠 Управление устройствами (/devices) ─────────────────────────────────────
+_SECT_LABELS = {"lights": "💡 Свет", "hidden": "🚫 Скрыто"}
+
+def _devices_main_kb(devices: dict) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    items = sorted(devices.items(), key=lambda x: x[1].get("order", 99))
+    for eid, cfg in items:
+        enabled = cfg.get("enabled", True)
+        icon    = cfg.get("icon", "💡")
+        name    = cfg.get("name", eid)
+        dot     = "🟢" if enabled else "⚫"
+        builder.button(text=f"{dot} {icon} {name}", callback_data=f"dev:info:{eid}")
+    builder.button(text="🔍 Сканировать HA", callback_data="dev:scan")
+    builder.button(text="❌ Закрыть",         callback_data="dev:close")
+    builder.adjust(2)
+    return builder.as_markup()
+
+def _device_info_kb(eid: str, cfg: dict) -> InlineKeyboardMarkup:
+    enabled = cfg.get("enabled", True)
+    sect    = cfg.get("section", "lights")
+    builder = InlineKeyboardBuilder()
+    if enabled:
+        builder.button(text="🚫 Скрыть",     callback_data=f"dev:hide:{eid}")
+    else:
+        builder.button(text="✅ Показать",    callback_data=f"dev:show:{eid}")
+    builder.button(text="✏️ Переименовать",   callback_data=f"dev:rename:{eid}")
+    # Section toggle (currently only lights/hidden)
+    other_sect = "hidden" if sect == "lights" else "lights"
+    other_label = _SECT_LABELS.get(other_sect, other_sect)
+    builder.button(text=f"→ {other_label}", callback_data=f"dev:sect:{eid}:{other_sect}")
+    builder.button(text="◀️ Назад",          callback_data="dev:list")
+    builder.adjust(2, 1, 1)
+    return builder.as_markup()
+
+def _devices_info_text(eid: str, cfg: dict) -> str:
+    icon    = cfg.get("icon", "💡")
+    name    = cfg.get("name", eid)
+    enabled = cfg.get("enabled", True)
+    sect    = cfg.get("section", "lights")
+    return (
+        f"{icon} <b>{name}</b>\n"
+        f"<code>{eid}</code>\n\n"
+        f"Раздел: <b>{_SECT_LABELS.get(sect, sect)}</b>\n"
+        f"Статус: {'✅ Показывается' if enabled else '🚫 Скрыто'}"
+    )
+
+def _devices_main_text(devices: dict) -> str:
+    enabled = sum(1 for c in devices.values() if c.get("enabled", True))
+    hidden  = len(devices) - enabled
+    return (
+        f"🛠 <b>Управление устройствами</b>\n\n"
+        f"Всего: {len(devices)} | ✅ Показывается: {enabled} | 🚫 Скрыто: {hidden}\n\n"
+        f"🟢 — устройство видно в боте и мини апп\n"
+        f"⚫ — устройство скрыто\n\n"
+        f"Тапни устройство для управления:"
+    )
+
+@dp.message(Command("devices"))
+async def cmd_devices(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    devices = _dev_load()
+    await msg.answer(_devices_main_text(devices), parse_mode="HTML",
+                     reply_markup=_devices_main_kb(devices))
+
+@dp.callback_query(F.data == "dev:list")
+async def dev_list(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    devices = _dev_load()
+    await cb.message.edit_text(_devices_main_text(devices), parse_mode="HTML",
+                                reply_markup=_devices_main_kb(devices))
+    await cb.answer()
+
+@dp.callback_query(F.data.startswith("dev:info:"))
+async def dev_info(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    eid     = cb.data[len("dev:info:"):]
+    devices = _dev_load()
+    cfg     = devices.get(eid)
+    if not cfg:
+        await cb.answer("Устройство не найдено"); return
+    await cb.message.edit_text(_devices_info_text(eid, cfg), parse_mode="HTML",
+                                reply_markup=_device_info_kb(eid, cfg))
+    await cb.answer()
+
+@dp.callback_query(F.data.startswith("dev:hide:"))
+async def dev_hide(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    eid = cb.data[len("dev:hide:"):]
+    devices = _dev_load()
+    if eid in devices:
+        devices[eid]["enabled"] = False
+        _dev_save(devices)
+        _dev_rebuild_lights(devices)
+    cfg = devices.get(eid, {})
+    await cb.message.edit_text(_devices_info_text(eid, cfg), parse_mode="HTML",
+                                reply_markup=_device_info_kb(eid, cfg))
+    await cb.answer("🚫 Устройство скрыто")
+
+@dp.callback_query(F.data.startswith("dev:show:"))
+async def dev_show(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    eid = cb.data[len("dev:show:"):]
+    devices = _dev_load()
+    if eid in devices:
+        devices[eid]["enabled"] = True
+        _dev_save(devices)
+        _dev_rebuild_lights(devices)
+    cfg = devices.get(eid, {})
+    await cb.message.edit_text(_devices_info_text(eid, cfg), parse_mode="HTML",
+                                reply_markup=_device_info_kb(eid, cfg))
+    await cb.answer("✅ Устройство показано")
+
+@dp.callback_query(F.data.startswith("dev:sect:"))
+async def dev_sect(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    _, _, eid, new_sect = cb.data.split(":", 3)
+    devices = _dev_load()
+    if eid in devices:
+        devices[eid]["section"] = new_sect
+        # При переходе в hidden — отключаем; при lights — включаем
+        devices[eid]["enabled"] = (new_sect != "hidden")
+        _dev_save(devices)
+        _dev_rebuild_lights(devices)
+    cfg = devices.get(eid, {})
+    await cb.message.edit_text(_devices_info_text(eid, cfg), parse_mode="HTML",
+                                reply_markup=_device_info_kb(eid, cfg))
+    sect_label = _SECT_LABELS.get(new_sect, new_sect)
+    await cb.answer(f"Раздел: {sect_label}")
+
+@dp.callback_query(F.data.startswith("dev:rename:"))
+async def dev_rename_start(cb: CallbackQuery, state: FSMContext):
+    if not is_admin(cb.from_user.id): return
+    eid = cb.data[len("dev:rename:"):]
+    await state.update_data(rename_eid=eid)
+    await state.set_state(DeviceMgmt.rename_wait)
+    devices = _dev_load()
+    cur_name = devices.get(eid, {}).get("name", eid)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="❌ Отмена", callback_data=f"dev:rename_cancel:{eid}")
+    ]])
+    await cb.message.edit_text(
+        f"✏️ Введите новое имя для <b>{cur_name}</b>\n<code>{eid}</code>",
+        parse_mode="HTML", reply_markup=kb
+    )
+    await cb.answer()
+
+@dp.callback_query(F.data.startswith("dev:rename_cancel:"))
+async def dev_rename_cancel(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    eid = cb.data[len("dev:rename_cancel:"):]
+    devices = _dev_load()
+    cfg = devices.get(eid, {})
+    await cb.message.edit_text(_devices_info_text(eid, cfg), parse_mode="HTML",
+                                reply_markup=_device_info_kb(eid, cfg))
+    await cb.answer("Отменено")
+
+@dp.message(StateFilter(DeviceMgmt.rename_wait))
+async def dev_rename_done(msg: Message, state: FSMContext):
+    if not is_admin(msg.from_user.id):
+        await state.clear(); return
+    data = await state.get_data()
+    eid  = data.get("rename_eid")
+    new_name = msg.text.strip()
+    await state.clear()
+    if not eid or not new_name:
+        await msg.answer("❌ Пустое имя — отмена"); return
+    devices = _dev_load()
+    if eid in devices:
+        devices[eid]["name"] = new_name
+        _dev_save(devices)
+        _dev_rebuild_lights(devices)
+    await msg.answer(f"✅ Переименовано → <b>{new_name}</b>", parse_mode="HTML",
+                     reply_markup=_device_info_kb(eid, devices.get(eid, {})))
+
+@dp.callback_query(F.data == "dev:scan")
+async def dev_scan(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    await cb.answer("🔍 Сканирую HA...")
+    await _refresh_lights()
+    devices = _dev_load()
+    await cb.message.edit_text(_devices_main_text(devices), parse_mode="HTML",
+                                reply_markup=_devices_main_kb(devices))
+
+@dp.callback_query(F.data == "dev:close")
+async def dev_close(cb: CallbackQuery):
+    await cb.message.delete()
+    await cb.answer()
 
 # ── 🌡️ Климат ─────────────────────────────────────────────────────────────────
 async def build_climate_text() -> str:
@@ -2211,7 +2446,8 @@ async def cmd_app(msg: Message):
 # ── Запуск ────────────────────────────────────────────────────────────────────
 async def main():
     log.info("HA Bot v3.3 starting...")
-    await _refresh_lights()
+    _dev_init()            # загрузить devices.json → заполнить LIGHTS/LIGHTS_ICON
+    await _refresh_lights()  # сканировать HA, добавить новые устройства
     asyncio.create_task(alert_loop())
     asyncio.create_task(_start_web())
     await bot.send_message(
