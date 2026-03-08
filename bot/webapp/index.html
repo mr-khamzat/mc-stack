@@ -418,6 +418,56 @@ body {
   background: rgba(255,255,255,0.05);
   border-color: rgba(255,255,255,0.1);
 }
+
+/* Weather section */
+.weather-current {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 4px 0 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  margin-bottom: 12px;
+}
+.weather-icon { font-size: 42px; line-height: 1; }
+.weather-main { flex: 1; min-width: 0; }
+.weather-temp {
+  font-size: 34px;
+  font-weight: 700;
+  color: #e0e0f0;
+  line-height: 1;
+  margin-bottom: 3px;
+}
+.weather-cond { font-size: 13px; color: #8080b0; }
+.weather-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.weather-meta-item {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 9px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #7070a0;
+}
+.weather-meta-item strong { display: block; color: #c0c0e0; font-size: 14px; margin-top: 2px; }
+.weather-forecast {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.forecast-day {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  padding: 10px 6px;
+  text-align: center;
+}
+.forecast-label { font-size: 11px; color: #6060a0; margin-bottom: 4px; }
+.forecast-icon  { font-size: 22px; margin: 3px 0; }
+.forecast-range { font-size: 12px; font-weight: 600; color: #c0c0e0; }
 </style>
 </head>
 <body>
@@ -604,6 +654,21 @@ body {
       <div class="section-content">
         <div class="prayers-list" id="prayers-list">
           <div style="color:#60608a; font-size:13px; text-align:center; padding:10px">Загрузка...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 8. WEATHER -->
+  <div class="section">
+    <div class="section-header" onclick="toggleSection('sec-weather-body')">
+      <span>🌤️ Погода — Грозный</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body" id="sec-weather-body">
+      <div class="section-content">
+        <div id="weather-content">
+          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div>
         </div>
       </div>
     </div>
@@ -883,6 +948,42 @@ function applyStatus(d) {
     }).join('');
   } else {
     document.getElementById('prayers-section').style.display = 'none';
+  }
+
+  // --- Weather section ---
+  if (d.weather) {
+    const w = d.weather;
+    const condParts = (w.condition || '').split(' ');
+    const wicon = condParts[0] || '🌤️';
+    const wcond = condParts.slice(1).join(' ') || w.condition || '';
+    const wtemp = w.temp != null ? Math.round(w.temp) : '?';
+    const wfeel = w.feels_like != null ? Math.round(w.feels_like) : '?';
+
+    const forecastHtml = (w.forecast && w.forecast.length)
+      ? `<div class="weather-forecast">
+          ${w.forecast.map(f => `
+            <div class="forecast-day">
+              <div class="forecast-label">${escapeHtml(f.label)}</div>
+              <div class="forecast-icon">${f.icon}</div>
+              <div class="forecast-range">${Math.round(f.min)}…${Math.round(f.max)}°</div>
+            </div>`).join('')}
+        </div>` : '';
+
+    document.getElementById('weather-content').innerHTML =
+      `<div class="weather-current">
+        <div class="weather-icon">${wicon}</div>
+        <div class="weather-main">
+          <div class="weather-temp">${wtemp}°C</div>
+          <div class="weather-cond">${escapeHtml(wcond)} · ощущается ${wfeel}°</div>
+        </div>
+      </div>
+      <div class="weather-meta">
+        <div class="weather-meta-item">💧 Влажность<strong>${w.humidity ?? '?'}%</strong></div>
+        <div class="weather-meta-item">💨 Ветер<strong>${w.wind ?? '?'} км/ч</strong></div>
+        <div class="weather-meta-item">🌧 Осадки<strong>${w.precip ?? 0} мм</strong></div>
+        <div class="weather-meta-item">🕒 Обновлено<strong>${escapeHtml(w.updated ?? '?')}</strong></div>
+      </div>
+      ${forecastHtml}`;
   }
 
   // Update timestamp

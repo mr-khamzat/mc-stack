@@ -53,6 +53,13 @@ WEBAPP_TOKEN = os.environ.get("WEBAPP_TOKEN", "")
 WEBAPP_URL   = "https://hub.office.mooo.com/ha-app/"
 WEBAPP_DIR   = Path("/opt/ha-bot/webapp")
 
+FAMILY_USERS_FILE = Path("/opt/ha-bot/family_users.json")
+
+# Weather cache
+_weather_cache: dict | None = None
+_weather_cache_ts: float = 0.0
+_WEATHER_CACHE_TTL = 600  # 10 minutes
+
 # Грозный — координаты для Open-Meteo
 LAT, LON  = 43.31, 45.69
 TIMEZONE  = "Europe/Moscow"
@@ -79,6 +86,9 @@ class AIChat(StatesGroup):
 
 class ShoppingAdd(StatesGroup):
     waiting = State()
+
+class AddFamilyMember(StatesGroup):
+    waiting_name = State()
 
 # ── HA REST API ───────────────────────────────────────────────────────────────
 async def ha_get(path: str) -> dict | list | None:
@@ -235,6 +245,35 @@ async def ha_ws_get_todo_items(entity_id: str) -> list:
 def is_admin(uid: int) -> bool:
     return uid == ADMIN_ID
 
+def _load_family_users() -> dict:
+    try:
+        if FAMILY_USERS_FILE.exists():
+            return json.loads(FAMILY_USERS_FILE.read_text())
+    except Exception:
+        pass
+    return {}
+
+def _save_family_users(data: dict):
+    FAMILY_USERS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+
+def is_family(uid: int) -> bool:
+    return str(uid) in _load_family_users()
+
+def is_allowed(uid: int) -> bool:
+    return is_admin(uid) or is_family(uid)
+
+def _user_name(uid: int) -> str:
+    """Return saved name for a family user or str(uid)."""
+    users = _load_family_users()
+    return users.get(str(uid), {}).get("name", str(uid))
+
+def family_kb() -> ReplyKeyboardMarkup:
+    """Limited keyboard for family members."""
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="👪 Семья"),  KeyboardButton(text="🌤️ Погода")],
+        [KeyboardButton(text="🕌 Намаз"),  KeyboardButton(text="📊 Статус")],
+    ], resize_keyboard=True)
+
 # ── Семья — auto-discovery ─────────────────────────────────────────────────────
 async def get_family() -> dict:
     """Fetch all person.* entities from HA. Returns {friendly_name: entity_id}."""
@@ -278,6 +317,10 @@ WMO_CODES = {
 }
 
 async def get_weather() -> dict | None:
+    global _weather_cache, _weather_cache_ts
+    now = _time.monotonic()
+    if _weather_cache and now - _weather_cache_ts < _WEATHER_CACHE_TTL:
+        return _weather_cache
     url = (
         f"https://api.open-meteo.com/v1/forecast"
         f"?latitude={LAT}&longitude={LON}"
@@ -290,10 +333,13 @@ async def get_weather() -> dict | None:
         async with aiohttp.ClientSession() as s:
             async with s.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
                 if r.status == 200:
-                    return await r.json()
+                    data = await r.json()
+                    _weather_cache = data
+                    _weather_cache_ts = now
+                    return data
     except Exception as e:
         log.error(f"Open-Meteo: {e}")
-    return None
+    return _weather_cache  # return stale cache on error
 
 def build_weather_text(data: dict) -> str:
     c      = data.get("current", {})
@@ -529,21 +575,123 @@ def main_kb() -> ReplyKeyboardMarkup:
 # ── /start ────────────────────────────────────────────────────────────────────
 @dp.message(Command("start"))
 async def cmd_start(msg: Message, state: FSMContext):
-    if not is_admin(msg.from_user.id):
-        await msg.answer("⛔ Доступ запрещён")
+    uid = msg.from_user.id
+    if is_admin(uid):
+        await state.clear()
+        await msg.answer(
+            "🏠 <b>Home Assistant Bot v3</b>\n\n"
+            "Управляй умным домом из Telegram!\n"
+            "• 🕌 Намаз таймер\n"
+            "• 📺 Управление телевизором\n"
+            "• 👪 Местоположение семьи\n"
+            "• 🛒 Список покупок\n"
+            "• 🧠 ИИ Ассистент",
+            parse_mode="HTML",
+            reply_markup=main_kb()
+        )
         return
-    await state.clear()
-    await msg.answer(
-        "🏠 <b>Home Assistant Bot v3</b>\n\n"
-        "Управляй умным домом из Telegram!\n"
-        "• 🕌 Намаз таймер\n"
-        "• 📺 Управление телевизором\n"
-        "• 👪 Местоположение семьи\n"
-        "• 🛒 Список покупок\n"
-        "• 🧠 ИИ Ассистент",
+    if is_family(uid):
+        name = _user_name(uid)
+        await msg.answer(f"👋 Привет, {name}!", reply_markup=family_kb())
+        return
+    # Unknown user — notify admin
+    uname  = f"@{msg.from_user.username}" if msg.from_user.username else "—"
+    fname  = msg.from_user.full_name or str(uid)
+    req_kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Добавить", callback_data=f"usr:add:{uid}"),
+        InlineKeyboardButton(text="❌ Отклонить", callback_data=f"usr:rej:{uid}"),
+    ]])
+    await bot.send_message(
+        ADMIN_ID,
+        f"👤 <b>Новый запрос доступа</b>\n"
+        f"Имя: <b>{fname}</b>\n"
+        f"Username: {uname}\n"
+        f"ID: <code>{uid}</code>",
         parse_mode="HTML",
-        reply_markup=main_kb()
+        reply_markup=req_kb,
     )
+    await msg.answer("⏳ Запрос отправлен администратору. Ожидайте подтверждения.")
+
+@dp.callback_query(F.data.startswith("usr:add:"))
+async def usr_add_cb(cb: CallbackQuery, state: FSMContext):
+    if not is_admin(cb.from_user.id): return
+    uid = int(cb.data.split(":")[2])
+    await state.set_state(AddFamilyMember.waiting_name)
+    await state.update_data(target_uid=uid)
+    await cb.message.edit_reply_markup(reply_markup=None)
+    await cb.message.answer(f"Введите имя для пользователя (ID: <code>{uid}</code>):", parse_mode="HTML")
+    await cb.answer()
+
+@dp.message(StateFilter(AddFamilyMember.waiting_name))
+async def usr_add_name(msg: Message, state: FSMContext):
+    if not is_admin(msg.from_user.id): return
+    data = await state.get_data()
+    uid  = data.get("target_uid")
+    if not uid:
+        await state.clear()
+        return
+    name = msg.text.strip()
+    users = _load_family_users()
+    users[str(uid)] = {"name": name, "added_ts": datetime.now().isoformat()}
+    _save_family_users(users)
+    await state.clear()
+    await msg.answer(f"✅ <b>{name}</b> добавлен в семью.", parse_mode="HTML")
+    try:
+        await bot.send_message(
+            uid,
+            f"✅ Добро пожаловать, <b>{name}</b>!\nТеперь вы можете использовать бота.",
+            parse_mode="HTML",
+            reply_markup=family_kb(),
+        )
+    except Exception:
+        pass
+
+@dp.callback_query(F.data.startswith("usr:rej:"))
+async def usr_rej_cb(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    uid = int(cb.data.split(":")[2])
+    await cb.message.edit_reply_markup(reply_markup=None)
+    await cb.answer("Отклонено")
+    try:
+        await bot.send_message(uid, "❌ Ваш запрос отклонён.")
+    except Exception:
+        pass
+
+@dp.message(Command("users"))
+async def cmd_users(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    users = _load_family_users()
+    if not users:
+        await msg.answer("Нет добавленных пользователей.")
+        return
+    builder = InlineKeyboardBuilder()
+    for fuid, info in users.items():
+        uname = info.get("name", fuid)
+        builder.button(text=f"❌ {uname}", callback_data=f"usr:del:{fuid}")
+    builder.adjust(1)
+    lines = [f"• <b>{v['name']}</b> (ID: <code>{k}</code>)" for k, v in users.items()]
+    await msg.answer("👥 <b>Пользователи бота:</b>\n" + "\n".join(lines),
+                     parse_mode="HTML", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data.startswith("usr:del:"))
+async def usr_del_cb(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    fuid = cb.data.split(":")[2]
+    users = _load_family_users()
+    name = users.pop(fuid, {}).get("name", fuid)
+    _save_family_users(users)
+    await cb.answer(f"Удалён: {name}")
+    if not users:
+        await cb.message.edit_text("Нет добавленных пользователей.", reply_markup=None)
+        return
+    builder = InlineKeyboardBuilder()
+    for fuid2, info in users.items():
+        uname = info.get("name", fuid2)
+        builder.button(text=f"❌ {uname}", callback_data=f"usr:del:{fuid2}")
+    builder.adjust(1)
+    lines = [f"• <b>{v['name']}</b> (ID: <code>{k}</code>)" for k, v in users.items()]
+    await cb.message.edit_text("👥 <b>Пользователи бота:</b>\n" + "\n".join(lines),
+                               parse_mode="HTML", reply_markup=builder.as_markup())
 
 # ── 📊 Статус ─────────────────────────────────────────────────────────────────
 async def build_status_text() -> str:
@@ -598,7 +746,7 @@ async def build_status_text() -> str:
 
 @dp.message(F.text == "📊 Статус")
 async def status_home(msg: Message):
-    if not is_admin(msg.from_user.id): return
+    if not is_allowed(msg.from_user.id): return
     text = await build_status_text()
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="🔄 Обновить", callback_data="status_refresh")
@@ -607,7 +755,7 @@ async def status_home(msg: Message):
 
 @dp.callback_query(F.data == "status_refresh")
 async def status_refresh(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_allowed(cb.from_user.id): return
     await cb.answer("Обновляю...")
     text = await build_status_text()
     kb = InlineKeyboardMarkup(inline_keyboard=[[
@@ -848,7 +996,7 @@ async def energy_chart_cb(cb: CallbackQuery):
 # ── 🌤️ Погода ─────────────────────────────────────────────────────────────────
 @dp.message(F.text == "🌤️ Погода")
 async def weather_menu(msg: Message):
-    if not is_admin(msg.from_user.id): return
+    if not is_allowed(msg.from_user.id): return
     await msg.answer("🌤️ Загружаю погоду...")
     data = await get_weather()
     if not data:
@@ -858,7 +1006,7 @@ async def weather_menu(msg: Message):
 
 @dp.callback_query(F.data == "weather_refresh")
 async def weather_refresh(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_allowed(cb.from_user.id): return
     await cb.answer("Загружаю...")
     data = await get_weather()
     if not data:
@@ -869,13 +1017,13 @@ async def weather_refresh(cb: CallbackQuery):
 # ── 🕌 Намаз ──────────────────────────────────────────────────────────────────
 @dp.message(F.text == "🕌 Намаз")
 async def namaz_menu(msg: Message):
-    if not is_admin(msg.from_user.id): return
+    if not is_allowed(msg.from_user.id): return
     text = await build_namaz_text()
     await msg.answer(text, parse_mode="HTML", reply_markup=_NAMAZ_KB)
 
 @dp.callback_query(F.data == "namaz_refresh")
 async def namaz_refresh(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_allowed(cb.from_user.id): return
     await cb.answer("Обновляю...")
     text = await build_namaz_text()
     await cb.message.edit_text(text, parse_mode="HTML", reply_markup=_NAMAZ_KB)
@@ -1073,20 +1221,20 @@ async def _family_kb() -> InlineKeyboardMarkup:
 
 @dp.message(F.text == "👪 Семья")
 async def family_menu(msg: Message):
-    if not is_admin(msg.from_user.id): return
+    if not is_allowed(msg.from_user.id): return
     text = await build_family_text()
     await msg.answer(text, parse_mode="HTML", reply_markup=await _family_kb())
 
 @dp.callback_query(F.data == "family_refresh")
 async def family_refresh(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_allowed(cb.from_user.id): return
     await cb.answer("Обновляю...")
     text = await build_family_text()
     await cb.message.edit_text(text, parse_mode="HTML", reply_markup=await _family_kb())
 
 @dp.callback_query(F.data.startswith("fam_loc:"))
 async def family_location(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id): return
+    if not is_allowed(cb.from_user.id): return
     key = cb.data.split(":", 1)[1]   # "khamzat"
     eid = f"person.{key}"
     family = await get_family()
@@ -1758,9 +1906,49 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
         prayer_names_ru = {"Fajr": "Фаджр", "Dhuhr": "Зухр",
                            "Asr": "Аср", "Maghrib": "Магриб", "Isha": "Иша"}
         prayers_data = {}
-        for (prayer_key, _), d in zip(_HA_PRAYER_EIDS.items(), prayer_results):
-            t = st(d)[:5] if d else "?"
+        for (prayer_key, _), pd in zip(_HA_PRAYER_EIDS.items(), prayer_results):
+            t = st(pd)[:5] if pd else "?"
             prayers_data[prayer_names_ru.get(prayer_key, prayer_key)] = t
+
+        # Weather (cached, non-blocking)
+        weather_payload = None
+        wd = await get_weather()
+        if wd:
+            wc = wd.get("current", {})
+            wdaily = wd.get("daily", {})
+            wcode = wc.get("weather_code", 0)
+            try:
+                wupdated = datetime.fromisoformat(wc.get("time", "")).strftime("%H:%M")
+            except Exception:
+                wupdated = "?"
+            day_names_w = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+            wdays = wdaily.get("time", [])
+            wt_max = wdaily.get("temperature_2m_max", [])
+            wt_min = wdaily.get("temperature_2m_min", [])
+            wcodes = wdaily.get("weather_code", [])
+            wforecast = []
+            for wi in range(min(3, len(wdays))):
+                try:
+                    fd = datetime.fromisoformat(wdays[wi])
+                    wicon = WMO_CODES.get(wcodes[wi], "?").split()[0]
+                    wforecast.append({
+                        "label": f"{day_names_w[fd.weekday()]} {fd.strftime('%d.%m')}",
+                        "icon": wicon,
+                        "min": wt_min[wi],
+                        "max": wt_max[wi],
+                    })
+                except Exception:
+                    pass
+            weather_payload = {
+                "condition": WMO_CODES.get(wcode, f"Код {wcode}"),
+                "temp":      wc.get("temperature_2m"),
+                "feels_like": wc.get("apparent_temperature"),
+                "humidity":  wc.get("relative_humidity_2m"),
+                "wind":      wc.get("wind_speed_10m"),
+                "precip":    wc.get("precipitation", 0),
+                "updated":   wupdated,
+                "forecast":  wforecast,
+            }
 
         payload = {
             "power":         st(power_d),
@@ -1782,6 +1970,7 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
                 "state": st(vac_d),
             },
             "prayers": prayers_data,
+            "weather": weather_payload,
         }
         return aiohttp_web.Response(
             text=json.dumps(payload, ensure_ascii=False),
