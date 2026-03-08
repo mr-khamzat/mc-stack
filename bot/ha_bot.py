@@ -122,8 +122,8 @@ async def ha_call(domain: str, service: str, entity_id: str, extra: dict = None)
     data = {"entity_id": entity_id, **(extra or {})}
     return await ha_post(f"services/{domain}/{service}", data)
 
-async def ha_history(entity_id: str, hours: int = 24) -> list:
-    """Returns list of (datetime_utc, float) from HA history API."""
+async def ha_history(entity_id: str, hours: int = 24, max_points: int = 300) -> list:
+    """Returns list of (datetime_msk, float) from HA history API, downsampled to max_points."""
     start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     data = await ha_get(
         f"history/period/{start}?filter_entity_id={entity_id}&minimal_response=true"
@@ -133,35 +133,73 @@ async def ha_history(entity_id: str, hours: int = 24) -> list:
     points = []
     for entry in data[0]:
         try:
-            ts  = datetime.fromisoformat(entry["last_updated"].replace("Z", "+00:00"))
+            # minimal_response uses last_changed; full entries also have last_updated
+            ts_str = entry.get("last_changed") or entry.get("last_updated", "")
+            ts  = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).astimezone(MSK)
             val = float(entry["state"])
             points.append((ts, val))
         except (KeyError, ValueError, TypeError):
             pass
+    # Downsample evenly if too many points
+    if len(points) > max_points:
+        step = len(points) / max_points
+        points = [points[int(i * step)] for i in range(max_points)]
     return points
 
 def _make_chart(series: list, title: str, ylabel: str, color: str = "#4fc3f7") -> bytes | None:
-    """Generate dark-theme PNG chart from [(datetime, float)] series."""
+    """Generate dark-theme PNG chart with min/max/avg annotations."""
     if not series:
         return None
     times, values = zip(*series)
-    fig, ax = plt.subplots(figsize=(10, 4))
-    fig.patch.set_facecolor("#1e1e2e")
-    ax.set_facecolor("#1e1e2e")
-    ax.plot(times, values, color=color, linewidth=1.5)
-    ax.fill_between(times, values, alpha=0.2, color=color)
-    ax.set_title(title, color="white", fontsize=13, pad=8)
-    ax.set_ylabel(ylabel, color="#aaaaaa", fontsize=10)
-    ax.tick_params(colors="#888888")
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m %H:%M", tz=MSK))
-    ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+    values_list = list(values)
+    v_min, v_max, v_avg = min(values_list), max(values_list), sum(values_list)/len(values_list)
+    v_last = values_list[-1]
+
+    fig, ax = plt.subplots(figsize=(11, 4.5))
+    fig.patch.set_facecolor("#0f0f1a")
+    ax.set_facecolor("#0f0f1a")
+
+    # Fill + line
+    ax.fill_between(times, values, alpha=0.15, color=color)
+    ax.plot(times, values, color=color, linewidth=1.8, zorder=3)
+
+    # Current value dot
+    ax.scatter([times[-1]], [v_last], color=color, s=50, zorder=5)
+
+    # Horizontal reference lines
+    ax.axhline(v_avg, color="#555577", linewidth=0.8, linestyle="--", alpha=0.7)
+
+    # Min/Max/Avg annotations
+    x_mid = times[len(times)//2]
+    ax.annotate(f"ср: {v_avg:.1f}", xy=(x_mid, v_avg),
+                xytext=(0, 6), textcoords="offset points",
+                color="#666688", fontsize=8, ha="center")
+    ax.annotate(f"▲ {v_max:.1f}", xy=(times[values_list.index(v_max)], v_max),
+                xytext=(0, 6), textcoords="offset points",
+                color="#ff8888", fontsize=8, ha="center")
+    ax.annotate(f"▼ {v_min:.1f}", xy=(times[values_list.index(v_min)], v_min),
+                xytext=(0, -12), textcoords="offset points",
+                color="#88aaff", fontsize=8, ha="center")
+
+    # Title with current value
+    ax.set_title(f"{title}  |  сейчас: {v_last:.1f} {ylabel}",
+                 color="#ccccee", fontsize=12, pad=10, loc="left")
+    ax.set_ylabel(ylabel, color="#666688", fontsize=9)
+
+    ax.tick_params(colors="#555577", labelsize=8)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=MSK))
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=4, maxticks=8))
     for spine in ax.spines.values():
-        spine.set_edgecolor("#444444")
-    ax.grid(axis="y", color="#333333", linestyle="--", alpha=0.7)
-    fig.autofmt_xdate(rotation=30)
-    fig.tight_layout()
+        spine.set_edgecolor("#222234")
+    ax.grid(axis="y", color="#1e1e2e", linewidth=0.8, alpha=0.9)
+    ax.grid(axis="x", color="#1a1a2a", linewidth=0.5, alpha=0.6)
+    ax.set_xlim(times[0], times[-1])
+
+    fig.autofmt_xdate(rotation=20)
+    fig.tight_layout(pad=1.2)
+
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=100, bbox_inches="tight",
+    fig.savefig(buf, format="png", dpi=130, bbox_inches="tight",
                 facecolor=fig.get_facecolor())
     plt.close(fig)
     buf.seek(0)
@@ -1648,19 +1686,23 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
         results = await asyncio.gather(
             ha_get("states/sensor.moshchnost_vsego_doma"),
             ha_get("states/sensor.temp_detskaia_temperature"),
+            ha_get("states/sensor.temp_detskaia_humidity"),
             ha_get("states/binary_sensor.keenetic_gateway_wan_status_2"),
             ha_get("states/climate.teplyi_pol_lodzhiia"),
             ha_get(f"states/{TV_EID}"),
             ha_get("states/vacuum.pylik"),
             *[ha_get(f"states/{eid}") for eid in FAMILY.values()],
             *[ha_get(f"states/{eid}") for _, (_, eid) in LIGHTS.items()],
+            *[ha_get(f"states/{eid}") for eid in _HA_PRAYER_EIDS.values()],
         )
-        n_fixed = 6
+        n_fixed = 7
         n_family = len(FAMILY)
         n_lights = len(LIGHTS)
-        power_d, temp_d, inet_d, floor_d, tv_d, vac_d = results[:n_fixed]
-        family_results = results[n_fixed:n_fixed + n_family]
-        lights_results = results[n_fixed + n_family:]
+        n_prayers = len(_HA_PRAYER_EIDS)
+        power_d, temp_d, hum_d, inet_d, floor_d, tv_d, vac_d = results[:n_fixed]
+        family_results  = results[n_fixed:n_fixed + n_family]
+        lights_results  = results[n_fixed + n_family:n_fixed + n_family + n_lights]
+        prayer_results  = results[n_fixed + n_family + n_lights:]
 
         def st(d): return d.get("state", "?") if d else "?"
 
@@ -1669,7 +1711,6 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
 
         family_data = {}
         for (name, _), d in zip(FAMILY.items(), family_results):
-            # Strip emoji prefix for JSON key
             clean_name = name.split(" ", 1)[1] if " " in name else name
             family_data[clean_name] = st(d)
 
@@ -1677,23 +1718,34 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
         for (name, (domain, eid)), d in zip(LIGHTS.items(), lights_results):
             lights_data[eid] = st(d)
 
+        # Prayers: {ru_name: "HH:MM"}
+        prayer_names_ru = {"Fajr": "Фаджр", "Dhuhr": "Зухр",
+                           "Asr": "Аср", "Maghrib": "Магриб", "Isha": "Иша"}
+        prayers_data = {}
+        for (prayer_key, _), d in zip(_HA_PRAYER_EIDS.items(), prayer_results):
+            t = st(d)[:5] if d else "?"
+            prayers_data[prayer_names_ru.get(prayer_key, prayer_key)] = t
+
         payload = {
-            "power":        st(power_d),
+            "power":         st(power_d),
             "temp_detskaia": st(temp_d),
-            "internet":     "on" if st(inet_d) == "on" else "off",
+            "humidity":      st(hum_d),
+            "internet":      "on" if st(inet_d) == "on" else "off",
             "floor_heating": st(floor_d),
             "floor_setpoint": str(floor_attrs.get("temperature", "?")),
-            "floor_temp":   str(floor_attrs.get("current_temperature", "?")),
-            "family":       family_data,
-            "lights":       lights_data,
+            "floor_temp":    str(floor_attrs.get("current_temperature", "?")),
+            "family":        family_data,
+            "lights":        lights_data,
             "tv": {
                 "state":  st(tv_d),
                 "title":  tv_attrs.get("media_title", ""),
                 "volume": tv_attrs.get("volume_level"),
+                "muted":  tv_attrs.get("is_volume_muted", False),
             },
             "vacuum": {
                 "state": st(vac_d),
             },
+            "prayers": prayers_data,
         }
         return aiohttp_web.Response(
             text=json.dumps(payload, ensure_ascii=False),
