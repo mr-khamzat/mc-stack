@@ -2538,6 +2538,55 @@ async def _web_devices_post(request: aiohttp_web.Request) -> aiohttp_web.Respons
         log.error(f"web_devices_post error: {e}")
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
+FRIGATE_EVENTS_FILE = Path("/opt/ha-bot/frigate_events.json")
+_frigate_events: list = []  # in-memory cache of recent Frigate events
+
+def _frigate_events_load() -> list:
+    if FRIGATE_EVENTS_FILE.exists():
+        try:
+            return json.loads(FRIGATE_EVENTS_FILE.read_text())
+        except Exception:
+            return []
+    return []
+
+def _frigate_events_save(evts: list):
+    try:
+        FRIGATE_EVENTS_FILE.write_text(json.dumps(evts, ensure_ascii=False, indent=2))
+    except Exception as e:
+        log.error(f"frigate_events_save: {e}")
+
+async def _web_camera_info(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/camera/{entity_id} → stream/snapshot URLs with access_token."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    eid = request.match_info.get("entity_id", "")
+    if not eid.startswith("camera."):
+        return aiohttp_web.Response(status=400, text="Not a camera entity", headers=_CORS_HEADERS)
+    try:
+        d = await ha_get(f"states/{eid}")
+        if not d:
+            return aiohttp_web.Response(status=404, text="Not found", headers=_CORS_HEADERS)
+        tok = d.get("attributes", {}).get("access_token", "")
+        payload = {
+            "entity_id":    eid,
+            "name":         d.get("attributes", {}).get("friendly_name", eid),
+            "state":        d.get("state", ""),
+            "stream_url":   f"{HA_URL}/api/camera_proxy_stream/{eid}?token={tok}",
+            "snapshot_url": f"{HA_URL}/api/camera_proxy/{eid}?token={tok}",
+        }
+        return aiohttp_web.Response(text=json.dumps(payload, ensure_ascii=False),
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+async def _web_frigate_events(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/frigate/events — последние события детекции Frigate."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    evts = list(reversed(_frigate_events[-50:]))  # newest first
+    return aiohttp_web.Response(text=json.dumps(evts, ensure_ascii=False),
+                                content_type="application/json", headers=_CORS_HEADERS)
+
 async def _web_sections_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/api/sections — список всех секций."""
     if not _check_token(request):
@@ -2636,6 +2685,61 @@ async def _web_ha_scan(request: aiohttp_web.Request) -> aiohttp_web.Response:
         log.error(f"web_ha_scan error: {e}")
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
+async def _frigate_event_loop():
+    """Подписаться на HA события от Frigate через WebSocket и кешировать детекции."""
+    global _frigate_events
+    _frigate_events = _frigate_events_load()
+    if not HAS_WS:
+        return
+    ha_ws = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
+    while True:
+        try:
+            async with websockets.connect(ha_ws, ping_interval=20, open_timeout=15) as ws:
+                await ws.recv()  # hello
+                await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
+                msg = json.loads(await asyncio.wait_for(ws.recv(), 10))
+                if msg.get("type") != "auth_ok":
+                    log.warning("Frigate WS: auth failed")
+                    await asyncio.sleep(30)
+                    continue
+                # Subscribe to frigate events
+                await ws.send(json.dumps({"id": 1, "type": "subscribe_events", "event_type": "frigate.new_tracking_object"}))
+                await ws.recv()
+                await ws.send(json.dumps({"id": 2, "type": "subscribe_events", "event_type": "frigate.tracking_object_update"}))
+                await ws.recv()
+                log.info("Frigate event loop: subscribed to HA events")
+                async for raw in ws:
+                    try:
+                        msg = json.loads(raw)
+                        if msg.get("type") != "event":
+                            continue
+                        evt = msg.get("event", {})
+                        data = evt.get("data", {})
+                        after = data.get("after", data)
+                        eid = after.get("id") or after.get("event_id")
+                        if not eid:
+                            continue
+                        camera  = after.get("camera", "")
+                        label   = after.get("label", "")
+                        score   = after.get("top_score") or after.get("score") or 0
+                        ts      = after.get("start_time") or after.get("frame_time") or _time.time()
+                        snapshot_url = f"{HA_URL}/api/camera_proxy/image.{camera}_{label}?token={HA_TOKEN}"
+                        entry = {
+                            "id": eid, "camera": camera, "label": label,
+                            "score": round(float(score) * 100) if score else 0,
+                            "ts": int(ts), "snapshot_url": snapshot_url,
+                        }
+                        # Deduplicate by id
+                        _frigate_events = [e for e in _frigate_events if e.get("id") != eid]
+                        _frigate_events.append(entry)
+                        _frigate_events = _frigate_events[-200:]  # keep last 200
+                        _frigate_events_save(_frigate_events)
+                    except Exception as e:
+                        log.debug(f"Frigate event parse: {e}")
+        except Exception as e:
+            log.warning(f"Frigate event loop reconnect: {e}")
+            await asyncio.sleep(15)
+
 async def _start_web():
     app = aiohttp_web.Application()
     app.router.add_get("/ha-app/",                  _web_index)
@@ -2646,8 +2750,12 @@ async def _start_web():
     app.router.add_post("/ha-app/api/devices",      _web_devices_post)
     app.router.add_get("/ha-app/api/ha_scan",       _web_ha_scan)
     app.router.add_get("/ha-app/api/ha_entities",   _web_ha_entities)
-    app.router.add_get("/ha-app/api/sections",      _web_sections_get)
-    app.router.add_post("/ha-app/api/sections",     _web_sections_post)
+    app.router.add_get("/ha-app/api/sections",                _web_sections_get)
+    app.router.add_post("/ha-app/api/sections",               _web_sections_post)
+    app.router.add_get("/ha-app/api/camera/{entity_id}",      _web_camera_info)
+    app.router.add_get("/ha-app/api/frigate/events",          _web_frigate_events)
+    app.router.add_route("OPTIONS", "/ha-app/api/camera/{entity_id}", _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/frigate/events",     _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/status",       _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/action",       _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/devices",      _web_options)
@@ -2676,6 +2784,7 @@ async def main():
     await _refresh_lights()  # сканировать HA, добавить новые устройства
     asyncio.create_task(alert_loop())
     asyncio.create_task(_start_web())
+    asyncio.create_task(_frigate_event_loop())
     await bot.send_message(
         ADMIN_ID,
         "🏠 <b>Home Assistant Bot v3.3 запущен!</b>\n"

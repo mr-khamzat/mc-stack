@@ -764,11 +764,9 @@ body {
       <div class="section-content">
         <div style="display:flex;gap:8px;margin-bottom:8px">
           <button class="btn btn-primary" style="flex:1" onclick="openEntityBrowser()">➕ Из HA</button>
-          <button class="btn btn-neutral" style="flex:1" onclick="settingsScan(event)">🔍 Авто</button>
-          <button class="btn btn-neutral" onclick="loadSettings()">↺</button>
-        </div>
-        <div style="margin-bottom:12px">
-          <button class="btn btn-neutral" style="width:100%;border-style:dashed" onclick="openCreateSection()">📂 Создать новый раздел</button>
+          <button class="btn btn-neutral" style="flex:1" onclick="openSectionsManager()">📂 Разделы</button>
+          <button class="btn btn-neutral" onclick="settingsScan(event)" title="Авто-поиск">🔍</button>
+          <button class="btn btn-neutral" onclick="loadSettings()" title="Обновить">↺</button>
         </div>
         <div id="settings-list">
           <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Нажмите ↺ для загрузки</div>
@@ -1528,12 +1526,22 @@ function setEntityDomain(d) {
   renderEntityBrowser();
 }
 
-function selectEntityToAdd(eid, name, domain) {
+async function selectEntityToAdd(eid, name, domain) {
   entityBrowserSelected = {eid, name, domain};
   const defSection = DOMAIN_DEFAULT_SECTION[domain] || 'hidden';
   const defIcon    = DOMAIN_DEFAULT_ICON[domain] || '📦';
 
-  const sectionOpts = Object.entries(SECTION_LABELS).map(([k, v]) =>
+  // Load fresh sections from API
+  let allSections = {...SECTION_LABELS};
+  try {
+    const srv = await api('/sections');
+    for (const [id, cfg] of Object.entries(srv)) {
+      allSections[id] = cfg.name || id;
+      SECTION_LABELS[id] = cfg.name || id;
+    }
+  } catch(e) { /* use cached */ }
+
+  const sectionOpts = Object.entries(allSections).map(([k, v]) =>
     `<option value="${k}" ${k === defSection ? 'selected' : ''}>${v}</option>`
   ).join('');
 
@@ -1615,6 +1623,9 @@ async function settingsScan(evt) {
 }
 
 // ── Dynamic sections ───────────────────────────────────────────────────────
+// Camera modal state
+let _camModal = null;
+
 function renderDynamicSections(sections) {
   const container = document.getElementById('dynamic-sections');
   if (!container) return;
@@ -1624,22 +1635,32 @@ function renderDynamicSections(sections) {
     const sid = 'dyn-' + sect.id.replace(/[^a-z0-9]/g, '_');
     const devices = sect.devices || {};
     const devCount = Object.keys(devices).length;
-    if (devCount === 0 && !sect.show_empty) return '';
+    if (devCount === 0) return '';
 
-    const devHtml = devCount === 0
-      ? '<div style="color:#60608a;font-size:13px;text-align:center;padding:12px">Нет устройств</div>'
-      : Object.entries(devices).map(([eid, info]) => {
-          const isOn = info.state === 'on' || info.state === 'streaming' || info.state === 'home';
-          const stateLabel = info.state || '—';
-          return `<div style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:10px;margin-bottom:6px">
-            <span style="font-size:22px">${info.icon || '📦'}</span>
-            <div style="flex:1;min-width:0">
-              <div style="font-size:13px;font-weight:600;color:#c0c0e0">${escapeHtml(info.name || eid)}</div>
-              <div style="font-size:11px;color:#50508a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(eid)}</div>
-            </div>
-            <span style="font-size:12px;font-weight:600;color:${isOn ? '#22c55e' : '#60608a'}">${escapeHtml(stateLabel)}</span>
-          </div>`;
-        }).join('');
+    const devHtml = Object.entries(devices).map(([eid, info]) => {
+      const domain = info.domain || eid.split('.')[0];
+      const isCamera = domain === 'camera';
+      const isOn = info.state === 'on' || info.state === 'streaming' || info.state === 'home';
+      const stateLabel = info.state || '—';
+
+      const cameraButtons = isCamera
+        ? `<div style="display:flex;gap:6px;flex-shrink:0">
+            <button onclick="openCameraModal('${escapeAttr(eid)}')"
+              style="background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);border-radius:8px;padding:5px 10px;color:#a0a0ff;cursor:pointer;font-size:12px">▶</button>
+            <button onclick="openFrigateEvents('${escapeAttr(eid)}')"
+              style="background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.3);border-radius:8px;padding:5px 10px;color:#fbbf24;cursor:pointer;font-size:12px">🎞</button>
+          </div>`
+        : `<span style="font-size:12px;font-weight:600;color:${isOn ? '#22c55e' : '#60608a'}">${escapeHtml(stateLabel)}</span>`;
+
+      return `<div style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:10px;margin-bottom:6px">
+        <span style="font-size:22px">${info.icon || '📦'}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:#c0c0e0">${escapeHtml(info.name || eid)}</div>
+          <div style="font-size:11px;color:#50508a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(eid)}</div>
+        </div>
+        ${cameraButtons}
+      </div>`;
+    }).join('');
 
     return `<div class="section" style="margin-bottom:10px">
       <div class="section-header" onclick="toggleSection('${sid}-body')">
@@ -1653,57 +1674,311 @@ function renderDynamicSections(sections) {
   }).join('');
 }
 
-// ── Sections management ────────────────────────────────────────────────────
-function openCreateSection() {
-  document.getElementById('entity-browser-overlay')?.remove();
+async function openCameraModal(eid) {
+  // Get stream URL with access_token from bot API
+  let streamUrl = '', snapUrl = '', camName = eid;
+  try {
+    const info = await api('/camera/' + eid);
+    streamUrl = info.stream_url;
+    snapUrl   = info.snapshot_url;
+    camName   = info.name || eid;
+  } catch(e) {
+    showToast('❌ ' + e.message); return;
+  }
+
+  document.getElementById('cam-modal-overlay')?.remove();
   const ov = document.createElement('div');
-  ov.id = 'entity-browser-overlay';
-  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:3000;display:flex;flex-direction:column;align-items:stretch;justify-content:flex-end';
-  ov.innerHTML = `<div style="background:#12121e;border-radius:18px 18px 0 0;padding:20px">
-    <div style="font-size:15px;font-weight:700;color:#e0e0f0;margin-bottom:16px">📂 Новый раздел</div>
-
-    <div style="margin-bottom:12px">
-      <div style="font-size:11px;color:#60608a;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.5px">Иконка и название</div>
-      <div style="display:flex;gap:8px">
-        <input id="new-sect-icon" type="text" placeholder="📁" maxlength="4" value="📁"
-          oninput="document.getElementById('new-sect-icon-preview').textContent=this.value||'📁'"
-          style="width:52px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px;color:#e0e0f0;font-size:18px;font-family:inherit;outline:none;text-align:center">
-        <input id="new-sect-name" type="text" placeholder="Например: Камеры"
-          style="flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 12px;color:#e0e0f0;font-size:14px;font-family:inherit;outline:none">
+  ov.id = 'cam-modal-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:4000;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px';
+  ov.innerHTML = `
+    <div style="width:100%;max-width:500px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <span style="font-size:14px;font-weight:700;color:#e0e0f0">📹 ${escapeHtml(camName)}</span>
+        <button onclick="closeCameraModal()" style="background:rgba(255,255,255,0.1);border:none;border-radius:8px;padding:6px 12px;color:#c0c0e0;cursor:pointer;font-size:13px">✕ Закрыть</button>
       </div>
-    </div>
+      <div style="position:relative;background:#000;border-radius:14px;overflow:hidden;min-height:200px">
+        <img id="cam-modal-img" src="${streamUrl}" alt="camera stream"
+          style="width:100%;display:block;max-height:70vh;object-fit:contain"
+          onerror="document.getElementById('cam-modal-err').style.display='flex'">
+        <div id="cam-modal-err" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:#6060a0;font-size:13px">
+          <span style="font-size:30px">📷</span>
+          <span>Поток недоступен</span>
+          <button onclick="retryCamera('${escapeAttr(streamUrl)}')" class="btn btn-neutral" style="margin-top:4px">↺ Повторить</button>
+        </div>
+      </div>
+      <div style="margin-top:10px;font-size:11px;color:#50508a;text-align:center">
+        Прямой поток · нажмите ✕ для остановки
+      </div>
+    </div>`;
+  ov.addEventListener('click', e => { if (e.target === ov) closeCameraModal(); });
+  document.body.appendChild(ov);
+  _camModal = ov;
+}
 
-    <div style="font-size:11px;color:#50508a;margin-bottom:16px">
-      После создания раздела добавьте в него устройства через «➕ Из HA»
-    </div>
+function closeCameraModal() {
+  const ov = document.getElementById('cam-modal-overlay');
+  if (ov) {
+    // Stop stream by clearing src
+    const img = ov.querySelector('#cam-modal-img');
+    if (img) img.src = '';
+    ov.remove();
+  }
+  _camModal = null;
+}
 
-    <div style="display:flex;gap:8px">
-      <button onclick="confirmCreateSection()" class="btn btn-primary" style="flex:1;padding:13px">✓ Создать</button>
-      <button onclick="document.getElementById('entity-browser-overlay').remove()" class="btn btn-neutral" style="padding:13px">Отмена</button>
+function retryCamera(url) {
+  const img = document.getElementById('cam-modal-img');
+  const err = document.getElementById('cam-modal-err');
+  if (img) { img.src = url + '&t=' + Date.now(); }
+  if (err) err.style.display = 'none';
+}
+
+async function openFrigateEvents(eid) {
+  document.getElementById('cam-modal-overlay')?.remove();
+  const ov = document.createElement('div');
+  ov.id = 'cam-modal-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:4000;display:flex;flex-direction:column;align-items:stretch;justify-content:flex-end';
+  ov.innerHTML = `<div style="background:#12121e;border-radius:18px 18px 0 0;max-height:88vh;display:flex;flex-direction:column;overflow:hidden">
+    <div style="padding:14px 16px;border-bottom:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;gap:10px;flex-shrink:0">
+      <span style="font-size:15px;font-weight:700;color:#e0e0f0;flex:1">🎞 Детекции</span>
+      <button onclick="document.getElementById('cam-modal-overlay')?.remove()" style="background:rgba(255,255,255,0.08);border:none;border-radius:8px;width:30px;height:30px;color:#a0a0c0;font-size:16px;cursor:pointer">✕</button>
+    </div>
+    <div id="frigate-events-list" style="flex:1;overflow-y:auto;padding:12px 16px">
+      <div style="color:#60608a;font-size:13px;text-align:center;padding:12px">Загрузка...</div>
     </div>
   </div>`;
   ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
   document.body.appendChild(ov);
-  setTimeout(() => document.getElementById('new-sect-name')?.focus(), 50);
+
+  try {
+    const events = await api('/frigate/events');
+    const camera = eid.replace('camera.', '');
+    const filtered = events.filter(e => !camera || e.camera === camera || e.camera === 'all');
+    const el = document.getElementById('frigate-events-list');
+    if (!el) return;
+    if (filtered.length === 0) {
+      el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:20px">Нет сохранённых детекций.<br><span style="font-size:11px">Убедитесь что детекция включена в Frigate.</span></div>';
+      return;
+    }
+    el.innerHTML = filtered.map(ev => {
+      const dt = new Date(ev.ts * 1000);
+      const timeStr = dt.toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+      const labels = {'person':'👤 Человек','car':'🚗 Авто','dog':'🐕 Собака','cat':'🐱 Кот'};
+      const labelStr = labels[ev.label] || ('📦 ' + ev.label);
+      return `<div style="display:flex;align-items:center;gap:10px;padding:10px;border:1px solid rgba(255,255,255,0.07);border-radius:10px;margin-bottom:8px">
+        <div style="font-size:22px">${labelStr.split(' ')[0]}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:#c0c0e0">${labelStr}</div>
+          <div style="font-size:11px;color:#50508a">${timeStr} · ${ev.score}% · ${escapeHtml(ev.camera||'')}</div>
+        </div>
+        ${ev.snapshot_url ? `<img src="${ev.snapshot_url}" style="width:60px;height:45px;object-fit:cover;border-radius:6px;border:1px solid rgba(255,255,255,0.1)" onerror="this.style.display='none'">` : ''}
+      </div>`;
+    }).join('');
+  } catch(e) {
+    const el = document.getElementById('frigate-events-list');
+    if (el) el.innerHTML = `<div style="color:#ef4444;font-size:13px;text-align:center;padding:12px">Ошибка: ${escapeHtml(e.message)}</div>`;
+  }
 }
 
-async function confirmCreateSection() {
-  const icon = (document.getElementById('new-sect-icon')?.value || '📁').trim();
-  const name = (document.getElementById('new-sect-name')?.value || '').trim();
-  if (!name) { showToast('❌ Введите название раздела'); return; }
-  const id = name.toLowerCase().replace(/[^a-zа-яё0-9]/gi, '_').replace(/_+/g,'_');
+// ── Sections manager ───────────────────────────────────────────────────────
+let sectsMgr = { sections: {}, devices: {}, currentSect: null };
+
+async function openSectionsManager() {
+  _sectsMgrShow('<div style="text-align:center;padding:24px;color:#60608a">Загрузка...</div>');
   try {
-    await api('/sections', 'POST', { id, name: icon + ' ' + name, icon, enabled: true });
-    document.getElementById('entity-browser-overlay')?.remove();
-    showToast('✅ Раздел «' + name + '» создан');
-    // Reload sections label in entity browser selector
-    if (entityBrowserData !== null) {
-      // Update SECTION_LABELS
-      SECTION_LABELS[id] = icon + ' ' + name;
-    }
-  } catch(e) {
-    showToast('❌ ' + e.message);
+    const [sections, devices] = await Promise.all([api('/sections'), api('/devices')]);
+    sectsMgr.sections = sections;
+    sectsMgr.devices  = devices;
+    sectsMgr.currentSect = null;
+    _sectsMgrRenderList();
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+function _sectsMgrShow(innerHtml) {
+  document.getElementById('sects-mgr-overlay')?.remove();
+  const ov = document.createElement('div');
+  ov.id = 'sects-mgr-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:3000;display:flex;flex-direction:column;align-items:stretch;justify-content:flex-end';
+  ov.innerHTML = `<div style="background:#12121e;border-radius:18px 18px 0 0;max-height:88vh;display:flex;flex-direction:column;overflow:hidden">
+    <div style="padding:14px 16px 10px;border-bottom:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;gap:10px;flex-shrink:0">
+      <span id="sects-mgr-title" style="font-size:15px;font-weight:700;color:#e0e0f0;flex:1">📂 Разделы</span>
+      <button onclick="document.getElementById('sects-mgr-overlay').remove()"
+        style="background:rgba(255,255,255,0.08);border:none;border-radius:8px;width:30px;height:30px;color:#a0a0c0;font-size:16px;cursor:pointer">✕</button>
+    </div>
+    <div id="sects-mgr-inner" style="flex:1;overflow-y:auto;overscroll-behavior:contain">${innerHtml}</div>
+  </div>`;
+  ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+  document.body.appendChild(ov);
+}
+
+function _sectsMgrSetInner(html, title) {
+  const el = document.getElementById('sects-mgr-inner');
+  if (el) el.innerHTML = html;
+  const t = document.getElementById('sects-mgr-title');
+  if (t && title) t.textContent = title;
+}
+
+function _sectsMgrRenderList() {
+  const { sections, devices } = sectsMgr;
+  const devCount = {};
+  for (const cfg of Object.values(devices)) {
+    const s = cfg.section || 'lights';
+    devCount[s] = (devCount[s]||0) + 1;
   }
+  const sorted = Object.entries(sections).sort((a,b) => (a[1].order||99)-(b[1].order||99));
+  const listHtml = sorted.length === 0
+    ? '<div style="text-align:center;padding:20px;color:#60608a;font-size:13px">Нет разделов</div>'
+    : sorted.map(([id, cfg]) => {
+        const cnt = devCount[id] || 0;
+        return `<div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.04)">
+          <span style="font-size:22px;width:30px;text-align:center;cursor:pointer" onclick="_sectsMgrOpenDevices('${escapeAttr(id)}')">${cfg.icon||'📁'}</span>
+          <div style="flex:1;min-width:0;cursor:pointer" onclick="_sectsMgrOpenDevices('${escapeAttr(id)}')">
+            <div style="font-size:13px;font-weight:600;color:#c0c0e0">${escapeHtml(cfg.name||id)}</div>
+            <div style="font-size:11px;color:#50508a">${cnt} устр. · нажать для просмотра</div>
+          </div>
+          <button onclick="_sectsMgrEditForm('${escapeAttr(id)}')"
+            style="background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.3);border-radius:8px;padding:5px 9px;color:#8080ff;cursor:pointer;font-size:14px">✏️</button>
+          <button onclick="_sectsMgrDelete('${escapeAttr(id)}')"
+            style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);border-radius:8px;padding:5px 9px;color:#ef4444;cursor:pointer;font-size:14px">🗑️</button>
+        </div>`;
+      }).join('');
+
+  _sectsMgrSetInner(`
+    <div style="padding:10px 16px;border-bottom:1px solid rgba(255,255,255,0.05)">
+      <button onclick="_sectsMgrCreateForm()" class="btn btn-neutral" style="width:100%;border-style:dashed">📂 Создать раздел</button>
+    </div>
+    ${listHtml}`, '📂 Разделы');
+}
+
+function _sectsMgrOpenDevices(sectId) {
+  sectsMgr.currentSect = sectId;
+  const { sections, devices } = sectsMgr;
+  const sect = sections[sectId] || { name: sectId, icon: '📁' };
+  const devs = Object.entries(devices).filter(([, cfg]) => (cfg.section||'lights') === sectId);
+
+  const listHtml = devs.length === 0
+    ? '<div style="text-align:center;padding:20px;color:#60608a;font-size:13px">Нет устройств.<br>Добавьте через «➕ Из HA» выбрав этот раздел.</div>'
+    : devs.map(([eid, cfg]) => `
+      <div style="display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid rgba(255,255,255,0.04)">
+        <span style="font-size:20px">${cfg.icon||'📦'}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:#c0c0e0">${escapeHtml(cfg.name||eid)}</div>
+          <div style="font-size:10px;color:#50508a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(eid)}</div>
+        </div>
+        <button onclick="_sectsMgrRemoveDev('${escapeAttr(eid)}')"
+          style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);border-radius:8px;padding:5px 9px;color:#ef4444;cursor:pointer;font-size:12px">Убрать</button>
+      </div>`).join('');
+
+  _sectsMgrSetInner(`
+    <div style="padding:8px 16px;border-bottom:1px solid rgba(255,255,255,0.05)">
+      <button onclick="_sectsMgrRenderList()" style="background:none;border:none;color:#6060a0;font-size:13px;cursor:pointer;padding:4px 0;font-family:inherit">← К разделам</button>
+    </div>
+    ${listHtml}`, sect.icon + ' ' + sect.name);
+}
+
+async function _sectsMgrRemoveDev(eid) {
+  try {
+    await api('/devices', 'POST', { entity_id: eid, section: 'hidden', enabled: false });
+    if (sectsMgr.devices[eid]) { sectsMgr.devices[eid].section = 'hidden'; sectsMgr.devices[eid].enabled = false; }
+    showToast('🙈 Убрано из раздела');
+    _sectsMgrOpenDevices(sectsMgr.currentSect); // re-render current section
+    setTimeout(loadStatus, 800);
+    if (settingsLoaded) loadSettings();
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+function _sectsMgrEditForm(sectId) {
+  const sect = sectsMgr.sections[sectId] || { name: sectId, icon: '📁' };
+  // Strip leading emoji from name for editing
+  const namePart = sect.name.replace(/^\S+\s/, '');
+  _sectsMgrSetInner(`
+    <div style="padding:16px">
+      <button onclick="_sectsMgrRenderList()" style="background:none;border:none;color:#6060a0;font-size:13px;cursor:pointer;padding:0 0 14px;font-family:inherit">← Назад</button>
+      <div style="margin-bottom:12px">
+        <div style="font-size:11px;color:#60608a;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.5px">Иконка и название</div>
+        <div style="display:flex;gap:8px">
+          <input id="es-icon" type="text" value="${escapeAttr(sect.icon||'📁')}" maxlength="4"
+            style="width:52px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px;color:#e0e0f0;font-size:18px;font-family:inherit;outline:none;text-align:center">
+          <input id="es-name" type="text" value="${escapeAttr(namePart)}"
+            style="flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 12px;color:#e0e0f0;font-size:14px;font-family:inherit;outline:none">
+        </div>
+      </div>
+      <button onclick="_sectsMgrSaveEdit('${escapeAttr(sectId)}')" class="btn btn-primary" style="width:100%;padding:13px">✓ Сохранить</button>
+    </div>`, '✏️ Редактировать');
+  setTimeout(() => { document.getElementById('es-name')?.focus(); }, 30);
+}
+
+async function _sectsMgrSaveEdit(sectId) {
+  const icon = (document.getElementById('es-icon')?.value || '📁').trim();
+  const name = (document.getElementById('es-name')?.value || '').trim();
+  if (!name) { showToast('❌ Введите название'); return; }
+  const fullName = icon + ' ' + name;
+  try {
+    await api('/sections', 'POST', { id: sectId, name: fullName, icon });
+    sectsMgr.sections[sectId] = { ...sectsMgr.sections[sectId], name: fullName, icon };
+    SECTION_LABELS[sectId] = fullName;
+    showToast('✅ Раздел обновлён');
+    _sectsMgrRenderList();
+    setTimeout(loadStatus, 800);
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+async function _sectsMgrDelete(sectId) {
+  const sect = sectsMgr.sections[sectId] || {};
+  const devs = Object.keys(sectsMgr.devices).filter(eid => (sectsMgr.devices[eid].section||'lights') === sectId);
+  const msg = `Удалить раздел «${(sect.name||sectId).replace(/^\S+\s/,'')}»?` +
+    (devs.length ? `\n${devs.length} устройств будут скрыты.` : '');
+  if (!confirm(msg)) return;
+  try {
+    for (const eid of devs) {
+      await api('/devices', 'POST', { entity_id: eid, section: 'hidden', enabled: false });
+      sectsMgr.devices[eid].section = 'hidden';
+      sectsMgr.devices[eid].enabled = false;
+    }
+    await api('/sections', 'POST', { id: sectId, delete: true });
+    delete sectsMgr.sections[sectId];
+    delete SECTION_LABELS[sectId];
+    showToast('✅ Раздел удалён');
+    _sectsMgrRenderList();
+    setTimeout(loadStatus, 800);
+    if (settingsLoaded) loadSettings();
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+function _sectsMgrCreateForm() {
+  _sectsMgrSetInner(`
+    <div style="padding:16px">
+      <button onclick="_sectsMgrRenderList()" style="background:none;border:none;color:#6060a0;font-size:13px;cursor:pointer;padding:0 0 14px;font-family:inherit">← Назад</button>
+      <div style="margin-bottom:12px">
+        <div style="font-size:11px;color:#60608a;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.5px">Иконка и название</div>
+        <div style="display:flex;gap:8px">
+          <input id="ns-icon" type="text" placeholder="📁" maxlength="4" value="📁"
+            style="width:52px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px;color:#e0e0f0;font-size:18px;font-family:inherit;outline:none;text-align:center">
+          <input id="ns-name" type="text" placeholder="Например: Климат"
+            style="flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 12px;color:#e0e0f0;font-size:14px;font-family:inherit;outline:none">
+        </div>
+      </div>
+      <div style="font-size:11px;color:#50508a;margin-bottom:16px">
+        После создания добавляйте устройства через «➕ Из HA»
+      </div>
+      <button onclick="_sectsMgrConfirmCreate()" class="btn btn-primary" style="width:100%;padding:13px">✓ Создать</button>
+    </div>`, '📂 Новый раздел');
+  setTimeout(() => document.getElementById('ns-name')?.focus(), 30);
+}
+
+async function _sectsMgrConfirmCreate() {
+  const icon = (document.getElementById('ns-icon')?.value || '📁').trim();
+  const name = (document.getElementById('ns-name')?.value || '').trim();
+  if (!name) { showToast('❌ Введите название'); return; }
+  const id = name.toLowerCase().replace(/[^a-zа-яё0-9]/gi, '_').replace(/_+/g,'_');
+  const fullName = icon + ' ' + name;
+  try {
+    await api('/sections', 'POST', { id, name: fullName, icon, enabled: true });
+    sectsMgr.sections[id] = { name: fullName, icon, enabled: true, order: 99 };
+    SECTION_LABELS[id] = fullName;
+    showToast('✅ Раздел «' + name + '» создан');
+    _sectsMgrRenderList();
+  } catch(e) { showToast('❌ ' + e.message); }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
