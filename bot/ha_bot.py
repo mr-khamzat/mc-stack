@@ -806,34 +806,73 @@ def _guess_light_icon(name: str, eid: str) -> str:
     if any(x in s for x in ["ванн", "bath"]):                                     return "🚿"
     if any(x in s for x in ["туалет", "toilet"]):                                return "🚽"
     if any(x in s for x in ["лоджи", "lodzhi", "балкон", "balkon", "balcon"]):  return "🌿"
-    if any(x in s for x in ["зал", "гостин", "hall", "living"]):                 return "🛋️"
+    if any(x in s for x in ["зал", "гостин", "gostinaia", "hall", "living"]):    return "🛋️"
     if any(x in s for x in ["коридор", "corridor"]):                             return "🚶"
     if any(x in s for x in ["кабинет", "kabinet", "office"]):                    return "📋"
     if any(x in s for x in ["прихожа", "prikhozh", "entranc"]):                  return "🚪"
     return "💡"
 
+# MDI icon prefixes that indicate a light/lamp device
+_LIGHT_MDI_KEYWORDS = (
+    "light", "lamp", "bulb", "ceiling", "chandelier", "led",
+    "wall-sconce", "floor-lamp", "string-lights", "spotlight",
+)
+# Switch entity_id suffixes to skip (auxiliary controls, not actual lights)
+_SWITCH_SKIP_SUFFIXES = (
+    "do_not_disturb", "power_outage_memory", "flip_indicator_light",
+    "child_lock", "led_indicator", "backlight", "indicator",
+)
+
+def _is_switch_a_light(attrs: dict, eid: str) -> bool:
+    """Return True if a switch entity looks like a light controller."""
+    # Skip auxiliary/config switches
+    eid_lower = eid.lower()
+    if any(eid_lower.endswith(suf) for suf in _SWITCH_SKIP_SUFFIXES):
+        return False
+    icon = attrs.get("icon", "").lower()
+    fn   = attrs.get("friendly_name", "").lower()
+    if any(kw in icon for kw in _LIGHT_MDI_KEYWORDS):
+        return True
+    s = fn + " " + eid_lower
+    return any(kw in s for kw in ["свет", "svet", "люстр", "гостин", "спальн",
+                                    "лампа", "подсветк", "торшер"])
+
 async def _refresh_lights():
-    """Auto-discover new light.* entities from HA and add to LIGHTS/LIGHTS_ICON."""
+    """Auto-discover new light.* and light-switch entities from HA."""
     try:
         states = await ha_get("states")
         if not states:
             return
         existing_eids = {eid for _, (_, eid) in LIGHTS.items()}
+        # Collect all light.* entity base names to skip duplicate switch.*
+        light_entity_ids = {s["entity_id"] for s in states if s.get("entity_id", "").startswith("light.")}
         added = 0
         for s in states:
-            eid = s.get("entity_id", "")
-            if not eid.startswith("light."):
+            eid   = s.get("entity_id", "")
+            attrs = s.get("attributes", {})
+            domain = eid.split(".")[0] if "." in eid else ""
+
+            is_light  = domain == "light"
+            is_switch = domain == "switch" and _is_switch_a_light(attrs, eid)
+            if not (is_light or is_switch):
                 continue
             if eid in existing_eids:
                 continue
-            fn = s.get("attributes", {}).get("friendly_name", eid)
+            # If there's a light.X entity for the same device, prefer it over switch.X
+            if is_switch:
+                suffix = eid.split(".", 1)[1] if "." in eid else eid
+                if any(leid.split(".", 1)[1] == suffix for leid in light_entity_ids):
+                    continue  # will be added when we process the light.X
+
+            fn   = attrs.get("friendly_name", eid)
             icon = _guess_light_icon(fn, eid)
-            LIGHTS[fn] = ("light", eid)
+            LIGHTS[fn] = (domain, eid)
             LIGHTS_ICON[eid] = icon
             existing_eids.add(eid)
             added += 1
+            log.info(f"Lights auto-discovery: +{domain} {eid} ({fn})")
         if added:
-            log.info(f"Lights auto-discovery: added {added} new light entities")
+            log.info(f"Lights auto-discovery total: +{added}")
     except Exception as e:
         log.error(f"_refresh_lights error: {e}")
 
