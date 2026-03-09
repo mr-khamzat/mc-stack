@@ -2202,9 +2202,8 @@ function openVideoPlayer(url, title, clipUrl, eventId) {
         <button onclick="_closeVideoPlayer()"
           style="background:rgba(255,255,255,0.1);border:none;border-radius:8px;padding:6px 12px;color:#c0c0e0;cursor:pointer;font-size:13px">✕</button>
       </div>
-      <video id="vp-video" src="${escapeAttr(videoSrc)}" controls autoplay playsinline webkit-playsinline
-        style="width:100%;border-radius:12px;background:#000;max-height:70vh"
-        onerror="var n=this.nextElementSibling;if(n)n.style.display='block'">
+      <video id="vp-video" controls playsinline webkit-playsinline
+        style="width:100%;border-radius:12px;background:#000;max-height:70vh">
       </video>
       <div id="vp-err" style="display:none;color:#ef4444;font-size:13px;text-align:center;padding:16px">Не удалось загрузить видео</div>
       <div style="text-align:center;margin-top:8px">
@@ -2214,6 +2213,17 @@ function openVideoPlayer(url, title, clipUrl, eventId) {
     </div>`;
   ov.addEventListener('click', e => { if (e.target === ov) _closeVideoPlayer(); });
   document.body.appendChild(ov);
+  // Set src AFTER DOM is fully attached so vp-err is guaranteed to exist
+  const _vpVid = document.getElementById('vp-video');
+  const _vpErr = document.getElementById('vp-err');
+  if (_vpVid) {
+    if (_vpErr) {
+      _vpVid.addEventListener('error', () => { _vpErr.style.display = 'block'; }, { once: true });
+    }
+    _vpVid.src = videoSrc;
+    _vpVid.load();
+    _vpVid.play().catch(() => {});
+  }
 }
 
 function _closeVideoPlayer() {
