@@ -73,6 +73,7 @@ _ALERTS_DEFAULTS = {
         "namaz":   True,
         "morning": True,
         "frigate": True,
+        "inet":    True,
     }
 }
 
@@ -164,7 +165,7 @@ def _scenes_save(scenes: dict):
         log.error(f"scenes_save: {e}")
 
 _BOT_START_TIME   = _time.time()
-_BOT_VERSION      = "3.4"
+_BOT_VERSION      = "3.5"
 
 # Status API cache (5 sec TTL)
 _status_cache: dict = {"ts": 0.0, "data": None}
@@ -2535,14 +2536,19 @@ _alert_state = {
     "power_high":              False,
     "temp_low":                False,
     "temp_high":               False,
-    "person_khamzat":          None,
-    "person_khamzat_notif_ts": None,   # datetime UTC последнего уведомления о присутствии
-    "namaz_notified_prayer":   None,   # "2026-03-07_Asr"
+    "person_khamzat":          None,   # kept for compat
+    "person_khamzat_notif_ts": None,
+    "persons":                 {},     # {entity_id: state} для всех членов семьи
+    "namaz_notified_prayer":   None,   # kept for compat
+    "namaz_done_keys":         set(),  # {"2026-03-09_Asr_15", ...} — отправленные уведомления
+    "namaz_done_day":          None,   # дата для сброса namaz_done_keys
     "last_briefing_day":       None,
     "last_weekly_report":      None,   # "week_10_2026"
     "last_monthly_report":     None,   # "2026-03"
     "all_away":                False,  # все ушли из дома
     "all_away_notif_ts":       None,
+    "inet_down":               False,
+    "inet_down_ts":            None,   # datetime UTC когда интернет упал
     "last_recognized_face":    None,   # последнее распознанное лицо
 }
 
@@ -2563,14 +2569,16 @@ async def _check_alerts():
         ha_get("states/sensor.temp_detskaia_temperature"),
         ha_get("states/person.khamzat"),
         ha_get("states/sensor.cam_a6810678_last_recognized_face"),
+        ha_get("states/binary_sensor.keenetic_gateway_wan_status_2"),
         *[ha_get(f"states/{eid}") for eid in person_eids],
     ]
     results = await asyncio.gather(*gather_items)
-    power_d  = results[0]
-    temp_d   = results[1]
-    person_d = results[2]
-    face_d   = results[3]
-    all_persons = results[4:]  # parallel to person_eids
+    power_d     = results[0]
+    temp_d      = results[1]
+    person_d    = results[2]
+    face_d      = results[3]
+    inet_d      = results[4]
+    all_persons = results[5:]  # parallel to person_eids
 
     acfg = _alerts_load()
     now_h = datetime.now(MSK).hour
@@ -2609,30 +2617,33 @@ async def _check_alerts():
         except Exception as e:
             log.error(f"Alert temp check: {e}")
 
-    # 🏠 Приход/уход Хамзата (кулдаун 10 мин, чтобы не спамить при колебаниях HA)
+    # 🏠 Приход/уход всех членов семьи
     if acfg["enabled"].get("person", True):
         try:
-            person = person_d.get("state", "?") if person_d else "?"
-            prev   = _alert_state["person_khamzat"]
-            if prev is not None and prev != person:
-                last_ts = _alert_state["person_khamzat_notif_ts"]
-                now_utc = datetime.now(timezone.utc)
-                cooldown_ok = (last_ts is None or
-                               (now_utc - last_ts).total_seconds() > 600)
-                if cooldown_ok:
-                    if person == "home":
-                        await bot.send_message(ADMIN_ID, "🏠 Хамзат <b>дома</b>", parse_mode="HTML")
-                        _alert_state["person_khamzat_notif_ts"] = now_utc
+            now_utc = datetime.now(timezone.utc)
+            family_names = {v: k for k, v in family.items()}  # {entity_id: name}
+            for eid, d in zip(person_eids, all_persons):
+                state = d.get("state", "?") if d else "?"
+                prev  = _alert_state["persons"].get(eid)
+                if prev is not None and prev != state:
+                    name = family_names.get(eid, eid.split(".")[-1].capitalize())
+                    if state == "home":
+                        await bot.send_message(ADMIN_ID, f"🏠 <b>{name}</b> дома!", parse_mode="HTML")
+                        _activity_log("person_home", name)
                     elif prev == "home":
-                        await bot.send_message(ADMIN_ID, "🚗 Хамзат <b>ушёл</b>", parse_mode="HTML")
-                        _alert_state["person_khamzat_notif_ts"] = now_utc
-            _alert_state["person_khamzat"] = person
+                        await bot.send_message(ADMIN_ID, f"🚗 <b>{name}</b> ушёл(а)", parse_mode="HTML")
+                        _activity_log("person_away", name)
+                _alert_state["persons"][eid] = state
+            # backwards compat
+            _alert_state["person_khamzat"] = _alert_state["persons"].get("person.khamzat",
+                person_d.get("state", "?") if person_d else "?")
         except Exception as e:
             log.error(f"Alert person check: {e}")
 
-    # 🏠 Geofencing — все ушли из дома
+    # 🏠 Geofencing — все ушли / первый вернулся
     if acfg["enabled"].get("person", True):
         try:
+            family_names_geo = {v: k for k, v in family.items()}
             person_states = [d.get("state", "?") if d else "?" for d in all_persons]
             anyone_home = any(s == "home" for s in person_states)
             prev_all_away = _alert_state["all_away"]
@@ -2644,8 +2655,10 @@ async def _check_alerts():
                 cooldown_ok = last_ts is None or (now_utc - last_ts).total_seconds() > 1800
                 if cooldown_ok:
                     _alert_state["all_away_notif_ts"] = now_utc
-                    # Send camera snapshot
-                    cap = "🏃 <b>Все ушли из дома!</b>\nСнимок камеры:"
+                    away_kb = InlineKeyboardMarkup(inline_keyboard=[[
+                        InlineKeyboardButton(text="🚗 Режим Уходим", callback_data="scene:run:away")
+                    ]])
+                    cap = "🏃 <b>Все ушли из дома!</b>"
                     try:
                         img_d = await ha_get("states/image.cam_a6810678_person")
                         if img_d:
@@ -2655,18 +2668,66 @@ async def _check_alerts():
                                 async with sess.get(snap_url, headers=HA_HEADERS, timeout=aiohttp.ClientTimeout(total=10)) as r:
                                     if r.status == 200:
                                         img_bytes = await r.read()
-                                        await bot.send_photo(ADMIN_ID, BufferedInputFile(img_bytes, "geofence.jpg"), caption=cap, parse_mode="HTML")
+                                        await bot.send_photo(ADMIN_ID, BufferedInputFile(img_bytes, "geofence.jpg"),
+                                                             caption=cap, parse_mode="HTML", reply_markup=away_kb)
                                         _activity_log("geofence_all_away", "snapshot sent")
-                                        _alert_state["all_away"] = True
                                         return
                     except Exception:
                         pass
-                    await bot.send_message(ADMIN_ID, cap, parse_mode="HTML")
+                    await bot.send_message(ADMIN_ID, cap, parse_mode="HTML", reply_markup=away_kb)
                     _activity_log("geofence_all_away", "text only")
             elif anyone_home and prev_all_away:
                 _alert_state["all_away"] = False
+                # Кто первый вернулся?
+                first_home = next(
+                    (family_names_geo.get(eid, eid.split(".")[-1].capitalize())
+                     for eid, s in zip(person_eids, person_states) if s == "home"),
+                    None
+                )
+                if first_home:
+                    home_kb = InlineKeyboardMarkup(inline_keyboard=[[
+                        InlineKeyboardButton(text="💡 Режим Вечер", callback_data="scene:run:evening")
+                    ]])
+                    await bot.send_message(ADMIN_ID,
+                        f"🏠 <b>{first_home}</b> дома!\nВключить сцену?",
+                        parse_mode="HTML", reply_markup=home_kb)
+                    _activity_log("geofence_first_home", first_home)
         except Exception as e:
             log.error(f"Alert geofence check: {e}")
+
+    # 🌐 Интернет — падение/восстановление
+    if acfg["enabled"].get("inet", True):
+        try:
+            inet_state = inet_d.get("state", "unknown") if inet_d else "unknown"
+            prev_inet = _alert_state["inet_down"]
+            if inet_state in ("off", "unavailable") and not prev_inet:
+                _alert_state["inet_down"] = True
+                _alert_state["inet_down_ts"] = datetime.now(timezone.utc)
+                now_msk_str = datetime.now(MSK).strftime("%H:%M")
+                await bot.send_message(ADMIN_ID,
+                    f"🔴 <b>Интернет упал!</b>\n⏰ {now_msk_str}",
+                    parse_mode="HTML")
+                _activity_log("inet_down", now_msk_str)
+            elif inet_state == "on" and prev_inet:
+                _alert_state["inet_down"] = False
+                down_ts = _alert_state["inet_down_ts"]
+                if down_ts:
+                    secs = int((datetime.now(timezone.utc) - down_ts).total_seconds())
+                    if secs < 60:
+                        dur_str = f"{secs}с"
+                    elif secs < 3600:
+                        dur_str = f"{secs // 60}м {secs % 60:02d}с"
+                    else:
+                        dur_str = f"{secs // 3600}ч {(secs % 3600) // 60}м"
+                    await bot.send_message(ADMIN_ID,
+                        f"🟢 <b>Интернет восстановлен!</b>\n⏱ Простой: {dur_str}",
+                        parse_mode="HTML")
+                    _activity_log("inet_up", dur_str)
+                else:
+                    await bot.send_message(ADMIN_ID, "🟢 <b>Интернет восстановлен!</b>", parse_mode="HTML")
+                _alert_state["inet_down_ts"] = None
+        except Exception as e:
+            log.error(f"Alert inet check: {e}")
 
     # 📸 Распознавание лиц
     try:
@@ -2684,9 +2745,14 @@ async def _check_alerts():
     except Exception as e:
         log.error(f"Alert face check: {e}")
 
-    # 🕌 Намаз — уведомление за 15 минут по расписанию Aladhan
+    # 🕌 Намаз — уведомление за 15 мин (с кнопкой) и за 5 мин (финальное)
     try:
         now_msk = datetime.now(MSK)
+        # Сброс ключей уведомлений в новый день
+        today_str = now_msk.date().isoformat()
+        if _alert_state["namaz_done_day"] != today_str:
+            _alert_state["namaz_done_day"] = today_str
+            _alert_state["namaz_done_keys"] = set()
         timings = await get_prayer_times() if acfg["enabled"].get("namaz", True) else None
         timings = timings or {}
         if timings:
@@ -2702,24 +2768,40 @@ async def _check_alerts():
                 except Exception:
                     continue
                 diff_min = int((p_dt - now_msk).total_seconds() / 60)
-                if 0 < diff_min <= 15:
-                    notif_key = f"{now_msk.date().isoformat()}_{p_name}"
-                    if _alert_state["namaz_notified_prayer"] != notif_key:
-                        _alert_state["namaz_notified_prayer"] = notif_key
-                        icon, ru_name = PRAYERS_RU[p_name]
+                icon, ru_name = PRAYERS_RU[p_name]
+                # 15-минутное предупреждение (от 6 до 15 минут)
+                if 5 < diff_min <= 15:
+                    key15 = f"{today_str}_{p_name}_15"
+                    if key15 not in _alert_state["namaz_done_keys"]:
+                        _alert_state["namaz_done_keys"].add(key15)
+                        kb = InlineKeyboardMarkup(inline_keyboard=[[
+                            InlineKeyboardButton(text="✅ Понял", callback_data=f"namaz_ok:{p_name}"),
+                        ]])
                         await bot.send_message(
                             ADMIN_ID,
                             f"🕌 <b>Через {diff_min} мин — {ru_name}!</b>\n"
-                            f"{icon} Время: {p_time_str}",
+                            f"{icon} Время намаза: <b>{p_time_str}</b>",
+                            parse_mode="HTML", reply_markup=kb
+                        )
+                    break
+                # 5-минутное финальное предупреждение
+                elif 0 < diff_min <= 5:
+                    key5 = f"{today_str}_{p_name}_5"
+                    if key5 not in _alert_state["namaz_done_keys"]:
+                        _alert_state["namaz_done_keys"].add(key5)
+                        await bot.send_message(
+                            ADMIN_ID,
+                            f"⏰ <b>Через {diff_min} мин — {ru_name}!</b>\n"
+                            f"{icon} Пора на намаз!",
                             parse_mode="HTML"
                         )
-                    break  # Уведомляем только ближайший намаз
+                    break
     except Exception as e:
         log.error(f"Alert namaz check: {e}")
 
-    # 🌅 Утренняя сводка в 8:00
-    now = datetime.now()
-    if acfg["enabled"].get("morning", True) and now.hour == 8 and now.minute < 1:
+    # 🌅 Утренняя сводка в 07:30 МСК
+    now = datetime.now(MSK)
+    if acfg["enabled"].get("morning", True) and now.hour == 7 and 28 <= now.minute <= 32:
         today = now.date().isoformat()
         if _alert_state["last_briefing_day"] != today:
             _alert_state["last_briefing_day"] = today
@@ -2742,16 +2824,28 @@ async def _check_alerts():
 
 async def _send_morning_briefing():
     try:
-        status_text  = await build_status_text()
+        now_msk = datetime.now(MSK)
+        date_str = now_msk.strftime("%d.%m.%Y")
+        day_names = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+        day_ru = day_names[now_msk.weekday()]
+
+        # Погода
         weather_data = await get_weather()
         weather_line = ""
         if weather_data:
             c    = weather_data.get("current", {})
+            daily = weather_data.get("daily", {})
             code = c.get("weather_code", 0)
             cond = WMO_CODES.get(code, "").split()[0] if WMO_CODES.get(code) else ""
             temp = c.get("temperature_2m", "?")
-            weather_line = f"\n🌤️ Погода: {cond} <b>{temp}°C</b>"
+            t_max = daily.get("temperature_2m_max", [None])[0]
+            t_min = daily.get("temperature_2m_min", [None])[0]
+            if t_max is not None and t_min is not None:
+                weather_line = f"\n🌤️ Погода: {cond} <b>{temp}°C</b> (сегодня {t_min:.0f}…{t_max:.0f}°C)"
+            else:
+                weather_line = f"\n🌤️ Погода: {cond} <b>{temp}°C</b>"
 
+        # Расписание намаза
         prayer_line = ""
         timings = await get_prayer_times()
         if timings:
@@ -2764,11 +2858,52 @@ async def _send_morning_briefing():
             if parts:
                 prayer_line = "\n🕌 " + "  ".join(parts)
 
+        # Кто дома
+        family = await get_family()
+        home_line = ""
+        if family:
+            try:
+                person_results = await asyncio.gather(*[ha_get(f"states/{eid}") for eid in family.values()])
+                home_list, away_list = [], []
+                for name, d in zip(family.keys(), person_results):
+                    if d and d.get("state") == "home":
+                        home_list.append(name)
+                    else:
+                        away_list.append(name)
+                if home_list:
+                    home_line = f"\n🏠 Дома: <b>{', '.join(home_list)}</b>"
+                elif away_list:
+                    home_line = f"\n🏠 Все ушли"
+            except Exception:
+                pass
+
+        # Расход за вчера
+        energy_line = ""
+        try:
+            cost_month = await ha_state("sensor.elektroenergiia_stoimost_za_mesiats")
+            cost_prog  = await ha_state("sensor.elektroenergiia_prognoz_scheta_za_mesiats")
+            day_num = now_msk.day
+            if day_num > 1 and cost_month:
+                try:
+                    avg_day = float(cost_month) / max(day_num - 1, 1)
+                    energy_line = f"\n⚡ Накоплено: <b>{float(cost_month):.0f} ₽</b> (~{avg_day:.0f} ₽/день)"
+                    if cost_prog:
+                        energy_line += f", прогноз: <b>{float(cost_prog):.0f} ₽</b>"
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         await bot.send_message(
             ADMIN_ID,
-            f"🌅 <b>Доброе утро!</b>{weather_line}{prayer_line}\n\n{status_text}",
+            f"🌅 <b>Доброе утро!</b> {day_ru}, {date_str}"
+            f"{weather_line}"
+            f"{home_line}"
+            f"{energy_line}"
+            f"{prayer_line}",
             parse_mode="HTML"
         )
+        _activity_log("morning_briefing", date_str)
     except Exception as e:
         log.error(f"Morning briefing error: {e}")
 
@@ -3992,6 +4127,51 @@ async def cmd_app(msg: Message):
     )]], resize_keyboard=True, one_time_keyboard=True)
     await msg.answer("🖥️ Откройте панель управления:", reply_markup=kb)
 
+# ── Inline кнопки: сцены из алертов ───────────────────────────────────────────
+@dp.callback_query(F.data.startswith("scene:run:"))
+async def cb_scene_run_alert(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id):
+        await cb.answer("⛔ Нет доступа", show_alert=True)
+        return
+    scene_id = cb.data.split(":", 2)[2]
+    scenes = _scenes_load()
+    scene = scenes.get(scene_id)
+    if not scene:
+        await cb.answer(f"❌ Сцена '{scene_id}' не найдена", show_alert=True)
+        return
+    errors = []
+    for action in scene.get("actions", []):
+        eid = action.get("entity_id", "")
+        svc = action.get("service", "")
+        extra = action.get("extra")
+        if not eid or not svc or "." not in svc:
+            continue
+        domain, service = svc.split(".", 1)
+        try:
+            await ha_call(domain, service, eid, extra)
+        except Exception as e:
+            errors.append(str(e))
+    _status_cache["ts"] = 0.0
+    _activity_log("scene_run", scene.get("name", scene_id))
+    name = scene.get("name", scene_id)
+    icon = scene.get("icon", "🎬")
+    if errors:
+        await cb.answer(f"⚠️ {icon} {name}: частично", show_alert=False)
+    else:
+        await cb.answer(f"✅ {icon} {name} — включено!", show_alert=False)
+    try:
+        await cb.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+@dp.callback_query(F.data.startswith("namaz_ok:"))
+async def cb_namaz_ok(cb: CallbackQuery):
+    await cb.answer("✅ Принято!", show_alert=False)
+    try:
+        await cb.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
 # ── Запуск ────────────────────────────────────────────────────────────────────
 async def main():
     log.info(f"HA Bot v{_BOT_VERSION} starting...")
@@ -4005,13 +4185,13 @@ async def main():
     await bot.send_message(
         ADMIN_ID,
         f"🏠 <b>Home Assistant Bot v{_BOT_VERSION} запущен!</b>\n"
-        "✅ Намаз по Aladhan API, алерт за 15 мин\n"
-        "✅ 📊 Графики энергии (24ч / 7 дней)\n"
-        "✅ 🗓️ Еженедельный и ежемесячный отчёты\n"
+        "✅ 🕌 Намаз: за 15 мин + за 5 мин\n"
+        "✅ 🌐 Уведомление о падении интернета\n"
+        "✅ 🌅 Утренняя сводка 07:30 МСК\n"
+        "✅ 🏠 Трекинг всей семьи + сцены из алертов\n"
+        "✅ 📊 Графики энергии / еженедельный отчёт\n"
         "✅ 📹 Frigate детекция + авто-уведомления\n"
         "✅ 💾 /backup /restore конфигов\n"
-        "✅ ⚡ Разбивка по фазам энергии\n"
-        "✅ 📋 Журнал активности\n"
         "✅ 🖥️ Telegram Mini App панель управления",
         parse_mode="HTML"
     )
