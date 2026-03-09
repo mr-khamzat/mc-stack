@@ -22,9 +22,14 @@ body {
 }
 
 /* Loading screen */
+@keyframes autoHide {
+  0%   { opacity: 1; visibility: visible; pointer-events: auto; }
+  99%  { opacity: 0; visibility: visible; pointer-events: none;  }
+  100% { opacity: 0; visibility: hidden;  pointer-events: none;  }
+}
 #loading {
   position: fixed;
-  inset: 0;
+  top: 0; left: 0; right: 0; bottom: 0;
   background: #0a0a0f;
   display: flex;
   align-items: center;
@@ -32,9 +37,15 @@ body {
   flex-direction: column;
   gap: 12px;
   z-index: 1000;
-  transition: opacity 0.4s ease;
+  /* CSS fallback: auto-hide after 4s even if JS fails */
+  animation: autoHide 0.5s 4s both;
 }
-#loading.fade-out { opacity: 0; pointer-events: none; }
+#loading.fade-out {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  animation: none !important;
+}
 
 .spinner {
   width: 40px;
@@ -562,6 +573,13 @@ body {
 .alert-input { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; color: #e0e0f0; font-size: 14px; padding: 4px 8px; width: 70px; text-align: center; }
 .alerts-section-title { font-size: 11px; color: #6060a0; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; margin: 12px 0 6px; }
 </style>
+<!-- Inline failsafe: remove loading after 5s even without JS -->
+<script>
+  setTimeout(function(){
+    var el=document.getElementById('loading');
+    if(el&&el.parentNode){el.style.display='none';el.parentNode.removeChild(el);}
+  },5000);
+</script>
 </head>
 <body>
 
@@ -891,10 +909,32 @@ let lastStatus = null;
 let tvMuted = false;
 let currentSetpoint = null;
 
+// ── Error handler (shows visible error instead of black screen) ─────────────
+window.onerror = function(msg, src, line) {
+  hideLoading();
+  const el = document.getElementById('app');
+  if (el && !document.getElementById('js-error')) {
+    const div = document.createElement('div');
+    div.id = 'js-error';
+    div.style.cssText = 'color:#ef4444;padding:16px;font-size:13px;word-break:break-all';
+    div.textContent = '❌ JS Error: ' + msg + ' (' + src + ':' + line + ')';
+    el.prepend(div);
+  }
+};
+window.onunhandledrejection = function(e) {
+  hideLoading();
+};
+
 // ── Telegram SDK init ──────────────────────────────────────────────────────
-if (window.Telegram && window.Telegram.WebApp) {
-  try { Telegram.WebApp.expand(); } catch(e) {}
-}
+// ready() tells Telegram to show the app (without it Telegram shows a black loading screen)
+(function tryTgInit(attempts) {
+  if (window.Telegram && window.Telegram.WebApp) {
+    try { Telegram.WebApp.ready(); } catch(e) {}
+    try { Telegram.WebApp.expand(); } catch(e) {}
+  } else if (attempts > 0) {
+    setTimeout(function() { tryTgInit(attempts - 1); }, 200);
+  }
+})(20);
 
 // ── Collapsible sections ───────────────────────────────────────────────────
 function toggleSection(id) {
@@ -948,14 +988,13 @@ let loadingHidden = false;
 function hideLoading() {
   if (loadingHidden) return;
   loadingHidden = true;
-  const el = document.getElementById('loading');
-  if (!el) return;
-  el.classList.add('fade-out');
-  el.style.pointerEvents = 'none';
-  setTimeout(() => {
-    el.style.display = 'none';
-    el.style.visibility = 'hidden';
-  }, 500);
+  try {
+    var el = document.getElementById('loading');
+    if (!el) return;
+    // Remove inline: most reliable across all WebViews
+    el.style.cssText = 'display:none!important;visibility:hidden!important;opacity:0!important;position:static!important;z-index:-999!important';
+    if (el.parentNode) el.parentNode.removeChild(el);
+  } catch(e) {}
 }
 
 // ── Apply status ───────────────────────────────────────────────────────────
