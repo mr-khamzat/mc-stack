@@ -2132,14 +2132,31 @@ async function _loadCamRecordings(camId) {
   }
 }
 
+let _camFsActive = false;
 function expandCamFullscreen() {
   const wrap = document.getElementById('cam-stream-wrap');
-  if (!wrap) return;
-  if (wrap.requestFullscreen) wrap.requestFullscreen();
-  else if (wrap.webkitRequestFullscreen) wrap.webkitRequestFullscreen();
+  const img  = document.getElementById('cam-modal-img');
+  if (!wrap || !img) return;
+  _camFsActive = !_camFsActive;
+  if (_camFsActive) {
+    wrap.style.cssText = 'position:fixed;inset:0;z-index:5000;background:#000;display:flex;align-items:center;justify-content:center';
+    img.style.cssText  = 'width:100%;height:100%;object-fit:contain;display:block;max-height:none';
+    const btn = document.createElement('button');
+    btn.id = 'cam-fs-exit-btn';
+    btn.textContent = '✕';
+    btn.onclick = expandCamFullscreen;
+    btn.style.cssText = 'position:fixed;top:16px;right:16px;z-index:5001;background:rgba(0,0,0,0.7);border:none;border-radius:8px;padding:8px 14px;color:#fff;font-size:18px;cursor:pointer';
+    document.body.appendChild(btn);
+  } else {
+    wrap.style.cssText = 'position:relative;background:#000;flex-shrink:0';
+    img.style.cssText  = 'width:100%;display:block;max-height:55vh;object-fit:contain';
+    document.getElementById('cam-fs-exit-btn')?.remove();
+  }
 }
 
 function closeCameraModal() {
+  _camFsActive = false;
+  document.getElementById('cam-fs-exit-btn')?.remove();
   const ov = document.getElementById('cam-modal-overlay');
   if (ov) {
     const img = ov.querySelector('#cam-modal-img');
@@ -2158,12 +2175,24 @@ function retryCamera(url) {
   if (err) err.style.display = 'none';
 }
 
+function _vpFullscreen() {
+  const v = document.getElementById('vp-video');
+  if (!v) return;
+  if (v.requestFullscreen) v.requestFullscreen();
+  else if (v.webkitEnterFullscreen) v.webkitEnterFullscreen();
+  else if (v.webkitRequestFullscreen) v.webkitRequestFullscreen();
+}
+
 function openVideoPlayer(url, title, clipUrl, eventId) {
   document.getElementById('video-player-overlay')?.remove();
   const ov = document.createElement('div');
   ov.id = 'video-player-overlay';
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.96);z-index:5000;display:flex;flex-direction:column;align-items:center;justify-content:center';
   const evId = eventId || '';
+  // Use proxy URL if we have an event_id — avoids auth header requirement on mobile
+  const videoSrc = evId
+    ? `${API_BASE}/frigate/clip/${encodeURIComponent(evId)}?token=${encodeURIComponent(API_TOKEN)}`
+    : (url || '');
   ov.innerHTML = `
     <div style="width:100%;max-width:600px;padding:0 12px">
       <div style="display:flex;align-items:center;gap:8px;padding:10px 0 8px">
@@ -2173,13 +2202,13 @@ function openVideoPlayer(url, title, clipUrl, eventId) {
         <button onclick="_closeVideoPlayer()"
           style="background:rgba(255,255,255,0.1);border:none;border-radius:8px;padding:6px 12px;color:#c0c0e0;cursor:pointer;font-size:13px">✕</button>
       </div>
-      <video id="vp-video" src="${escapeAttr(url||'')}" controls autoplay
+      <video id="vp-video" src="${escapeAttr(videoSrc)}" controls autoplay playsinline webkit-playsinline
         style="width:100%;border-radius:12px;background:#000;max-height:70vh"
         onerror="document.getElementById('vp-err').style.display='block'">
       </video>
       <div id="vp-err" style="display:none;color:#ef4444;font-size:13px;text-align:center;padding:16px">Не удалось загрузить видео</div>
       <div style="text-align:center;margin-top:8px">
-        <button onclick="document.getElementById('vp-video').requestFullscreen&&document.getElementById('vp-video').requestFullscreen()"
+        <button onclick="_vpFullscreen()"
           style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:5px 14px;color:#8080a0;cursor:pointer;font-size:12px">⛶ На весь экран</button>
       </div>
     </div>`;

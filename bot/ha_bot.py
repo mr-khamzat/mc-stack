@@ -3588,6 +3588,37 @@ async def _web_frigate_recordings(request: aiohttp_web.Request) -> aiohttp_web.R
                                 content_type="application/json", headers=_CORS_HEADERS)
 
 
+async def _web_frigate_clip_proxy(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/frigate/clip/{event_id} — proxy Frigate clip from HA with auth.
+    Supports Range requests for video seeking. Uses ?token= so <video src> works on mobile."""
+    if not _check_token_qs(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    event_id = request.match_info.get("event_id", "").strip()
+    if not event_id:
+        return aiohttp_web.Response(status=400, text="event_id required", headers=_CORS_HEADERS)
+    clip_url = f"{HA_URL}/api/frigate/notifications/{event_id}/clip.mp4"
+    req_headers: dict = {"Authorization": f"Bearer {HA_TOKEN}"}
+    if "Range" in request.headers:
+        req_headers["Range"] = request.headers["Range"]
+    try:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(clip_url, headers=req_headers,
+                                timeout=aiohttp.ClientTimeout(total=90),
+                                allow_redirects=True) as resp:
+                data = await resp.read()
+                out_headers = dict(_CORS_HEADERS)
+                out_headers["Content-Type"]  = resp.headers.get("Content-Type", "video/mp4")
+                out_headers["Accept-Ranges"] = "bytes"
+                if "Content-Range" in resp.headers:
+                    out_headers["Content-Range"] = resp.headers["Content-Range"]
+                if "Content-Length" in resp.headers:
+                    out_headers["Content-Length"] = resp.headers["Content-Length"]
+                return aiohttp_web.Response(status=resp.status, body=data, headers=out_headers)
+    except Exception as e:
+        log.warning(f"frigate_clip_proxy: {e}")
+        return aiohttp_web.Response(status=502, text=str(e), headers=_CORS_HEADERS)
+
+
 async def _web_frigate_send(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """POST /ha-app/api/frigate/send — скачать снимок/клип и отправить в Telegram."""
     if not _check_token(request):
@@ -3875,12 +3906,14 @@ async def _start_web():
     app.router.add_post("/ha-app/api/sections",               _web_sections_post)
     app.router.add_get("/ha-app/api/camera/{entity_id}",      _web_camera_info)
     app.router.add_get("/ha-app/api/frigate/events",          _web_frigate_events)
-    app.router.add_get("/ha-app/api/frigate/recordings",      _web_frigate_recordings)
-    app.router.add_post("/ha-app/api/frigate/send",           _web_frigate_send)
+    app.router.add_get("/ha-app/api/frigate/recordings",          _web_frigate_recordings)
+    app.router.add_get("/ha-app/api/frigate/clip/{event_id}",     _web_frigate_clip_proxy)
+    app.router.add_post("/ha-app/api/frigate/send",               _web_frigate_send)
     app.router.add_route("OPTIONS", "/ha-app/api/camera/{entity_id}",   _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/frigate/events",       _web_options)
-    app.router.add_route("OPTIONS", "/ha-app/api/frigate/recordings",   _web_options)
-    app.router.add_route("OPTIONS", "/ha-app/api/frigate/send",         _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/frigate/recordings",       _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/frigate/clip/{event_id}", _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/frigate/send",             _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/status",       _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/action",       _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/devices",      _web_options)
