@@ -3494,6 +3494,20 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
                     "devices": custom_sections.get(sect_id, {}),
                 })
 
+        # Frigate camera counters
+        cam_person_d, cam_all_d = await asyncio.gather(
+            ha_get("states/sensor.cam_a6810678_person_count"),
+            ha_get("states/sensor.cam_a6810678_all_count"),
+        )
+        try:
+            cam_person_cnt = int(float(st(cam_person_d))) if cam_person_d else 0
+        except Exception:
+            cam_person_cnt = 0
+        try:
+            cam_all_cnt = int(float(st(cam_all_d))) if cam_all_d else 0
+        except Exception:
+            cam_all_cnt = 0
+
         # Energy phases (vvod_1/2/3)
         vvod1_d, vvod2_d, vvod3_d = await asyncio.gather(
             ha_get("states/sensor.vvod_1_moshchnost"),
@@ -3536,6 +3550,8 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
             "prayers": prayers_data,
             "weather": weather_payload,
             "last_face": _alert_state.get("last_recognized_face") or "",
+            "cam_person_count": cam_person_cnt,
+            "cam_all_count":    cam_all_cnt,
         }
         payload_json = json.dumps(payload, ensure_ascii=False)
         _status_cache["ts"]   = _time.time()
@@ -3874,6 +3890,98 @@ async def _web_frigate_send(request: aiohttp_web.Request) -> aiohttp_web.Respons
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
 
+async def _web_frigate_notify_latest(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/frigate/notify-latest — вызывается из HA автоматизации.
+    Немедленно отправляет снапшот, через 35с — клип последнего события."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    camera = body.get("camera", "cam_a6810678")
+    label  = body.get("label", "person")
+    asyncio.create_task(_frigate_ha_notify_task(camera, label))
+    return aiohttp_web.Response(
+        text='{"ok":true}', content_type="application/json", headers=_CORS_HEADERS)
+
+
+async def _frigate_ha_notify_task(camera: str, label: str):
+    """Отправить снапшот → ждать 35с → отправить клип."""
+    _LABELS = {"person": "👤 Человек", "car": "🚗 Авто", "dog": "🐕 Собака", "cat": "🐱 Кот"}
+    label_str = _LABELS.get(label, f"📦 {label}")
+    ts_str = datetime.now(MSK).strftime("%H:%M:%S")
+
+    # 1. Снапшот из image entity
+    photo_sent = False
+    try:
+        img_d = await ha_get(f"states/image.{camera}_{label}")
+        if img_d:
+            img_tok = img_d.get("attributes", {}).get("access_token", "")
+            img_url = f"{HA_URL}/api/image_proxy/image.{camera}_{label}?token={img_tok}"
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(img_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        await bot.send_photo(
+                            ADMIN_ID,
+                            BufferedInputFile(data, "snapshot.jpg"),
+                            caption=f"📷 <b>{label_str} у камеры!</b>\n🕐 {ts_str}",
+                            parse_mode="HTML",
+                        )
+                        photo_sent = True
+    except Exception as e:
+        log.error(f"frigate_ha_notify snapshot: {e}")
+    if not photo_sent:
+        try:
+            await bot.send_message(ADMIN_ID,
+                f"📷 <b>{label_str} у камеры!</b> · {ts_str}", parse_mode="HTML")
+        except Exception:
+            pass
+
+    # 2. Подождать пока Frigate закроет и запишет клип
+    await asyncio.sleep(35)
+
+    # 3. Найти latest event_id через media_source WS
+    try:
+        ha_ws = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
+        async with websockets.connect(ha_ws, ping_interval=None, open_timeout=10) as ws:
+            msg = json.loads(await asyncio.wait_for(ws.recv(), 5))
+            if msg.get("type") == "auth_required":
+                await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
+                msg = json.loads(await asyncio.wait_for(ws.recv(), 5))
+            if msg.get("type") != "auth_ok":
+                raise RuntimeError("WS auth failed")
+            await ws.send(json.dumps({
+                "id": 99, "type": "media_source/browse_media",
+                "media_content_id": "media-source://frigate/frigate/event-search/clips/////"
+            }))
+            msg = json.loads(await asyncio.wait_for(ws.recv(), 15))
+            clips = msg.get("result", {}).get("children", [])
+            if not clips:
+                return
+            latest_mcid = clips[0].get("media_content_id", "")
+            event_id = latest_mcid.rsplit("/", 1)[-1] if "/" in latest_mcid else ""
+            if not event_id:
+                return
+            clip_url = f"{HA_URL}/api/frigate/notifications/{event_id}/clip.mp4"
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(clip_url, headers=HA_HEADERS,
+                                    timeout=aiohttp.ClientTimeout(total=90)) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        title = clips[0].get("title", "")
+                        await bot.send_video(
+                            ADMIN_ID,
+                            BufferedInputFile(data, "clip.mp4"),
+                            caption=f"🎬 <b>Клип</b> · {label_str}\n{title}",
+                            parse_mode="HTML",
+                        )
+                        _activity_log("frigate_ha_clip_sent", event_id[:20])
+    except Exception as e:
+        log.error(f"frigate_ha_notify clip: {e}")
+
+
 async def _web_sections_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/api/sections — список всех секций."""
     if not _check_token(request):
@@ -4099,6 +4207,8 @@ async def _start_web():
     app.router.add_get("/ha-app/api/frigate/recordings",          _web_frigate_recordings)
     app.router.add_get("/ha-app/api/frigate/clip/{event_id}",     _web_frigate_clip_proxy)
     app.router.add_post("/ha-app/api/frigate/send",               _web_frigate_send)
+    app.router.add_post("/ha-app/api/frigate/notify-latest",      _web_frigate_notify_latest)
+    app.router.add_route("OPTIONS", "/ha-app/api/frigate/notify-latest", _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/camera/{entity_id}",   _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/frigate/events",       _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/frigate/recordings",       _web_options)
