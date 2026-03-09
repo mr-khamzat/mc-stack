@@ -4,9 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Умный Дом</title>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://telegram.org/js/telegram-web-app.js" async></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"></noscript>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -861,7 +862,7 @@ body {
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const API_TOKEN = 'eb4512bc794be98c665881d28c5c511c';
-const API_BASE  = '/ha-app/api';
+const API_BASE  = (window.location.origin || 'https://hub.office.mooo.com') + '/ha-app/api';
 
 const LIGHTS_MAP = {
   'light.svet_krovat':            '🛏️ Кровать',
@@ -948,8 +949,13 @@ function hideLoading() {
   if (loadingHidden) return;
   loadingHidden = true;
   const el = document.getElementById('loading');
+  if (!el) return;
   el.classList.add('fade-out');
-  setTimeout(() => { el.style.display = 'none'; }, 450);
+  el.style.pointerEvents = 'none';
+  setTimeout(() => {
+    el.style.display = 'none';
+    el.style.visibility = 'hidden';
+  }, 500);
 }
 
 // ── Apply status ───────────────────────────────────────────────────────────
@@ -1272,7 +1278,7 @@ let _sseRefreshTimer = null;
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
-  const timer = setTimeout(hideLoading, 8000);
+  const timer = setTimeout(hideLoading, 3000);
   try {
     await loadStatus();
   } catch(e) {
@@ -2434,7 +2440,14 @@ function escapeAttr(s) { return String(s).replace(/'/g, "\\'"); }
 function sanitizeId(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g, '_'); }
 
 // ── Start ──────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', init);
+let _inited = false;
+function safeInit() {
+  if (_inited) return;
+  _inited = true;
+  init();
+}
+document.addEventListener('DOMContentLoaded', safeInit);
+window.addEventListener('load', safeInit); // fallback if DOMContentLoaded missed
 </script>
 </body>
 </html>
