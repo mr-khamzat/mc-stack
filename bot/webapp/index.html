@@ -2204,7 +2204,7 @@ function openVideoPlayer(url, title, clipUrl, eventId) {
       </div>
       <video id="vp-video" src="${escapeAttr(videoSrc)}" controls autoplay playsinline webkit-playsinline
         style="width:100%;border-radius:12px;background:#000;max-height:70vh"
-        onerror="document.getElementById('vp-err').style.display='block'">
+        onerror="var n=this.nextElementSibling;if(n)n.style.display='block'">
       </video>
       <div id="vp-err" style="display:none;color:#ef4444;font-size:13px;text-align:center;padding:16px">Не удалось загрузить видео</div>
       <div style="text-align:center;margin-top:8px">
