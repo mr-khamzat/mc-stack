@@ -3480,6 +3480,9 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
             "floor_temp":    str(floor_attrs.get("current_temperature", "?")),
             "cost_day":      cost_day_val,
             "cost_month":    st(cost_month_d),
+            "cost_week":     (lambda: (lambda cm, dn: f"{float(cm)/max(dn,1)*7:.0f}"
+                              if cm and dn > 0 else None)(
+                              st(cost_month_d), datetime.now(MSK).day))(),
             "outdoor_temp":  outdoor_temp,
             "family":        family_data,
             "lights":        lights_data,
