@@ -3177,6 +3177,20 @@ async def _web_activity(request: aiohttp_web.Request) -> aiohttp_web.Response:
     except Exception as e:
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
+async def _web_activity_clear(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/activity/clear — очистить историю активности."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        ACTIVITY_LOG_FILE.write_text("[]")
+        return aiohttp_web.Response(
+            text=json.dumps({"ok": True}),
+            content_type="application/json",
+            headers=_CORS_HEADERS,
+        )
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
 # ── SSE (Server-Sent Events) real-time ───────────────────────────────────────
 _sse_clients: set = set()  # set of asyncio.Queue
 
@@ -4024,6 +4038,8 @@ async def _start_web():
     app.router.add_get("/ha-app",                   _web_index)
     app.router.add_get("/ha-app/api/health",              _web_health)
     app.router.add_get("/ha-app/api/activity",            _web_activity)
+    app.router.add_post("/ha-app/api/activity/clear",     _web_activity_clear)
+    app.router.add_route("OPTIONS", "/ha-app/api/activity/clear", _web_options)
     app.router.add_get("/ha-app/api/alerts",              _web_alerts_get)
     app.router.add_post("/ha-app/api/alerts",             _web_alerts_post)
     app.router.add_get("/ha-app/api/scenes",              _web_scenes_get)
