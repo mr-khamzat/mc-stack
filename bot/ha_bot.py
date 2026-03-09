@@ -738,14 +738,11 @@ def _build_auto_kb(autos: list) -> InlineKeyboardMarkup:
 # ── Главная клавиатура ────────────────────────────────────────────────────────
 def main_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="🏡 Дом")],
-        [KeyboardButton(text="💡 Свет"),           KeyboardButton(text="⚡ Энергия")],
-        [KeyboardButton(text="🌡️ Климат"),         KeyboardButton(text="🌤️ Погода")],
-        [KeyboardButton(text="📺 Телевизор"),      KeyboardButton(text="🤖 Пылесос")],
-        [KeyboardButton(text="👪 Семья"),           KeyboardButton(text="🛒 Покупки")],
-        [KeyboardButton(text="⚙️ Автоматизации"),  KeyboardButton(text="📹 Камеры")],
-        [KeyboardButton(text="🛠 Устройства"),      KeyboardButton(text="📊 Статус")],
-        [KeyboardButton(text="🕌 Намаз"),           KeyboardButton(text="🧠 ИИ Ассистент")],
+        [KeyboardButton(text="💡 Свет"),     KeyboardButton(text="⚡ Энергия"),  KeyboardButton(text="🌡️ Климат")],
+        [KeyboardButton(text="📺 Телевизор"),KeyboardButton(text="🤖 Пылесос"),  KeyboardButton(text="🛒 Покупки")],
+        [KeyboardButton(text="🏡 Дом"),      KeyboardButton(text="👪 Семья"),    KeyboardButton(text="🌤️ Погода")],
+        [KeyboardButton(text="📹 Камеры"),   KeyboardButton(text="⚙️ Автоматизации"), KeyboardButton(text="🕌 Намаз")],
+        [KeyboardButton(text="📊 Статус"),   KeyboardButton(text="🛠 Устройства"), KeyboardButton(text="🧠 ИИ Ассистент")],
         [KeyboardButton(text="🖥️ Панель управления", web_app=WebAppInfo(url=WEBAPP_URL))],
     ], resize_keyboard=True)
 
@@ -2185,21 +2182,166 @@ async def automation_action(cb: CallbackQuery):
     await cb.message.edit_reply_markup(reply_markup=_build_auto_kb(_autos_cache))
 
 # ── 📹 Камеры ─────────────────────────────────────────────────────────────────
+_LABEL_MAP = {"person": "👤 Человек", "car": "🚗 Авто", "dog": "🐕 Собака", "cat": "🐱 Кот", "face": "😶 Лицо"}
+
+def _cameras_kb(event_count: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    evt_label = f"📋 События детекции ({event_count})" if event_count else "📋 Нет событий"
+    builder.button(text=evt_label,            callback_data="fri:events:0")
+    builder.button(text="🔄 Обновить",        callback_data="fri:refresh")
+    builder.button(text="📹 HA Камеры",       url=f"{HA_URL}/lovelace/cameras")
+    builder.button(text="🎞 Frigate",          url=f"{HA_URL}/ccab4aaf_frigate-fa")
+    builder.adjust(2)
+    return builder.as_markup()
+
 @dp.message(F.text == "📹 Камеры")
 async def cameras_menu(msg: Message):
     if not is_bot_admin(msg.from_user.id):
         if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
         return
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📹 Камеры в HA",  url=f"{HA_URL}/lovelace/cameras")],
-        [InlineKeyboardButton(text="🎞 Frigate",       url=f"{HA_URL}/ccab4aaf_frigate-fa")],
-    ])
+    evts = list(reversed(_frigate_events[-20:]))
     await msg.answer(
         "📹 <b>Камеры</b>\n\n"
-        "🎥 <b>Лофт</b> — Frigate (<code>camera.loft</code>)\n"
-        f"RTSP: <code>rtsp://admin:010203@192.168.1.194:554/</code>",
-        parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True
+        f"🎥 Лофт · cam_a6810678\n"
+        f"📦 Событий в кеше: <b>{len(_frigate_events)}</b>\n\n"
+        "<i>Нажми «События детекции» чтобы увидеть список</i>",
+        parse_mode="HTML",
+        reply_markup=_cameras_kb(len(_frigate_events)),
+        disable_web_page_preview=True
     )
+
+@dp.callback_query(F.data == "fri:refresh")
+async def fri_refresh(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    await cb.message.edit_text(
+        "📹 <b>Камеры</b>\n\n"
+        f"🎥 Лофт · cam_a6810678\n"
+        f"📦 Событий в кеше: <b>{len(_frigate_events)}</b>\n\n"
+        "<i>Нажми «События детекции» чтобы увидеть список</i>",
+        parse_mode="HTML",
+        reply_markup=_cameras_kb(len(_frigate_events)),
+    )
+    await cb.answer("Обновлено")
+
+@dp.callback_query(F.data.startswith("fri:events:"))
+async def fri_events(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    page = int(cb.data.split(":")[2])
+    per_page = 8
+    evts = list(reversed(_frigate_events))  # newest first
+    total = len(evts)
+    if not evts:
+        await cb.answer("Нет событий")
+        await cb.message.edit_text("📹 <b>Нет событий детекции</b>", parse_mode="HTML",
+                                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                                        InlineKeyboardButton(text="◀️ Назад", callback_data="fri:back")
+                                    ]]))
+        return
+    chunk = evts[page * per_page:(page + 1) * per_page]
+    lines = []
+    builder = InlineKeyboardBuilder()
+    for i, e in enumerate(chunk):
+        label   = _LABEL_MAP.get(e.get("label",""), f"📦 {e.get('label','')}")
+        camera  = e.get("camera","?")
+        score   = e.get("score", 0)
+        ts_str  = datetime.fromtimestamp(e.get("ts", 0), tz=MSK).strftime("%d.%m %H:%M")
+        eid     = e.get("id","")
+        lines.append(f"{label} · <b>{score}%</b> · {camera[:12]} · {ts_str}")
+        if eid:
+            builder.button(text=f"📸 #{page*per_page+i+1}", callback_data=f"fri:snap:{eid[:50]}")
+    builder.adjust(4)
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀️ Пред", callback_data=f"fri:events:{page-1}"))
+    if (page + 1) * per_page < total:
+        nav.append(InlineKeyboardButton(text="След ▶️", callback_data=f"fri:events:{page+1}"))
+    nav.append(InlineKeyboardButton(text="◀️ Назад", callback_data="fri:back"))
+    if nav:
+        builder.row(*nav)
+    text = (f"📋 <b>События детекции</b> (стр. {page+1}, всего {total})\n\n"
+            + "\n".join(lines)
+            + "\n\n<i>📸 — снимок конкретного события</i>")
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
+    await cb.answer()
+
+@dp.callback_query(F.data.startswith("fri:snap:"))
+async def fri_snap(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    eid_prefix = cb.data[len("fri:snap:"):]
+    # Find event by ID prefix
+    entry = next((e for e in _frigate_events if e.get("id","").startswith(eid_prefix)), None)
+    if not entry:
+        await cb.answer("❌ Событие не найдено"); return
+    snap_url = entry.get("snapshot_url","")
+    label    = _LABEL_MAP.get(entry.get("label",""), entry.get("label","?"))
+    camera   = entry.get("camera","?")
+    score    = entry.get("score", 0)
+    ts_str   = datetime.fromtimestamp(entry.get("ts", 0), tz=MSK).strftime("%d.%m.%Y %H:%M:%S")
+    caption  = f"📸 <b>Детекция Frigate</b>\n{label} · {score}%\n📷 {camera}\n🕐 {ts_str}"
+    # Also offer clip button via existing /send endpoint
+    eid_full = entry.get("id","")
+    clip_kb  = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🎬 Скачать клип", callback_data=f"fri:clip:{eid_full[:50]}")
+    ]]) if eid_full else None
+    if snap_url:
+        try:
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(snap_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        await cb.message.answer_photo(
+                            BufferedInputFile(data, "snap.jpg"),
+                            caption=caption, parse_mode="HTML", reply_markup=clip_kb
+                        )
+                        await cb.answer()
+                        return
+        except Exception as e:
+            log.warning(f"fri_snap download: {e}")
+    await cb.message.answer(caption, parse_mode="HTML", reply_markup=clip_kb)
+    await cb.answer()
+
+@dp.callback_query(F.data.startswith("fri:clip:"))
+async def fri_clip(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    eid_prefix = cb.data[len("fri:clip:"):]
+    entry = next((e for e in _frigate_events if e.get("id","").startswith(eid_prefix)), None)
+    if not entry:
+        await cb.answer("❌ Событие не найдено"); return
+    eid_full = entry.get("id","")
+    clip_url = f"{HA_URL}/api/frigate/notifications/{eid_full}/clip.mp4"
+    await cb.answer("🎬 Скачиваю клип...")
+    try:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(clip_url, headers=HA_HEADERS, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status == 200:
+                    data = await resp.read()
+                    camera  = entry.get("camera","cam")
+                    label   = _LABEL_MAP.get(entry.get("label",""), entry.get("label",""))
+                    ts_str  = datetime.fromtimestamp(entry.get("ts", 0), tz=MSK).strftime("%d.%m %H:%M")
+                    await cb.message.answer_video(
+                        BufferedInputFile(data, f"clip_{eid_full[:8]}.mp4"),
+                        caption=f"🎬 {label} · {camera} · {ts_str}", parse_mode="HTML"
+                    )
+                    return
+        await cb.message.answer("❌ Не удалось скачать клип (возможно слишком старое)")
+    except Exception as e:
+        await cb.message.answer(f"❌ Ошибка: {e}")
+
+@dp.callback_query(F.data == "fri:back")
+async def fri_back(cb: CallbackQuery):
+    await cb.message.edit_text(
+        "📹 <b>Камеры</b>\n\n"
+        f"🎥 Лофт · cam_a6810678\n"
+        f"📦 Событий в кеше: <b>{len(_frigate_events)}</b>\n\n"
+        "<i>Нажми «События детекции» чтобы увидеть список</i>",
+        parse_mode="HTML",
+        reply_markup=_cameras_kb(len(_frigate_events)),
+    )
+    await cb.answer()
 
 # ── 🧠 ИИ Ассистент (Claude) ──────────────────────────────────────────────────
 async def get_ha_context() -> str:
