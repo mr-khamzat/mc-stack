@@ -3021,7 +3021,7 @@ async def _web_index(request: aiohttp_web.Request) -> aiohttp_web.Response:
 _CORS_HEADERS = {
     "Access-Control-Allow-Origin":  "*",
     "Access-Control-Allow-Headers": "Authorization, Content-Type",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
 }
 
 async def _web_options(request: aiohttp_web.Request) -> aiohttp_web.Response:
@@ -4076,7 +4076,8 @@ async def _start_web():
     app.router.add_route("OPTIONS", "/ha-app/api/sections",     _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/activity",     _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/alerts",       _web_options)
-    app.router.add_route("OPTIONS", "/ha-app/api/scenes",       _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/scenes",            _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/scenes/{scene_id}", _web_options)
     runner = aiohttp_web.AppRunner(app)
     await runner.setup()
     site = aiohttp_web.TCPSite(runner, "127.0.0.1", 8766)

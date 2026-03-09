@@ -1506,34 +1506,163 @@ async function loadScenes() {
   }
 }
 
+// Scene editor state
+let _seActions = [];
+let _seEntities = null;
+
 function openSceneEditor(id, sc) {
   const existing = document.getElementById('scene-editor-modal');
   if (existing) existing.remove();
+  _seActions = (sc.actions || []).map(a => Object.assign({}, a, a.extra ? {extra: Object.assign({}, a.extra)} : {}));
+  const LS = 'font-size:11px;color:rgba(120,120,168,0.8);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;';
+  const IS = 'width:100%;background:rgba(255,255,255,0.08);border:0.5px solid rgba(255,255,255,0.15);border-radius:10px;color:#eaeaf8;font-size:14px;padding:9px 12px;font-family:inherit;';
   const modal = document.createElement('div');
   modal.id = 'scene-editor-modal';
-  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(8px);z-index:3000;display:flex;align-items:center;justify-content:center;padding:16px;';
-  modal.innerHTML = `
-    <div style="background:linear-gradient(155deg,rgba(20,20,45,0.98),rgba(12,12,30,0.98));border:0.5px solid rgba(255,255,255,0.15);border-radius:20px;padding:22px;width:100%;max-width:360px;box-shadow:0 20px 60px rgba(0,0,0,0.7);">
-      <div style="font-size:16px;font-weight:700;color:#eaeaf8;margin-bottom:18px;letter-spacing:-0.3px;">✏️ Редактировать сцену</div>
-      <div style="margin-bottom:12px;">
-        <label style="font-size:11px;color:rgba(120,120,168,0.8);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Иконка</label>
-        <input id="se-icon" type="text" value="${escapeHtml(sc.icon||'🎬')}" style="width:100%;background:rgba(255,255,255,0.08);border:0.5px solid rgba(255,255,255,0.15);border-radius:10px;color:#eaeaf8;font-size:20px;padding:8px 12px;font-family:inherit;text-align:center;">
-      </div>
-      <div style="margin-bottom:12px;">
-        <label style="font-size:11px;color:rgba(120,120,168,0.8);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Название</label>
-        <input id="se-name" type="text" value="${escapeHtml(sc.name||id)}" style="width:100%;background:rgba(255,255,255,0.08);border:0.5px solid rgba(255,255,255,0.15);border-radius:10px;color:#eaeaf8;font-size:14px;padding:9px 12px;font-family:inherit;">
-      </div>
-      <div style="margin-bottom:18px;">
-        <label style="font-size:11px;color:rgba(120,120,168,0.8);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Описание</label>
-        <input id="se-desc" type="text" value="${escapeHtml(sc.description||'')}" style="width:100%;background:rgba(255,255,255,0.08);border:0.5px solid rgba(255,255,255,0.15);border-radius:10px;color:#eaeaf8;font-size:13px;padding:9px 12px;font-family:inherit;">
-      </div>
-      <div style="display:flex;gap:8px;">
-        <button class="btn btn-neutral" style="flex:1" onclick="document.getElementById('scene-editor-modal').remove()">Отмена</button>
-        <button class="btn btn-primary" style="flex:1" onclick="saveSceneEdit('${escapeAttr(id)}')">💾 Сохранить</button>
-      </div>
-    </div>`;
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.72);backdrop-filter:blur(8px);z-index:3000;display:flex;align-items:flex-end;justify-content:center;';
+  modal.innerHTML = `<div id="se-sheet" style="background:linear-gradient(155deg,rgba(18,18,40,0.99),rgba(10,10,26,0.99));border:0.5px solid rgba(255,255,255,0.13);border-radius:20px 20px 0 0;padding:20px 20px 36px;width:100%;max-width:480px;box-shadow:0 -24px 64px rgba(0,0,0,0.8);max-height:92vh;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+    <div style="width:36px;height:4px;background:rgba(255,255,255,0.18);border-radius:2px;margin:0 auto 18px;"></div>
+    <div style="font-size:16px;font-weight:700;color:#eaeaf8;margin-bottom:16px;letter-spacing:-0.3px;">✏️ Редактировать сцену</div>
+    <div style="display:grid;grid-template-columns:72px 1fr;gap:10px;margin-bottom:12px;">
+      <div><label style="${LS}">Иконка</label><input id="se-icon" type="text" value="${escapeHtml(sc.icon||'🎬')}" style="${IS}font-size:22px;text-align:center;padding:7px 6px;"></div>
+      <div><label style="${LS}">Название</label><input id="se-name" type="text" value="${escapeHtml(sc.name||id)}" style="${IS}"></div>
+    </div>
+    <div style="margin-bottom:14px;"><label style="${LS}">Описание</label><input id="se-desc" type="text" value="${escapeHtml(sc.description||'')}" style="${IS}font-size:13px;"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <label style="${LS}margin-bottom:0;">⚡ Действия</label>
+      <button id="se-addbtn" onclick="seAddAction()" style="background:rgba(99,102,241,0.18);border:0.5px solid rgba(99,102,241,0.35);border-radius:8px;color:#a5b4fc;font-size:12px;padding:4px 10px;cursor:pointer;">➕ Добавить</button>
+    </div>
+    <div id="se-actions-list" style="margin-bottom:8px;"></div>
+    <div id="se-add-panel" style="display:none;border:0.5px solid rgba(99,102,241,0.22);border-radius:12px;padding:12px;margin-bottom:12px;background:rgba(30,30,60,0.5);"></div>
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <button class="btn btn-danger" style="flex:0 0 auto;padding:10px 14px;" onclick="seDeleteScene('${escapeAttr(id)}')">🗑️</button>
+      <button class="btn btn-neutral" style="flex:1;" onclick="document.getElementById('scene-editor-modal').remove()">Отмена</button>
+      <button class="btn btn-primary" style="flex:1;" onclick="saveSceneEdit('${escapeAttr(id)}')">💾 Сохранить</button>
+    </div>
+  </div>`;
   document.body.appendChild(modal);
-  modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  renderSeActions();
+}
+
+function renderSeActions() {
+  const list = document.getElementById('se-actions-list');
+  if (!list) return;
+  if (_seActions.length === 0) {
+    list.innerHTML = '<div style="color:#50508a;font-size:12px;text-align:center;padding:10px 0;">Нет действий — нажмите ➕ чтобы добавить</div>';
+    return;
+  }
+  list.innerHTML = '';
+  _seActions.forEach((a, i) => {
+    const svcRaw = (a.service || '').split('.').pop();
+    const svcIcon = svcRaw === 'turn_on' ? '💡' : svcRaw === 'turn_off' ? '🌑' : svcRaw === 'toggle' ? '🔄' : '⚡';
+    const entityName = (a.entity_id || '').split('.').slice(1).join('.') || a.entity_id;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 10px;background:rgba(255,255,255,0.055);border:0.5px solid rgba(255,255,255,0.08);border-radius:10px;margin-bottom:5px;';
+    row.innerHTML = `<span style="font-size:16px;flex-shrink:0;">${svcIcon}</span>
+      <span style="flex:1;font-size:12px;color:#c8c8e8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(a.entity_id)}">${escapeHtml(entityName)}</span>
+      <span style="font-size:11px;color:rgba(120,120,168,0.6);white-space:nowrap;flex-shrink:0;margin-right:4px;">${escapeHtml(svcRaw)}</span>
+      <button onclick="seRemoveAction(${i})" style="background:rgba(248,113,113,0.14);border:0.5px solid rgba(248,113,113,0.28);border-radius:7px;color:#f87171;font-size:11px;width:24px;height:24px;flex-shrink:0;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>`;
+    list.appendChild(row);
+  });
+}
+
+function seRemoveAction(i) {
+  _seActions.splice(i, 1);
+  renderSeActions();
+}
+
+async function seAddAction() {
+  const panel = document.getElementById('se-add-panel');
+  if (!panel) return;
+  panel.style.display = 'block';
+  if (!_seEntities) {
+    panel.innerHTML = '<div style="color:#60608a;font-size:12px;text-align:center;padding:10px;">Загрузка устройств...</div>';
+    try {
+      const raw = await api('/ha_entities');
+      const useful = ['light', 'switch', 'media_player', 'input_boolean'];
+      _seEntities = [];
+      for (const domain of useful) {
+        if (raw[domain]) {
+          for (const e of raw[domain]) {
+            _seEntities.push({entity_id: e.entity_id, name: e.name || e.entity_id, domain});
+          }
+        }
+      }
+    } catch(err) {
+      panel.innerHTML = `<div style="color:#ef4444;font-size:12px;padding:8px;">Ошибка: ${escapeHtml(err.message)}</div>`;
+      return;
+    }
+  }
+  seRenderEntityPicker('');
+}
+
+function seRenderEntityPicker(filter) {
+  const panel = document.getElementById('se-add-panel');
+  if (!panel) return;
+  const q = filter.toLowerCase();
+  const filtered = q
+    ? _seEntities.filter(e => e.name.toLowerCase().includes(q) || e.entity_id.toLowerCase().includes(q))
+    : _seEntities;
+  const rows = filtered.slice(0, 40).map(e =>
+    `<div onclick="sePickEntity('${escapeAttr(e.entity_id)}','${escapeAttr(e.name)}','${escapeAttr(e.domain)}')"
+      style="padding:7px 10px;background:rgba(255,255,255,0.055);border-radius:9px;cursor:pointer;font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c8c8e8;">${escapeHtml(e.name)}</span>
+      <span style="font-size:10px;color:rgba(120,120,168,0.55);flex-shrink:0;">${escapeHtml(e.domain)}</span>
+    </div>`
+  ).join('');
+  panel.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <span style="font-size:12px;font-weight:600;color:rgba(140,140,190,0.85);">Выбери устройство</span>
+      <button onclick="document.getElementById('se-add-panel').style.display='none'" style="background:none;border:none;color:#f87171;font-size:15px;cursor:pointer;line-height:1;">✕</button>
+    </div>
+    <input id="se-entity-search" type="text" placeholder="Поиск..." value="${escapeHtml(filter)}" oninput="seRenderEntityPicker(this.value)"
+      style="width:100%;background:rgba(255,255,255,0.08);border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;color:#eaeaf8;font-size:12px;padding:7px 10px;font-family:inherit;margin-bottom:8px;">
+    <div style="max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;">
+      ${rows}
+      ${filtered.length > 40 ? `<div style="text-align:center;color:#50508a;font-size:11px;padding:4px;">ещё ${filtered.length - 40}... уточни поиск</div>` : ''}
+      ${filtered.length === 0 ? '<div style="text-align:center;color:#50508a;font-size:12px;padding:8px;">Ничего не найдено</div>' : ''}
+    </div>`;
+  const inp = panel.querySelector('#se-entity-search');
+  if (inp && !filter) setTimeout(() => inp.focus(), 50);
+}
+
+function sePickEntity(entityId, name, domain) {
+  const panel = document.getElementById('se-add-panel');
+  if (!panel) return;
+  const SVC = {
+    light:         [['turn_on','💡 Включить'],['turn_off','🌑 Выключить'],['toggle','🔄 Переключить']],
+    switch:        [['turn_on','💡 Включить'],['turn_off','🌑 Выключить'],['toggle','🔄 Переключить']],
+    media_player:  [['turn_on','▶️ Включить'],['turn_off','⏹️ Выключить'],['toggle','🔄 Переключить']],
+    input_boolean: [['turn_on','✅ Вкл'],     ['turn_off','❌ Выкл'],     ['toggle','🔄 Переключить']],
+  };
+  const svcs = SVC[domain] || [['turn_on','💡 Включить'],['turn_off','🌑 Выключить']];
+  const btnStyle = 'width:100%;background:rgba(99,102,241,0.14);border:0.5px solid rgba(99,102,241,0.3);border-radius:10px;color:#a5b4fc;font-size:13px;padding:9px 12px;cursor:pointer;text-align:left;margin-bottom:5px;';
+  panel.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <span style="font-size:12px;font-weight:600;color:rgba(140,140,190,0.85);">Действие для <span style="color:#a5b4fc;">${escapeHtml(name)}</span></span>
+      <button onclick="seAddAction()" style="background:none;border:none;color:#60608a;font-size:11px;cursor:pointer;">← Назад</button>
+    </div>
+    ${svcs.map(([svc, label]) =>
+      `<button onclick="seConfirmAdd('${escapeAttr(entityId)}','${escapeAttr(domain+'.'+svc)}')" style="${btnStyle}">${label}</button>`
+    ).join('')}
+    <button onclick="document.getElementById('se-add-panel').style.display='none'" style="width:100%;background:rgba(255,255,255,0.05);border:0.5px solid rgba(255,255,255,0.1);border-radius:10px;color:#60608a;font-size:12px;padding:7px 12px;cursor:pointer;">Отмена</button>`;
+}
+
+function seConfirmAdd(entityId, service) {
+  _seActions.push({entity_id: entityId, service});
+  document.getElementById('se-add-panel').style.display = 'none';
+  renderSeActions();
+}
+
+async function seDeleteScene(id) {
+  if (!confirm('Удалить сцену "' + id + '"?')) return;
+  try {
+    await api('/scenes/' + encodeURIComponent(id), 'DELETE');
+    document.getElementById('scene-editor-modal').remove();
+    showToast('🗑️ Сцена удалена');
+    _scenesLoaded = false;
+    loadScenes();
+  } catch(e) {
+    showToast('❌ ' + e.message);
+  }
 }
 
 async function saveSceneEdit(id) {
@@ -1541,7 +1670,7 @@ async function saveSceneEdit(id) {
   const name = document.getElementById('se-name').value.trim();
   const description = document.getElementById('se-desc').value.trim();
   try {
-    await api('/scenes', 'POST', { id, icon, name, description });
+    await api('/scenes', 'POST', {id, icon, name, description, actions: _seActions});
     document.getElementById('scene-editor-modal').remove();
     showToast('✅ Сцена обновлена');
     _scenesLoaded = false;
