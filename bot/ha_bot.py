@@ -2550,6 +2550,7 @@ _alert_state = {
     "inet_down":               False,
     "inet_down_ts":            None,   # datetime UTC когда интернет упал
     "last_recognized_face":    None,   # последнее распознанное лицо
+    "person_img_ts":           None,   # последний timestamp image.cam_a6810678_person
 }
 
 async def alert_loop():
@@ -2570,6 +2571,7 @@ async def _check_alerts():
         ha_get("states/person.khamzat"),
         ha_get("states/sensor.cam_a6810678_last_recognized_face"),
         ha_get("states/binary_sensor.keenetic_gateway_wan_status_2"),
+        ha_get("states/image.cam_a6810678_person"),
         *[ha_get(f"states/{eid}") for eid in person_eids],
     ]
     results = await asyncio.gather(*gather_items)
@@ -2578,7 +2580,8 @@ async def _check_alerts():
     person_d    = results[2]
     face_d      = results[3]
     inet_d      = results[4]
-    all_persons = results[5:]  # parallel to person_eids
+    person_img_d = results[5]
+    all_persons = results[6:]  # parallel to person_eids
 
     acfg = _alerts_load()
     now_h = datetime.now(MSK).hour
@@ -2728,6 +2731,39 @@ async def _check_alerts():
                 _alert_state["inet_down_ts"] = None
         except Exception as e:
             log.error(f"Alert inet check: {e}")
+
+    # 👤 Детекция человека камерой (через image entity)
+    if acfg["enabled"].get("camera", True) and not in_quiet:
+        try:
+            img_ts = person_img_d.get("state", "") if person_img_d else ""
+            prev_ts = _alert_state["person_img_ts"]
+            if img_ts and img_ts not in ("unavailable", "unknown", "") and img_ts != prev_ts:
+                _alert_state["person_img_ts"] = img_ts
+                if prev_ts is not None:  # skip initial state on startup
+                    img_tok = (person_img_d.get("attributes", {}).get("access_token", "")
+                               if person_img_d else "")
+                    img_url = f"{HA_URL}/api/image_proxy/image.cam_a6810678_person?token={img_tok}" if img_tok else ""
+                    caption = "📷 <b>Человек у камеры!</b>\nОбнаружено Frigate."
+                    sent = False
+                    if img_url:
+                        try:
+                            async with aiohttp.ClientSession() as sess:
+                                async with sess.get(img_url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                                    if resp.status == 200:
+                                        data = await resp.read()
+                                        await bot.send_photo(ADMIN_ID,
+                                            BufferedInputFile(data, "person.jpg"),
+                                            caption=caption, parse_mode="HTML")
+                                        sent = True
+                        except Exception as img_err:
+                            log.warning(f"Person detect photo: {img_err}")
+                    if not sent:
+                        await bot.send_message(ADMIN_ID, caption, parse_mode="HTML")
+                    _activity_log("person_detected", "cam_a6810678")
+                else:
+                    _alert_state["person_img_ts"] = img_ts
+        except Exception as e:
+            log.error(f"Alert person detect check: {e}")
 
     # 📸 Распознавание лиц
     try:

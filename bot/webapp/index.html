@@ -2315,9 +2315,8 @@ async function openCameraModal(eid) {
           style="background:rgba(255,255,255,0.1);border:none;border-radius:8px;padding:6px 12px;color:#c0c0e0;cursor:pointer;font-size:13px">✕</button>
       </div>
       <div id="cam-stream-wrap" style="position:relative;background:#000;flex-shrink:0">
-        <img id="cam-modal-img" src="${streamUrl}" alt="camera stream"
-          style="width:100%;display:block;max-height:55vh;object-fit:contain"
-          onerror="document.getElementById('cam-modal-err').style.display='flex'">
+        <img id="cam-modal-img" alt="camera stream"
+          style="width:100%;display:block;max-height:55vh;object-fit:contain">
         <div id="cam-modal-err" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:#6060a0;font-size:13px">
           <span style="font-size:30px">📷</span><span>Поток недоступен</span>
           <button onclick="retryCamera('${escapeAttr(streamUrl)}')" class="btn btn-neutral" style="margin-top:4px">↺ Повторить</button>
@@ -2337,6 +2336,13 @@ async function openCameraModal(eid) {
   ov.addEventListener('click', e => { if (e.target === ov) closeCameraModal(); });
   document.body.appendChild(ov);
   _camModal = ov;
+  // Set src via JS after appendChild so onerror fires only when both elements exist in DOM
+  const _cmImg = document.getElementById('cam-modal-img');
+  const _cmErr = document.getElementById('cam-modal-err');
+  if (_cmImg) {
+    if (_cmErr) _cmImg.addEventListener('error', () => { _cmErr.style.display = 'flex'; }, { once: true });
+    _cmImg.src = streamUrl;
+  }
 
   // Load recordings async
   _loadCamRecordings(camId);
