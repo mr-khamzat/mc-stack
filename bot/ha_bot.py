@@ -4,6 +4,8 @@ Home Assistant Telegram Bot — управление умным домом.
 Версия 3.0: Намаз, TV, Семья, Покупки, Автоматизации (toggle), Inline режим.
 """
 import asyncio
+import hashlib
+import hmac
 import io
 import os
 import json
@@ -13,6 +15,7 @@ import subprocess
 import time as _time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib import parse as urlparse
 
 import aiohttp
 from aiohttp import web as aiohttp_web
@@ -59,6 +62,7 @@ SECTIONS_FILE      = Path("/opt/ha-bot/sections.json")
 ACTIVITY_LOG_FILE  = Path("/opt/ha-bot/activity_log.json")
 ALERTS_CONFIG_FILE = Path("/opt/ha-bot/alerts_config.json")
 SCENES_FILE        = Path("/opt/ha-bot/scenes.json")
+FACES_LOG_FILE     = Path("/opt/ha-bot/faces_log.json")
 
 _ALERTS_DEFAULTS = {
     "power_threshold":   3000,
@@ -585,6 +589,48 @@ def _activity_log(action: str, detail: str = ""):
         ACTIVITY_LOG_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2))
     except Exception as e:
         log.error(f"activity_log: {e}")
+
+
+def _faces_log(person: str, event_id: str, camera: str):
+    """Append face detection to faces_log.json, keep last 200 entries."""
+    try:
+        entries: list = []
+        if FACES_LOG_FILE.exists():
+            try:
+                entries = json.loads(FACES_LOG_FILE.read_text())
+            except Exception:
+                entries = []
+        entries.append({
+            "ts":       datetime.now(MSK).isoformat(),
+            "person":   person,
+            "event_id": event_id,
+            "camera":   camera,
+        })
+        entries = entries[-200:]
+        FACES_LOG_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2))
+    except Exception as e:
+        log.error(f"faces_log: {e}")
+
+
+def _validate_tg_initdata(init_data: str) -> dict | None:
+    """Validate Telegram WebApp initData HMAC. Returns parsed params or None."""
+    try:
+        params = dict(urlparse.parse_qsl(init_data, keep_blank_values=True))
+        received_hash = params.pop("hash", "")
+        if not received_hash:
+            return None
+        data_check = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
+        secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+        computed   = hmac.new(secret_key, data_check.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(computed, received_hash):
+            return None
+        if _time.time() - int(params.get("auth_date", 0)) > 86400:
+            return None
+        return params
+    except Exception as e:
+        log.error(f"tg_initdata: {e}")
+        return None
+
 
 async def get_prayer_times() -> dict | None:
     """Получить времена намаза из HA input_datetime сущностей."""
@@ -2569,7 +2615,6 @@ async def _check_alerts():
         ha_get("states/sensor.moshchnost_vsego_doma"),
         ha_get("states/sensor.temp_detskaia_temperature"),
         ha_get("states/person.khamzat"),
-        ha_get("states/sensor.cam_a6810678_last_recognized_face"),
         ha_get("states/binary_sensor.keenetic_gateway_wan_status_2"),
         ha_get("states/image.cam_a6810678_person"),
         *[ha_get(f"states/{eid}") for eid in person_eids],
@@ -2578,10 +2623,9 @@ async def _check_alerts():
     power_d     = results[0]
     temp_d      = results[1]
     person_d    = results[2]
-    face_d      = results[3]
-    inet_d      = results[4]
-    person_img_d = results[5]
-    all_persons = results[6:]  # parallel to person_eids
+    inet_d      = results[3]
+    person_img_d = results[4]
+    all_persons = results[5:]  # parallel to person_eids
 
     acfg = _alerts_load()
     now_h = datetime.now(MSK).hour
@@ -2765,21 +2809,7 @@ async def _check_alerts():
         except Exception as e:
             log.error(f"Alert person detect check: {e}")
 
-    # 📸 Распознавание лиц
-    try:
-        face = face_d.get("state", "") if face_d else ""
-        prev_face = _alert_state["last_recognized_face"]
-        if face and face not in ("unknown", "unavailable", "none", "?", "") and face != prev_face:
-            _alert_state["last_recognized_face"] = face
-            if prev_face is not None:  # skip initial state
-                await bot.send_message(ADMIN_ID, f"👤 <b>Пришёл {face}!</b>\nРаспознан камерой.", parse_mode="HTML")
-                _activity_log("face_recognized", face)
-        elif not face:
-            pass
-        else:
-            _alert_state["last_recognized_face"] = face
-    except Exception as e:
-        log.error(f"Alert face check: {e}")
+    # 📸 Распознавание лиц — только через webhook /frigate/person-identified от HA автоматизации
 
     # 🕌 Намаз — уведомление за 15 мин (с кнопкой) и за 5 мин (финальное)
     try:
@@ -3890,9 +3920,11 @@ async def _web_frigate_send(request: aiohttp_web.Request) -> aiohttp_web.Respons
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
 
+_notify_cooldown: dict[str, float] = {}  # camera -> last_notify_time
+
 async def _web_frigate_notify_latest(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """POST /ha-app/api/frigate/notify-latest — вызывается из HA автоматизации.
-    Немедленно отправляет снапшот, через 35с — клип последнего события."""
+    Дедупликация: одно уведомление на камеру раз в 90 секунд."""
     if not _check_token(request):
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
     try:
@@ -3901,6 +3933,12 @@ async def _web_frigate_notify_latest(request: aiohttp_web.Request) -> aiohttp_we
         body = {}
     camera = body.get("camera", "cam_a6810678")
     label  = body.get("label", "person")
+    now = _time.time()
+    if now - _notify_cooldown.get(camera, 0) < 90:
+        return aiohttp_web.Response(
+            text='{"ok":false,"reason":"cooldown"}',
+            content_type="application/json", headers=_CORS_HEADERS)
+    _notify_cooldown[camera] = now
     asyncio.create_task(_frigate_ha_notify_task(camera, label))
     return aiohttp_web.Response(
         text='{"ok":true}', content_type="application/json", headers=_CORS_HEADERS)
@@ -3939,11 +3977,12 @@ async def _frigate_ha_notify_task(camera: str, label: str):
         except Exception:
             pass
 
-    # 2. Подождать пока Frigate закроет и запишет клип
-    await asyncio.sleep(35)
+    # 2. Подождать: post_capture (30с) + время записи файла на диск
+    await asyncio.sleep(50)
 
-    # 3. Найти latest event_id через media_source WS
+    # 3. Найти latest event через media_source WS
     try:
+        import re as _re
         ha_ws = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
         async with websockets.connect(ha_ws, ping_interval=None, open_timeout=10) as ws:
             msg = json.loads(await asyncio.wait_for(ws.recv(), 5))
@@ -3954,7 +3993,7 @@ async def _frigate_ha_notify_task(camera: str, label: str):
                 raise RuntimeError("WS auth failed")
             await ws.send(json.dumps({
                 "id": 99, "type": "media_source/browse_media",
-                "media_content_id": "media-source://frigate/frigate/event-search/clips/////"
+                "media_content_id": f"media-source://frigate/frigate/event-search/clips/{camera}////"
             }))
             msg = json.loads(await asyncio.wait_for(ws.recv(), 15))
             clips = msg.get("result", {}).get("children", [])
@@ -3962,24 +4001,275 @@ async def _frigate_ha_notify_task(camera: str, label: str):
                 return
             latest_mcid = clips[0].get("media_content_id", "")
             event_id = latest_mcid.rsplit("/", 1)[-1] if "/" in latest_mcid else ""
+            title = clips[0].get("title", "")  # "2026-03-09 22:19:20 [3s, Person 59%]"
             if not event_id:
                 return
-            clip_url = f"{HA_URL}/api/frigate/notifications/{event_id}/clip.mp4"
-            async with aiohttp.ClientSession() as sess:
-                async with sess.get(clip_url, headers=HA_HEADERS,
-                                    timeout=aiohttp.ClientTimeout(total=90)) as resp:
-                    if resp.status == 200:
-                        data = await resp.read()
-                        title = clips[0].get("title", "")
-                        await bot.send_video(
-                            ADMIN_ID,
-                            BufferedInputFile(data, "clip.mp4"),
-                            caption=f"🎬 <b>Клип</b> · {label_str}\n{title}",
-                            parse_mode="HTML",
-                        )
-                        _activity_log("frigate_ha_clip_sent", event_id[:20])
+
+            # Парсим timestamp из title чтобы взять recording segment
+            event_unix = 0
+            m = _re.match(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', title)
+            if m:
+                try:
+                    event_unix = int(
+                        datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
+                        .replace(tzinfo=MSK).timestamp()
+                    )
+                except Exception:
+                    pass
+
+            clip_data = None
+            # Приоритет 1: recording segment (включает pre/post capture)
+            if event_unix:
+                seg_start = event_unix - 15        # 15с до события
+                seg_end   = event_unix + 60        # 60с после начала
+                for rec_url in [
+                    f"{HA_URL}/api/frigate/api/recording/{camera}/start/{seg_start}/end/{seg_end}/",
+                    f"{HA_URL}/api/frigate/api/recordings/explore/{camera}",
+                ]:
+                    try:
+                        async with aiohttp.ClientSession() as sess:
+                            async with sess.get(rec_url, headers=HA_HEADERS,
+                                                timeout=aiohttp.ClientTimeout(total=120)) as resp:
+                                if resp.status == 200:
+                                    data_candidate = await resp.read()
+                                    if len(data_candidate) > 10_000:  # не пустой файл
+                                        clip_data = data_candidate
+                                        log.info(f"frigate clip from recording segment: {len(clip_data)} bytes")
+                                        break
+                    except Exception:
+                        pass
+
+            # Приоритет 2: прямой Frigate API events endpoint
+            if not clip_data:
+                for clip_url in [
+                    f"{HA_URL}/api/frigate/api/events/{event_id}/clip.mp4",
+                    f"{HA_URL}/api/frigate/notifications/{event_id}/clip.mp4",
+                ]:
+                    try:
+                        async with aiohttp.ClientSession() as sess:
+                            async with sess.get(clip_url, headers=HA_HEADERS,
+                                                timeout=aiohttp.ClientTimeout(total=120)) as resp:
+                                if resp.status == 200:
+                                    clip_data = await resp.read()
+                                    log.info(f"frigate clip from {clip_url}: {len(clip_data)} bytes")
+                                    break
+                    except Exception:
+                        pass
+
+            if clip_data:
+                await bot.send_video(
+                    ADMIN_ID,
+                    BufferedInputFile(clip_data, "clip.mp4"),
+                    caption=f"🎬 <b>Клип</b> · {label_str}\n{title}",
+                    parse_mode="HTML",
+                )
+                _activity_log("frigate_ha_clip_sent", event_id[:20])
+            else:
+                log.warning(f"frigate clip: no data for event {event_id}")
     except Exception as e:
         log.error(f"frigate_ha_notify clip: {e}")
+
+
+async def _web_frigate_person_identified(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/frigate/person-identified — Frigate опознал члена семьи.
+    Body: {camera, person, event_id}"""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    camera   = body.get("camera", "cam_a6810678")
+    person   = body.get("person", "").strip()
+    event_id = body.get("event_id", "").strip()
+    if not person:
+        return aiohttp_web.Response(
+            text='{"ok":false,"error":"person required"}',
+            content_type="application/json", headers=_CORS_HEADERS)
+    asyncio.create_task(_frigate_person_identified_task(camera, person, event_id))
+    return aiohttp_web.Response(
+        text='{"ok":true}', content_type="application/json", headers=_CORS_HEADERS)
+
+
+async def _frigate_person_identified_task(camera: str, person: str, event_id: str):
+    """Отправить фото + подпись с именем опознанного человека."""
+    _CAM_NAMES = {"cam_a6810678": "Подъезд"}
+    cam_name = _CAM_NAMES.get(camera, camera)
+    ts_str   = datetime.now(MSK).strftime("%H:%M")
+    caption  = f"👤 <b>{person}</b> у камеры «{cam_name}»\n🕐 {ts_str}"
+
+    photo_sent = False
+    if event_id:
+        try:
+            snap_url = f"{HA_URL}/api/frigate/notifications/{event_id}/snapshot.jpg"
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(snap_url, headers=HA_HEADERS,
+                                    timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        await bot.send_photo(
+                            ADMIN_ID,
+                            BufferedInputFile(data, "snapshot.jpg"),
+                            caption=caption,
+                            parse_mode="HTML",
+                        )
+                        photo_sent = True
+        except Exception as e:
+            log.error(f"person_identified snapshot: {e}")
+
+    if not photo_sent:
+        try:
+            await bot.send_message(ADMIN_ID, caption, parse_mode="HTML")
+        except Exception as e:
+            log.error(f"person_identified message: {e}")
+
+    _faces_log(person, event_id, camera)
+    _activity_log("frigate_person_identified", f"{person}@{camera}")
+
+
+# ── Auth (Telegram WebApp initData) ──────────────────────────────────────────
+async def _web_auth_telegram(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/auth — валидация Telegram WebApp initData."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    init_data = body.get("initData", "")
+    parsed = _validate_tg_initdata(init_data) if init_data else None
+    if not parsed:
+        return aiohttp_web.Response(
+            status=401,
+            text=json.dumps({"ok": False, "error": "invalid"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+    user_raw = parsed.get("user", "{}")
+    user = json.loads(user_raw) if isinstance(user_raw, str) else user_raw
+    user_id = int(user.get("id", 0))
+    allowed = _users_load()
+    allowed_ids = {ADMIN_ID} | {int(uid) for uid in allowed.keys()}
+    if user_id not in allowed_ids:
+        return aiohttp_web.Response(
+            status=403,
+            text=json.dumps({"ok": False, "error": "forbidden"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+    return aiohttp_web.Response(
+        text=json.dumps({"ok": True, "token": WEBAPP_TOKEN}),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+
+# ── История лиц (Faces History) ───────────────────────────────────────────────
+async def _web_frigate_faces_history(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/frigate/faces-history — последние распознавания лиц."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    entries: list = []
+    if FACES_LOG_FILE.exists():
+        try:
+            entries = json.loads(FACES_LOG_FILE.read_text())
+        except Exception:
+            entries = []
+    # Return newest first, add snapshot URL
+    result = []
+    for e in reversed(entries[-50:]):
+        snap = ""
+        if e.get("event_id"):
+            snap = f"{HA_URL}/api/frigate/notifications/{e['event_id']}/snapshot.jpg"
+        result.append({**e, "snapshot_url": snap})
+    return aiohttp_web.Response(
+        text=json.dumps(result, ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+
+# ── Статистика присутствия ────────────────────────────────────────────────────
+async def _web_presence_stats(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/presence-stats — время дома за 7 дней."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    family = {
+        "Хамзат": "person.khamzat",
+        "Айза":   "person.aiza",
+        "Сулим":  "person.sulim",
+        "Камила": "person.kamila",
+    }
+    now   = datetime.now(timezone.utc)
+    start = (now - timedelta(days=7)).isoformat()
+    eids  = ",".join(family.values())
+    data, *live_states = await asyncio.gather(
+        ha_get(f"history/period/{start}?filter_entity_id={eids}&minimal_response=true"),
+        *[ha_get(f"states/{eid}") for eid in family.values()],
+    )
+    live_map = {eid: (d.get("state") if d else None) for eid, d in zip(family.values(), live_states)}
+    result = []
+    for name, eid in family.items():
+        currently_home = live_map.get(eid) == "home"
+        entity_hist = None
+        if data and isinstance(data, list):
+            for hist in data:
+                if hist and hist[0].get("entity_id") == eid:
+                    entity_hist = hist
+                    break
+        # Check if all history states are non-home (no tracker scenario)
+        has_real_data = entity_hist and any(e.get("state") == "home" for e in entity_hist)
+        if not entity_hist or not has_real_data:
+            result.append({
+                "name": name, "home_hours": 0, "home_pct": 0,
+                "last_seen": None, "currently_home": currently_home,
+                "no_tracker": not currently_home,
+            })
+            continue
+        home_secs = 0.0
+        prev_ts   = None
+        prev_state = None
+        for entry in entity_hist:
+            ts_str = entry.get("last_changed") or entry.get("last_updated", "")
+            try:
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            except Exception:
+                continue
+            if prev_ts and prev_state == "home":
+                home_secs += (ts - prev_ts).total_seconds()
+            prev_ts    = ts
+            prev_state = entry.get("state", "")
+        if prev_ts and prev_state == "home":
+            home_secs += (now - prev_ts).total_seconds()
+        total_secs = 7 * 24 * 3600
+        home_pct   = round(home_secs / total_secs * 100)
+        last_seen  = None
+        for entry in reversed(entity_hist):
+            if entry.get("state") == "home":
+                last_seen = entry.get("last_changed") or entry.get("last_updated")
+                break
+        result.append({
+            "name":       name,
+            "home_hours": round(home_secs / 3600, 1),
+            "home_pct":   home_pct,
+            "last_seen":  last_seen,
+            "currently_home": currently_home,
+            "no_tracker": False,
+        })
+    return aiohttp_web.Response(
+        text=json.dumps(result, ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+
+# ── Почасовое потребление энергии ─────────────────────────────────────────────
+async def _web_energy_hourly(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/energy-hourly — среднее потребление по часам за 24ч (МСК)."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    points = await ha_history("sensor.moshchnost_vsego_doma", hours=24, max_points=2000)
+    hourly: dict[int, list] = {h: [] for h in range(24)}
+    for ts, val in points:
+        hourly[ts.hour].append(val)
+    result = []
+    for h in range(24):
+        vals = hourly[h]
+        if vals:
+            result.append({"hour": h, "avg": round(sum(vals) / len(vals)), "max": round(max(vals))})
+        else:
+            result.append({"hour": h, "avg": 0, "max": 0})
+    return aiohttp_web.Response(
+        text=json.dumps(result, ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS)
 
 
 async def _web_sections_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
@@ -4208,7 +4498,17 @@ async def _start_web():
     app.router.add_get("/ha-app/api/frigate/clip/{event_id}",     _web_frigate_clip_proxy)
     app.router.add_post("/ha-app/api/frigate/send",               _web_frigate_send)
     app.router.add_post("/ha-app/api/frigate/notify-latest",      _web_frigate_notify_latest)
-    app.router.add_route("OPTIONS", "/ha-app/api/frigate/notify-latest", _web_options)
+    app.router.add_post("/ha-app/api/frigate/person-identified",  _web_frigate_person_identified)
+    app.router.add_get("/ha-app/api/frigate/faces-history",       _web_frigate_faces_history)
+    app.router.add_post("/ha-app/api/auth",                       _web_auth_telegram)
+    app.router.add_get("/ha-app/api/presence-stats",              _web_presence_stats)
+    app.router.add_get("/ha-app/api/energy-hourly",               _web_energy_hourly)
+    app.router.add_route("OPTIONS", "/ha-app/api/frigate/notify-latest",     _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/frigate/person-identified", _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/frigate/faces-history",     _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/auth",                      _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/presence-stats",            _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/energy-hourly",             _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/camera/{entity_id}",   _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/frigate/events",       _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/frigate/recordings",       _web_options)

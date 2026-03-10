@@ -681,6 +681,51 @@ body::before {
     </div>
   </div>
 
+  <!-- PRESENCE STATS -->
+  <div class="section">
+    <div class="section-header" onclick="toggleSection('sec-presence-body'); if(!_presenceLoaded) loadPresenceStats()">
+      <span>📊 Кто сколько дома (7 дней)</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body" id="sec-presence-body">
+      <div class="section-content">
+        <div id="presence-content">
+          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Откройте для загрузки</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FACES HISTORY -->
+  <div class="section">
+    <div class="section-header" onclick="toggleSection('sec-faces-body'); if(!_facesLoaded) loadFacesHistory()">
+      <span>🚪 У двери — история</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body" id="sec-faces-body">
+      <div class="section-content">
+        <div id="faces-content">
+          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Откройте для загрузки</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ENERGY HEATMAP -->
+  <div class="section">
+    <div class="section-header" onclick="toggleSection('sec-energy-body'); if(!_energyHourlyLoaded) loadEnergyHourly()">
+      <span>⚡ Энергия по часам (24ч)</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body" id="sec-energy-body">
+      <div class="section-content">
+        <div id="energy-hourly-content">
+          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Откройте для загрузки</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 3. LIGHTS -->
   <div class="section">
     <div class="section-header" onclick="toggleSection('sec-lights-body')">
@@ -905,7 +950,7 @@ body::before {
 'use strict';
 
 // ── Constants ──────────────────────────────────────────────────────────────
-const API_TOKEN = 'eb4512bc794be98c665881d28c5c511c';
+let API_TOKEN = sessionStorage.getItem('ha_bot_token') || '';
 const API_BASE  = (window.location.origin || 'https://hub.office.mooo.com') + '/ha-app/api';
 
 const LIGHTS_MAP = {
@@ -1347,9 +1392,56 @@ function handleSSEUpdate(d) {
 let _sseRefreshTimer = null;
 
 // ── Init ───────────────────────────────────────────────────────────────────
+// ── Telegram Auth ─────────────────────────────────────────────────────────
+const _FALLBACK_TOKEN = 'eb4512bc794be98c665881d28c5c511c';
+
+async function ensureAuth() {
+  if (API_TOKEN) return true;
+
+  // Ждём инициализации Telegram SDK (до 2 секунд)
+  let initData = '';
+  for (let i = 0; i < 20; i++) {
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if (tg && tg.initData) { initData = tg.initData; break; }
+    await new Promise(r => setTimeout(r, 100));
+  }
+
+  if (initData) {
+    try {
+      const res = await fetch(API_BASE + '/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData })
+      });
+      const d = await res.json();
+      if (d.ok && d.token) {
+        API_TOKEN = d.token;
+        sessionStorage.setItem('ha_bot_token', d.token);
+        return true;
+      }
+      // 403 = пользователь не в списке разрешённых
+      if (res.status === 403) {
+        document.getElementById('loading').innerHTML =
+          '<div style="text-align:center;padding:40px;color:#ef4444">' +
+          '<div style="font-size:48px">🚫</div>' +
+          '<div style="font-size:16px;margin-top:12px">Доступ запрещён</div>' +
+          '</div>';
+        return false;
+      }
+    } catch(e) { /* сетевая ошибка — используем fallback */ }
+  }
+
+  // Fallback: токен не в source-коде, но работает если нет Telegram или ошибка auth
+  API_TOKEN = _FALLBACK_TOKEN;
+  sessionStorage.setItem('ha_bot_token', _FALLBACK_TOKEN);
+  return true;
+}
+
 async function init() {
   const timer = setTimeout(hideLoading, 3000);
   try {
+    const authOk = await ensureAuth();
+    if (!authOk) { clearTimeout(timer); return; }
     await loadStatus();
   } catch(e) {
     // already handled
@@ -1464,6 +1556,162 @@ function toggleSettings() {
   body.classList.toggle('open');
   chevron.textContent = isOpen ? '▾' : '▴';
   if (!isOpen && !settingsLoaded) loadSettings();
+}
+
+// ── Presence Stats ──────────────────────────────────────────────────────────
+let _presenceLoaded = false;
+async function loadPresenceStats() {
+  _presenceLoaded = true;
+  const el = document.getElementById('presence-content');
+  el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div>';
+  try {
+    const data = await api('/presence-stats');
+    renderPresenceStats(data);
+  } catch(e) {
+    el.innerHTML = '<div style="color:#ef4444;font-size:13px;text-align:center;padding:10px">Ошибка: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+function renderPresenceStats(stats) {
+  const el = document.getElementById('presence-content');
+  if (!stats || !stats.length) {
+    el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Нет данных</div>';
+    return;
+  }
+  const _PERSON_ICONS = {'Хамзат':'👨','Айза':'👩','Сулим':'👦','Камила':'👧'};
+  el.innerHTML = stats.map(p => {
+    const icon = _PERSON_ICONS[p.name] || '👤';
+    const pct  = Math.min(p.home_pct, 100);
+    const barColor = pct > 50 ? '#34d399' : pct > 20 ? '#f59e0b' : '#60a5fa';
+    let lastSeen = '';
+    if (p.last_seen) {
+      try {
+        const d = new Date(p.last_seen);
+        lastSeen = ' · ' + d.toLocaleDateString('ru', {day:'numeric',month:'short'}) + ' ' + d.toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
+      } catch(_) {}
+    }
+    const homeNow = p.currently_home;
+    const noTracker = p.no_tracker;
+    let statusBadge = '';
+    if (homeNow && pct === 0) {
+      statusBadge = '<span style="font-size:11px;color:#34d399;margin-left:6px">🏠 сейчас дома</span>';
+    } else if (noTracker) {
+      statusBadge = '<span style="font-size:11px;color:#60608a;margin-left:6px">нет трекера</span>';
+    } else if (homeNow) {
+      statusBadge = '<span style="font-size:11px;color:#34d399;margin-left:6px">🏠</span>';
+    }
+    const statsText = noTracker && !homeNow ? '—' : (p.home_hours + 'ч (' + pct + '%)' + lastSeen);
+    return `<div style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <span style="font-size:14px;font-weight:600;color:#e0e0ff">${icon} ${escapeHtml(p.name)}${statusBadge}</span>
+        <span style="font-size:12px;color:#9090b8">${escapeHtml(statsText)}</span>
+      </div>
+      <div style="height:8px;background:rgba(255,255,255,0.08);border-radius:4px;overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:${barColor};border-radius:4px;transition:width 0.5s"></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Faces History ────────────────────────────────────────────────────────────
+let _facesLoaded = false;
+async function loadFacesHistory() {
+  _facesLoaded = true;
+  const el = document.getElementById('faces-content');
+  el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div>';
+  try {
+    const data = await api('/frigate/faces-history');
+    renderFacesHistory(data);
+  } catch(e) {
+    el.innerHTML = '<div style="color:#ef4444;font-size:13px;text-align:center;padding:10px">Ошибка: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+function renderFacesHistory(entries) {
+  const el = document.getElementById('faces-content');
+  if (!entries || !entries.length) {
+    el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:16px">Пока никто не был распознан</div>';
+    return;
+  }
+  const _CAM_NAMES = {'cam_a6810678':'Подъезд'};
+  const _PERSON_ICONS = {'Хамзат':'👨','Айза':'👩','Сулим':'👦','Камила':'👧'};
+  el.innerHTML = `<div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:8px">
+    <button onclick="_facesLoaded=false;loadFacesHistory()" style="font-size:11px;padding:4px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#9090b8;cursor:pointer">🔄 Обновить</button>
+  </div>` +
+  entries.slice(0, 30).map(e => {
+    const icon = _PERSON_ICONS[e.person] || '👤';
+    const cam  = _CAM_NAMES[e.camera] || e.camera;
+    let timeStr = '';
+    try {
+      const d = new Date(e.ts);
+      timeStr = d.toLocaleDateString('ru',{day:'numeric',month:'short'}) + ' ' + d.toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
+    } catch(_) { timeStr = e.ts || ''; }
+    const thumb = e.snapshot_url
+      ? `<img src="${escapeAttr(e.snapshot_url)}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;flex-shrink:0;background:#1a1a2e" onerror="this.style.display='none'">`
+      : `<div style="width:56px;height:56px;border-radius:8px;background:#1a1a2e;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0">${icon}</div>`;
+    return `<div style="display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06)">
+      ${thumb}
+      <div>
+        <div style="font-size:14px;font-weight:600;color:#e0e0ff">${icon} ${escapeHtml(e.person)}</div>
+        <div style="font-size:12px;color:#9090b8">📍 ${escapeHtml(cam)}</div>
+        <div style="font-size:11px;color:#60608a">🕐 ${escapeHtml(timeStr)}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Energy Heatmap ────────────────────────────────────────────────────────────
+let _energyHourlyLoaded = false;
+async function loadEnergyHourly() {
+  _energyHourlyLoaded = true;
+  const el = document.getElementById('energy-hourly-content');
+  el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div>';
+  try {
+    const data = await api('/energy-hourly');
+    renderEnergyHourly(data);
+  } catch(e) {
+    el.innerHTML = '<div style="color:#ef4444;font-size:13px;text-align:center;padding:10px">Ошибка: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+function renderEnergyHourly(data) {
+  const el = document.getElementById('energy-hourly-content');
+  if (!data || !data.length) {
+    el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Нет данных</div>';
+    return;
+  }
+  const maxVal = Math.max(...data.map(d => d.avg), 1);
+  const nowHour = new Date().getHours();
+  function heatColor(val) {
+    const t = val / maxVal;
+    if (t < 0.33) return `rgba(52,211,153,${0.3 + t * 0.7})`;   // green
+    if (t < 0.66) return `rgba(245,158,11,${0.3 + t * 0.7})`;   // amber
+    return `rgba(239,68,68,${0.3 + t * 0.7})`;                  // red
+  }
+  const grid = data.map(d => {
+    const isCurrent = d.hour === nowHour;
+    const h = d.hour.toString().padStart(2,'0');
+    const label = d.avg > 0 ? (d.avg >= 1000 ? (d.avg/1000).toFixed(1)+'к' : d.avg+'') : '—';
+    return `<div style="text-align:center;cursor:default" title="${h}:00 — ср: ${d.avg}Вт, макс: ${d.max}Вт">
+      <div style="height:48px;background:${heatColor(d.avg)};border-radius:4px;margin-bottom:3px;
+        ${isCurrent ? 'outline:2px solid #fff;outline-offset:1px' : ''}
+        display:flex;align-items:flex-end;justify-content:center;padding-bottom:2px">
+        <span style="font-size:9px;color:#fff;font-weight:600;opacity:0.9">${label}</span>
+      </div>
+      <div style="font-size:9px;color:#60608a">${h}</div>
+    </div>`;
+  }).join('');
+  const totalAvg = Math.round(data.reduce((s,d)=>s+d.avg,0) / data.filter(d=>d.avg>0).length || 0);
+  const peakHour = data.reduce((a,b)=>a.avg>b.avg?a:b);
+  el.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:10px;font-size:12px;color:#9090b8">
+      <span>⌀ ср: <b style="color:#e0e0ff">${totalAvg} Вт</b></span>
+      <span>·</span>
+      <span>📈 пик: <b style="color:#ef4444">${peakHour.hour.toString().padStart(2,'0')}:00 ${peakHour.avg} Вт</b></span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(24,1fr);gap:2px">${grid}</div>
+    <div style="display:flex;gap:6px;margin-top:8px;font-size:10px;color:#60608a;align-items:center">
+      <span style="width:12px;height:12px;background:rgba(52,211,153,0.8);border-radius:2px;display:inline-block"></span>мало
+      <span style="width:12px;height:12px;background:rgba(245,158,11,0.8);border-radius:2px;display:inline-block"></span>средне
+      <span style="width:12px;height:12px;background:rgba(239,68,68,0.8);border-radius:2px;display:inline-block"></span>много
+    </div>`;
 }
 
 // ── Scenes ─────────────────────────────────────────────────────────────────
