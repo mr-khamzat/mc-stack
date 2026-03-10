@@ -161,7 +161,6 @@ class RenameClient(StatesGroup):
 
 class AddVlessUser(StatesGroup):
     waiting_name = State()
-    waiting_devices = State()
 
 
 # ─── Keyboards ────────────────────────────────────────────────────────
@@ -2638,29 +2637,9 @@ async def cb_vless_expiry(cb: CallbackQuery, state: FSMContext):
 async def cb_vless_traffic(cb: CallbackQuery, state: FSMContext):
     if not is_admin(cb.from_user.id): await cb.answer("🔒", show_alert=True); return
     gb = int(cb.data.split(":")[1])
-    await state.update_data(vless_gb=gb)
-    traf_str = f"{gb} GB" if gb > 0 else "безлимит"
-    await cb.message.edit_text(
-        f"✅ Трафик: <b>{traf_str}</b>\n\n📱 Выберите лимит устройств:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📱 1 устройство", callback_data="vdev:1"),
-             InlineKeyboardButton(text="📱📱 2 устройства", callback_data="vdev:2")],
-            [InlineKeyboardButton(text="📱📱📱 3 устройства", callback_data="vdev:3"),
-             InlineKeyboardButton(text="♾ Без лимита", callback_data="vdev:0")],
-        ]),
-        parse_mode="HTML"
-    )
-    await cb.answer()
-
-
-@router.callback_query(F.data.startswith("vdev:"))
-async def cb_vless_devices(cb: CallbackQuery, state: FSMContext):
-    if not is_admin(cb.from_user.id): await cb.answer("🔒", show_alert=True); return
-    devices = int(cb.data.split(":")[1])
     data = await state.get_data()
     name = data.get("vless_name")
     days = data.get("vless_days", 0)
-    gb = data.get("vless_gb", 0)
     if not name:
         await cb.answer("❌ Имя не задано", show_alert=True); return
     if days > 0:
@@ -2676,9 +2655,8 @@ async def cb_vless_devices(cb: CallbackQuery, state: FSMContext):
         "expireAt": expire_at,
         "description": "created by bot",
         "activateAllInbounds": True,
+        "hwidDeviceLimit": 1,
     }
-    if devices > 0:
-        payload["hwidDeviceLimit"] = devices
     result = await remna_post("/users", payload)
     await state.clear()
     if result and "response" in result:
@@ -2686,14 +2664,13 @@ async def cb_vless_devices(cb: CallbackQuery, state: FSMContext):
         sub_url = u.get("subscriptionUrl", "—")
         traf_str = f"{gb} GB" if gb > 0 else "безлимит"
         exp_str = f"{days} дней" if days > 0 else "без срока"
-        dev_str = f"{devices} уст." if devices > 0 else "без лимита"
-        audit(cb.from_user.id, "VLESS_ADD", f"name={name} exp={days}d traffic={gb}GB devices={devices}")
+        audit(cb.from_user.id, "VLESS_ADD", f"name={name} exp={days}d traffic={gb}GB devices=1")
         await cb.message.edit_text(
             f"━━━━━━━━━━━━━━━━━━━━━━\n✅ <b>VLESS пользователь создан</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"👤 Имя: <b>{name}</b>\n"
             f"📅 Срок: <b>{exp_str}</b>\n"
             f"📦 Трафик: <b>{traf_str}</b>\n"
-            f"📱 Устройств: <b>{dev_str}</b>\n\n"
+            f"📱 Устройств: <b>1 уст.</b>\n\n"
             f"🔗 Подписка:\n<code>{sub_url}</code>",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="👤 Открыть", callback_data=f"vu:{u['uuid']}"),
@@ -2862,14 +2839,14 @@ async def cb_vless_hwid(cb: CallbackQuery):
     current = None
     if data and "response" in data:
         current = data["response"].get("hwidDeviceLimit")
-    cur_str = f"{current} уст." if current and current > 0 else "без лимита"
+    # Get current limit from list API (GET /users/{uuid} not supported with API token)
+    cur_str = f"{current} уст." if current and current > 0 else "1 уст."
     await cb.message.edit_text(
-        f"📱 <b>Лимит устройств</b>\n\nТекущий: <b>{cur_str}</b>\n\nВыберите новый лимит:",
+        f"📱 <b>Лимит устройств</b>\n\nТекущий: <b>{cur_str}</b>\n\nВыберите новый лимит (макс. 3):",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📱 1 устройство", callback_data=f"vhwid_set:{uuid}:1"),
-             InlineKeyboardButton(text="📱📱 2 устройства", callback_data=f"vhwid_set:{uuid}:2")],
-            [InlineKeyboardButton(text="📱📱📱 3 устройства", callback_data=f"vhwid_set:{uuid}:3"),
-             InlineKeyboardButton(text="♾ Без лимита", callback_data=f"vhwid_set:{uuid}:0")],
+             InlineKeyboardButton(text="📱📱 2 устройства", callback_data=f"vhwid_set:{uuid}:2"),
+             InlineKeyboardButton(text="📱📱📱 3 устройства", callback_data=f"vhwid_set:{uuid}:3")],
             [InlineKeyboardButton(text="◀️ Назад", callback_data=f"vu:{uuid}")],
         ]),
         parse_mode="HTML"
@@ -2882,12 +2859,12 @@ async def cb_vless_hwid_set(cb: CallbackQuery):
     if not is_admin(cb.from_user.id): await cb.answer("🔒", show_alert=True); return
     parts = cb.data.split(":")
     uuid, devices = parts[1], int(parts[2])
-    payload = {"uuid": uuid, "hwidDeviceLimit": devices if devices > 0 else None}
-    result = await remna_patch(payload)
+    if devices < 1 or devices > 3:
+        await cb.answer("❌ Допустимо 1-3 устройства", show_alert=True); return
+    result = await remna_patch({"uuid": uuid, "hwidDeviceLimit": devices})
     if result and "response" in result:
-        dev_str = f"{devices} уст." if devices > 0 else "без лимита"
         audit(cb.from_user.id, "VLESS_HWID", f"uuid={uuid} devices={devices}")
-        await cb.answer(f"✅ Лимит устройств: {dev_str}", show_alert=True)
+        await cb.answer(f"✅ Лимит устройств: {devices} уст.", show_alert=True)
         cb.data = f"vu:{uuid}"
         await cb_vless_user(cb)
     else:
