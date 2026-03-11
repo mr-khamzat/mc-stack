@@ -1,29 +1,91 @@
 #!/usr/bin/env python3
 """
-Home Assistant Telegram Bot + Mini App (Telegram WebApp)
-=========================================================
-Бэкенд управляет двумя вещами одновременно:
+HA Home Bot — Telegram-бот + Mini App для управления умным домом
+================================================================
 
-1. TELEGRAM BOT (aiogram) — обычный бот с командами и кнопками
-   Команды: /start, /status, /energy, /climate, /namaz, /scenes и др.
-   Уведомления: детекция движения, потребление энергии, обновление сертификатов
+Этот файл — единственный бэкенд всего проекта. Он делает две вещи
+одновременно в одном процессе:
 
-2. WEB-СЕРВЕР (aiohttp) — обслуживает Mini App
-   GET  /ha-app/              → отдаёт webapp/index.html с вшитым токеном
-   GET  /ha-app/api/status    → текущее состояние всего умного дома
-   POST /ha-app/api/devices   → изменение устройств (иконка, название, раздел)
-   GET  /ha-app/api/sections  → управление разделами (скрыть/показать/порядок)
-   GET  /ha-app/api/scenes    → список сцен + создание и запуск
-   GET  /ha-app/api/frigate/* → проксирование камер Frigate с авторизацией
-   GET  /ha-app/api/server-stats → CPU/RAM/Disk/Uptime VPS и HA-сервера
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. TELEGRAM BOT (библиотека aiogram 3.x)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Работает через Long Polling — постоянно спрашивает Telegram API
+   "есть ли новые сообщения?". Это не требует внешнего IP и сертификата.
 
-КОНФИГУРАЦИЯ (из .env файла):
-   BOT_TOKEN     — токен бота от @BotFather
-   HA_URL        — внешний URL Home Assistant (https://...)
-   HA_TOKEN      — long-lived токен HA (в профиле HA → Долгосрочные токены)
-   ADMIN_CHAT_ID — Telegram ID администратора
-   WEBAPP_TOKEN  — секретный токен для авторизации запросов Mini App
-   WEBAPP_DOMAIN — домен VPS где развёрнут бот (https://...)
+   Команды пользователя:
+     /start     — приветствие, показать главное меню
+     /status    — полный статус дома (свет, климат, энергия, семья)
+     /lights    — управление светом (кнопки вкл/выкл для каждого)
+     /climate   — температура, влажность, тёплый пол
+     /energy    — потребление за день/месяц, фазы, прогноз
+     /weather   — погода и прогноз на 3 дня (Open-Meteo API)
+     /namaz     — время молитв из HA, таймер
+     /cameras   — камеры Frigate: снимок, события, клипы
+     /family    — где находятся члены семьи (person.* в HA)
+     /shopping  — список покупок (todo.* в HA)
+     /vacuum    — управление роботом-пылесосом
+     /tv        — управление телевизором
+     /scenes    — сцены: Спать / Уходим / Кино / создать своё
+     /ai        — чат с Claude AI
+     /devices   — настройка устройств (иконка, раздел, название)
+     /users     — управление пользователями (только admin)
+     /invite    — создать ссылку-приглашение
+     /backup    — экспортировать конфигурацию
+     /app       — открыть Mini App
+
+   Фоновые задачи (запускаются при старте):
+     alert_loop()           — каждую минуту проверяет алерты
+     _ha_state_watch_loop() — слушает WebSocket HA, рассылает SSE
+     _frigate_event_loop()  — следит за новыми событиями Frigate
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. HTTP WEB-СЕРВЕР (библиотека aiohttp, порт 8766)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Слушает только на 127.0.0.1:8766 (не доступен снаружи напрямую).
+   Nginx проксирует внешние запросы на него через /ha-app/*.
+
+   Основные эндпоинты:
+     GET  /ha-app/                → отдаёт index.html с токеном
+     GET  /ha-app/api/health      → проверка работоспособности
+     GET  /ha-app/api/status      → JSON со всем состоянием дома
+     GET  /ha-app/api/events      → SSE поток реальных изменений HA
+     POST /ha-app/api/action      → вызвать сервис HA
+     GET  /ha-app/api/devices     → список устройств
+     POST /ha-app/api/devices     → изменить устройство
+     GET  /ha-app/api/sections    → разделы панели
+     POST /ha-app/api/sections    → изменить раздел
+     GET  /ha-app/api/scenes      → список сцен
+     POST /ha-app/api/scenes      → создать/обновить сцену
+     DELETE /ha-app/api/scenes/{id} → удалить сцену
+     POST /ha-app/api/scenes/{id}/run → запустить сцену
+     GET  /ha-app/api/alerts      → конфиг алертов
+     POST /ha-app/api/alerts      → сохранить конфиг алертов
+     GET  /ha-app/api/activity    → журнал активности
+     GET  /ha-app/api/frigate/*   → проксирование Frigate с авторизацией
+     GET  /ha-app/api/server-stats → CPU/RAM/Disk/Uptime
+     GET  /ha-app/api/energy/hourly → почасовое потребление
+     GET  /ha-app/api/logbook     → логбук HA
+     GET/POST /ha-app/api/night-mode → ночной режим
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+КОНФИГУРАЦИЯ (.env файл):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   BOT_TOKEN         — токен бота от @BotFather
+   ADMIN_ID          — Telegram ID главного администратора
+   HA_URL            — внешний URL Home Assistant (https://...)
+   HA_TOKEN          — long-lived токен HA
+   WEBAPP_TOKEN      — секрет для авторизации запросов Mini App
+   ANTHROPIC_API_KEY — (опционально) ключ Claude API для /ai
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ХРАНЕНИЕ ДАННЫХ:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Все данные хранятся в SQLite БД /opt/ha-bot/ha_bot.db.
+   Таблицы: devices, sections, scenes, config,
+            activity_log, faces_log, family_users.
+   При первом запуске автоматически мигрирует данные из JSON файлов.
+
+Версия: 3.5  |  Язык: Python 3.11+  |  Лицензия: MIT
 """
 import asyncio
 import hashlib
@@ -447,46 +509,83 @@ def _sect_save(d: dict):
     except Exception as e:
         log.error(f"sections_save: {e}")
 
-# Weather cache
+# ── Кеш погоды ────────────────────────────────────────────────────────────────
+# Погода обновляется не чаще чем раз в 10 минут чтобы не спамить Open-Meteo API
 _weather_cache: dict | None = None
 _weather_cache_ts: float = 0.0
-_WEATHER_CACHE_TTL = 600  # 10 minutes
+_WEATHER_CACHE_TTL = 600  # TTL кеша погоды: 600 сек = 10 минут
 
-# Грозный — координаты для Open-Meteo
-LAT, LON  = 43.31, 45.69
-TIMEZONE  = "Europe/Moscow"
+# ── Координаты для Open-Meteo ──────────────────────────────────────────────────
+# Open-Meteo — бесплатный API погоды без ключей, работает по координатам
+LAT, LON  = 43.31, 45.69   # Грозный (Чечня)
+TIMEZONE  = "Europe/Moscow"  # Часовой пояс для отображения времени
 
-# Entities
-TV_EID    = "media_player.android_tv"
-NAMAZ_EID = "timer.namaz_obratnyi_otschet"
-SHOP_EID  = "todo.shopping_list"
+# ── ID сущностей Home Assistant ───────────────────────────────────────────────
+# Замени на реальные entity_id из своего HA (Настройки → Устройства → Объекты)
+TV_EID    = "media_player.android_tv"            # Телевизор
+NAMAZ_EID = "timer.namaz_obratnyi_otschet"       # Таймер намаза
+SHOP_EID  = "todo.shopping_list"                 # Список покупок
 
-# Семья — auto-discovered from HA person.* entities (cached 1 hour)
-_family_cache: dict = {}       # {display_name: entity_id}
+# ── Кеш списка членов семьи ────────────────────────────────────────────────────
+# Список person.* сущностей обновляется раз в час — они меняются редко
+_family_cache: dict = {}       # {отображаемое_имя: entity_id}
 _family_cache_ts: float = 0.0
-_FAMILY_CACHE_TTL = 3600
+_FAMILY_CACHE_TTL = 3600       # TTL кеша семьи: 3600 сек = 1 час
 
+# ── Логгер ─────────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
+# ── Telegram Bot и Dispatcher ──────────────────────────────────────────────────
+# MemoryStorage — хранит FSM-состояния в памяти (сбрасываются при рестарте бота)
 bot = Bot(token=BOT_TOKEN)
 dp  = Dispatcher(storage=MemoryStorage())
 
-# ── FSM ───────────────────────────────────────────────────────────────────────
+# ── FSM (конечные автоматы для многошаговых диалогов) ─────────────────────────
+# FSM (Finite State Machine) — механизм aiogram для диалогов из нескольких шагов.
+# Например: /ai → пользователь пишет вопрос → бот отвечает (до /exit).
+# Каждый класс описывает набор состояний одного диалога.
+
 class AIChat(StatesGroup):
+    """Состояния для режима AI-чата (команда /ai).
+    active — пользователь в режиме диалога с Claude AI."""
     active = State()
 
 class ShoppingAdd(StatesGroup):
+    """Состояния для добавления товара в список покупок.
+    waiting — ждём текст нового товара от пользователя."""
     waiting = State()
 
 class AddFamilyMember(StatesGroup):
+    """Состояния для добавления члена семьи.
+    waiting_name — ждём имя нового члена семьи."""
     waiting_name = State()
 
 class DeviceMgmt(StatesGroup):
+    """Состояния для управления устройствами.
+    rename_wait — ждём новое название устройства от пользователя."""
     rename_wait = State()   # ожидаем новое имя устройства
 
-# ── HA REST API ───────────────────────────────────────────────────────────────
+# ── Home Assistant REST API ────────────────────────────────────────────────────
+# Все функции ha_* — обёртки над HTTP запросами к HA API.
+# HA_URL и HA_TOKEN берутся из .env файла.
+# Документация HA REST API: https://developers.home-assistant.io/docs/api/rest/
+
 async def ha_get(path: str) -> dict | list | None:
+    """Выполнить GET запрос к HA REST API.
+
+    Используется для получения состояния сущностей, истории, логбука и т.д.
+
+    Аргументы:
+        path: путь после /api/, например "states/light.kitchen"
+
+    Возвращает:
+        Ответ HA как dict/list, или None если запрос не удался.
+
+    Пример:
+        data = await ha_get("states/sensor.temperature")
+        # data = {"state": "22.5", "attributes": {...}, ...}
+    """
     try:
         async with aiohttp.ClientSession() as s:
             async with s.get(
@@ -500,6 +599,17 @@ async def ha_get(path: str) -> dict | list | None:
     return None
 
 async def ha_post(path: str, data: dict = None) -> dict | None:
+    """Выполнить POST запрос к HA REST API.
+
+    Используется для вызова сервисов HA (включить свет, запустить автоматизацию...).
+
+    Аргументы:
+        path: путь после /api/, например "services/light/turn_on"
+        data: тело запроса как словарь Python
+
+    Возвращает:
+        Ответ HA как dict, или None если запрос не удался.
+    """
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(
@@ -512,21 +622,65 @@ async def ha_post(path: str, data: dict = None) -> dict | None:
     return None
 
 async def ha_state(entity_id: str) -> str:
+    """Получить текущее состояние сущности HA в виде строки.
+
+    Аргументы:
+        entity_id: ID сущности, например "light.kitchen"
+
+    Возвращает:
+        Строку состояния: "on", "off", "22.5", "home", "unavailable"...
+        Возвращает "?" если сущность не найдена или HA недоступен.
+    """
     d = await ha_get(f"states/{entity_id}")
     return d.get("state", "?") if d else "?"
 
 async def ha_attr(entity_id: str, attr: str, default="?"):
+    """Получить значение атрибута сущности HA.
+
+    Аргументы:
+        entity_id: ID сущности, например "climate.floor_heating"
+        attr: имя атрибута, например "current_temperature"
+        default: что вернуть если атрибут не найден (по умолчанию "?")
+
+    Пример:
+        temp = await ha_attr("climate.floor_heating", "current_temperature", 0)
+    """
     d = await ha_get(f"states/{entity_id}")
     if d:
         return d.get("attributes", {}).get(attr, default)
     return default
 
 async def ha_call(domain: str, service: str, entity_id: str, extra: dict = None):
+    """Вызвать сервис HA для управления устройством.
+
+    Аргументы:
+        domain:    домен сервиса: "light", "switch", "climate", "media_player"...
+        service:   имя сервиса: "turn_on", "turn_off", "toggle"...
+        entity_id: ID сущности которой управляем
+        extra:     дополнительные параметры (например brightness, temperature...)
+
+    Пример:
+        await ha_call("light", "turn_on", "light.kitchen", {"brightness": 200})
+        await ha_call("switch", "toggle", "switch.fan")
+    """
     data = {"entity_id": entity_id, **(extra or {})}
     return await ha_post(f"services/{domain}/{service}", data)
 
 async def ha_history(entity_id: str, hours: int = 24, max_points: int = 300) -> list:
-    """Returns list of (datetime_msk, float) from HA history API, downsampled to max_points."""
+    """Получить историю значений сущности HA для построения графика.
+
+    Запрашивает HA History API и возвращает список точек для matplotlib.
+    Данные прореживаются до max_points точек чтобы не строить график из 10000 точек.
+
+    Аргументы:
+        entity_id:  ID сущности, например "sensor.power_total"
+        hours:      за сколько часов брать историю (по умолчанию 24)
+        max_points: максимальное количество точек на графике (по умолчанию 300)
+
+    Возвращает:
+        Список кортежей [(datetime_в_МСК, float_значение), ...]
+        Пустой список если история недоступна или сущность не числовая.
+    """
     start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     data = await ha_get(
         f"history/period/{start}?filter_entity_id={entity_id}&minimal_response=true"
@@ -550,7 +704,20 @@ async def ha_history(entity_id: str, hours: int = 24, max_points: int = 300) -> 
     return points
 
 def _make_chart(series: list, title: str, ylabel: str, color: str = "#4fc3f7") -> bytes | None:
-    """Generate dark-theme PNG chart with min/max/avg annotations."""
+    """Построить PNG-график на тёмном фоне с аннотациями min/max/avg.
+
+    Используется для отправки графиков температуры, мощности, влажности в Telegram.
+    Библиотека matplotlib рисует в буфер памяти (не сохраняет файл на диск).
+
+    Аргументы:
+        series: список кортежей [(datetime, float), ...] из ha_history()
+        title:  заголовок графика, например "Температура детской"
+        ylabel: подпись оси Y, например "°C" или "Вт"
+        color:  цвет линии в hex, по умолчанию голубой "#4fc3f7"
+
+    Возвращает:
+        PNG изображение как bytes, или None если series пустой.
+    """
     if not series:
         return None
     times, values = zip(*series)
@@ -636,12 +803,27 @@ async def ha_ws_get_todo_items(entity_id: str) -> list:
         log.error(f"WS todo {entity_id}: {e}")
     return []
 
-# ── Auth ──────────────────────────────────────────────────────────────────────
+# ── Авторизация и роли пользователей ──────────────────────────────────────────
+# Система ролей:
+#   owner  — главный администратор (ADMIN_ID из .env), полный доступ
+#   admin  — администратор добавленный через /invite, полный доступ
+#   viewer — только просмотр, не может управлять устройствами
+#
+# Проверки вызываются в начале каждого обработчика команды.
+
 def is_admin(uid: int) -> bool:
+    """Проверить: является ли пользователь главным администратором.
+
+    Главный admin — это тот чей ADMIN_ID указан в .env файле.
+    Только он может управлять другими пользователями через /users.
+    """
     return uid == ADMIN_ID
 
 def _get_user_role(uid: int) -> str:
-    """Вернуть роль пользователя: 'owner' | 'admin' | 'viewer' | None."""
+    """Получить роль пользователя из базы данных.
+
+    Возвращает: 'owner' | 'admin' | 'viewer' | None (если не зарегистрирован).
+    """
     if uid == ADMIN_ID:
         return "owner"
     users = _load_family_users()
@@ -651,14 +833,21 @@ def _get_user_role(uid: int) -> str:
     return None
 
 def is_bot_admin(uid: int) -> bool:
-    """Owner или admin-роль (может управлять устройствами)."""
+    """Проверить: может ли пользователь управлять устройствами.
+
+    True для owner и admin ролей. Viewers не могут управлять.
+    """
     return uid == ADMIN_ID or _get_user_role(uid) == "admin"
 
 def is_viewer(uid: int) -> bool:
-    """Только просмотр, без управления."""
+    """Проверить: пользователь имеет только роль viewer (только просмотр)."""
     return _get_user_role(uid) == "viewer"
 
 def _load_family_users() -> dict:
+    """Загрузить всех пользователей бота из SQLite.
+
+    Возвращает словарь {telegram_id_строка: {role, name, invited_by, ...}}.
+    """
     try:
         rows = _db().execute("SELECT user_id, data FROM family_users").fetchall()
         return {r["user_id"]: json.loads(r["data"]) for r in rows}
@@ -667,6 +856,13 @@ def _load_family_users() -> dict:
     return {}
 
 def _save_family_users(data: dict):
+    """Сохранить всех пользователей бота в SQLite.
+
+    Полностью заменяет содержимое таблицы family_users.
+
+    Аргументы:
+        data: словарь {telegram_id_строка: {role, name, ...}}
+    """
     try:
         with _DB_LOCK:
             c = _db()
@@ -679,26 +875,41 @@ def _save_family_users(data: dict):
         log.error(f"save_family_users: {e}")
 
 def is_family(uid: int) -> bool:
+    """Проверить: зарегистрирован ли пользователь в боте (любая роль)."""
     return str(uid) in _load_family_users()
 
 def is_allowed(uid: int) -> bool:
+    """Проверить: разрешён ли доступ к боту (admin или зарегистрированный пользователь)."""
     return is_admin(uid) or is_family(uid)
 
 def _user_name(uid: int) -> str:
-    """Return saved name for a family user or str(uid)."""
+    """Получить отображаемое имя пользователя бота по его Telegram ID.
+
+    Возвращает сохранённое имя из БД, или строку с ID если пользователь не найден.
+    """
     users = _load_family_users()
     return users.get(str(uid), {}).get("name", str(uid))
 
 def family_kb() -> ReplyKeyboardMarkup:
-    """Limited keyboard for family members."""
+    """Создать ограниченную клавиатуру для пользователей с ролью viewer/family.
+
+    Viewers видят только базовые кнопки — нет управления устройствами.
+    """
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="👪 Семья"),  KeyboardButton(text="🌤️ Погода")],
         [KeyboardButton(text="🕌 Намаз"),  KeyboardButton(text="📊 Статус")],
     ], resize_keyboard=True)
 
-# ── Семья — auto-discovery ─────────────────────────────────────────────────────
+# ── Список членов семьи — авто-обнаружение из HA ─────────────────────────────
 async def get_family() -> dict:
-    """Fetch all person.* entities from HA. Returns {friendly_name: entity_id}."""
+    """Получить всех членов семьи из HA (все person.* сущности).
+
+    Автоматически находит всех людей настроенных в HA — не нужно
+    прописывать имена вручную. Результат кешируется на 1 час.
+
+    Возвращает словарь {отображаемое_имя: entity_id}, например:
+        {"Хамзат": "person.khamzat", "Айза": "person.aiza"}
+    """
     global _family_cache, _family_cache_ts
     now = _time.monotonic()
     if _family_cache and now - _family_cache_ts < _FAMILY_CACHE_TTL:
@@ -2857,15 +3068,39 @@ _alert_state = {
 }
 
 async def alert_loop():
-    await asyncio.sleep(10)
+    """Фоновая задача: проверка алертов каждую минуту.
+
+    Запускается при старте бота через asyncio.create_task().
+    Первые 10 секунд ждёт — даёт боту полностью инициализироваться.
+    После этого каждые 60 секунд вызывает _check_alerts().
+
+    Все алерты настраиваются через Mini App → раздел "Алерты",
+    или через /ha-app/api/alerts.
+    """
+    await asyncio.sleep(10)   # Ждём инициализацию бота
     while True:
         try:
             await _check_alerts()
         except Exception as e:
             log.error(f"Alert loop error: {e}")
-        await asyncio.sleep(60)
+        await asyncio.sleep(60)   # Проверяем каждую минуту
 
 async def _check_alerts():
+    """Проверить все условия алертов и отправить уведомления при необходимости.
+
+    Запрашивает все нужные сущности из HA за один раз (asyncio.gather),
+    затем проверяет каждое условие. Использует _alert_state для дедупликации
+    — чтобы один и тот же алерт не приходил каждую минуту.
+
+    Типы алертов (настраиваются в alerts_config):
+      - power:   мощность > порога (Вт)
+      - temp:    температура вне диапазона (°C)
+      - person:  Frigate обнаружил человека
+      - namaz:   напоминание о молитве (15 мин и 5 мин)
+      - morning: утренняя сводка в 7:30 МСК
+      - inet:    падение/восстановление интернета
+      - frigate: любое событие детекции Frigate
+    """
     family = await get_family()  # {name: entity_id}
     person_eids = list(family.values()) or ["person.khamzat"]
     gather_items = [
@@ -3146,6 +3381,13 @@ async def _check_alerts():
             await _send_monthly_report()
 
 async def _send_morning_briefing():
+    """Отправить утреннюю сводку в 07:30 МСК.
+
+    Содержит: дату, погоду, кто дома, намаз, потребление энергии.
+    Вызывается из _check_alerts() при совпадении времени.
+    Дедупликация через _alert_state["morning_done_date"] — отправляется
+    только один раз в день, даже если alert_loop сработал несколько раз.
+    """
     try:
         now_msk = datetime.now(MSK)
         date_str = now_msk.strftime("%d.%m.%Y")
@@ -3231,6 +3473,12 @@ async def _send_morning_briefing():
         log.error(f"Morning briefing error: {e}")
 
 async def _send_weekly_report():
+    """Отправить еженедельный отчёт по энергопотреблению (каждый понедельник).
+
+    Показывает: стоимость за день, за месяц, прогноз до конца месяца,
+    предполагаемый расход за неделю.
+    Вызывается из _check_alerts() по понедельникам в 08:00 МСК.
+    """
     try:
         now = datetime.now(MSK)
         week_num = now.isocalendar().week
@@ -3287,6 +3535,11 @@ async def _send_weekly_report():
         log.error(f"Weekly report error: {e}")
 
 async def _send_monthly_report():
+    """Отправить ежемесячный отчёт по энергопотреблению (1-е число каждого месяца).
+
+    Показывает потребление за прошедший месяц в кВт·ч и в рублях.
+    Вызывается из _check_alerts() 1-го числа в 09:00 МСК.
+    """
     """Ежемесячный отчёт: 1-е число месяца в 09:00 МСК."""
     try:
         now = datetime.now(MSK)
@@ -3328,14 +3581,30 @@ async def _send_monthly_report():
 
 # ── Web App handlers ──────────────────────────────────────────────────────────
 def _check_token(request: aiohttp_web.Request) -> bool:
+    """Проверить авторизацию запроса к API.
+
+    Токен передаётся в заголовке Authorization: Bearer ТОКЕН.
+    Токен — это WEBAPP_TOKEN из .env файла.
+
+    Mini App автоматически добавляет этот заголовок ко всем запросам.
+    При открытии /ha-app/ он вшивается в HTML как JS константа.
+
+    Возвращает True если токен верный, False — нужно вернуть 401.
+    """
     auth = request.headers.get("Authorization", "")
     return auth == f"Bearer {WEBAPP_TOKEN}"
 
 async def _web_index(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/ — отдать HTML страницу Mini App.
+
+    Читает webapp/index.html и вставляет в него реальный WEBAPP_TOKEN.
+    В самом файле index.html токен хранится как плейсхолдер "__WEBAPP_TOKEN__"
+    — чтобы не коммитить секрет в git репозиторий.
+    """
     path = WEBAPP_DIR / "index.html"
     if not path.exists():
         return aiohttp_web.Response(status=404, text="Not found")
-    # Inject real WEBAPP_TOKEN so the placeholder is never committed to git
+    # Заменяем плейсхолдер реальным токеном прямо при отдаче HTML
     html = path.read_text(encoding="utf-8").replace("__WEBAPP_TOKEN__", WEBAPP_TOKEN)
     return aiohttp_web.Response(
         text=html,
@@ -3343,6 +3612,9 @@ async def _web_index(request: aiohttp_web.Request) -> aiohttp_web.Response:
         headers={"Cache-Control": "no-cache"},
     )
 
+# CORS заголовки для всех API ответов.
+# Нужны потому что Telegram открывает Mini App с домена t.me,
+# а запросы идут на наш домен — это cross-origin запрос.
 _CORS_HEADERS = {
     "Access-Control-Allow-Origin":  "*",
     "Access-Control-Allow-Headers": "Authorization, Content-Type",
@@ -3350,10 +3622,20 @@ _CORS_HEADERS = {
 }
 
 async def _web_options(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """OPTIONS /ha-app/api/* — CORS preflight запрос.
+
+    Браузер отправляет OPTIONS перед реальным запросом чтобы спросить:
+    'можно ли делать cross-origin запросы?' Отвечаем: да, можно.
+    """
     return aiohttp_web.Response(status=204, headers=_CORS_HEADERS)
 
 async def _web_health(request: aiohttp_web.Request) -> aiohttp_web.Response:
-    """GET /ha-app/api/health — healthcheck без аутентификации."""
+    """GET /ha-app/api/health — проверка работоспособности бота.
+
+    Не требует авторизации — используется для мониторинга.
+    Возвращает JSON: {ok, version, uptime, uptime_sec, ha_connected}.
+    ha_connected = true если HA API отвечает на GET /api/.
+    """
     uptime_sec = int(_time.time() - _BOT_START_TIME)
     h = uptime_sec // 3600; m = (uptime_sec % 3600) // 60; s = uptime_sec % 60
     uptime_str = f"{h}ч {m:02d}м {s:02d}с"
@@ -3705,7 +3987,19 @@ async def _web_sse(request: aiohttp_web.Request) -> aiohttp_web.StreamResponse:
     return response
 
 async def _ha_state_watch_loop():
-    """Subscribe to HA state_changed events → broadcast via SSE."""
+    """Фоновая задача: подписаться на изменения состояния HA через WebSocket.
+
+    Устанавливает WebSocket соединение с HA (/api/websocket) и подписывается
+    на все события state_changed. При получении события:
+      1. Обновляет кеш статуса (_status_cache сбрасывается)
+      2. Рассылает SSE-событие всем подключённым клиентам Mini App
+
+    Это обеспечивает РЕАЛЬНОЕ ВРЕМЯ в Mini App без polling.
+    Браузер не опрашивает сервер каждые N секунд — он получает push-уведомления.
+
+    При обрыве соединения — автоматически переподключается через 5 секунд.
+    Требует: библиотека websockets (pip install websockets).
+    """
     if not HAS_WS:
         return
     ha_ws = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
@@ -3762,6 +4056,24 @@ async def _ha_state_watch_loop():
             await asyncio.sleep(10)
 
 async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/status — главный эндпоинт: полный статус умного дома.
+
+    Это самый большой и важный эндпоинт. Возвращает JSON со всем что
+    нужно Mini App для отображения: свет, климат, энергия, семья, намаз,
+    погода, TV, пылесос, фазы, кастомные разделы.
+
+    Результат кешируется на 5 секунд (_STATUS_CACHE_TTL).
+    Кеш сбрасывается при изменении состояния в HA (через _ha_state_watch_loop).
+
+    Все запросы к HA делаются параллельно через asyncio.gather() —
+    чтобы не ждать каждый сенсор по очереди.
+
+    Структура ответа:
+      power, temp_detskaia, humidity, internet, floor_heating,
+      floor_setpoint, floor_temp, cost_day, cost_month, cost_week,
+      outdoor_temp, family, lights, sections, phases, tv, vacuum,
+      prayers, weather, last_face, cam_person_count, namaz_timer
+    """
     if not _check_token(request):
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
     # 5-second cache
@@ -4014,11 +4326,26 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
 async def _web_action(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/action — вызвать сервис HA для управления устройством.
+
+    Тело запроса JSON:
+      {
+        "service":   "light.turn_on",       // домен.сервис
+        "entity_id": "light.kitchen",       // ID сущности
+        "extra":     {"brightness": 200}    // (опционально) доп. параметры
+      }
+
+    Этот эндпоинт вызывается из Mini App когда пользователь нажимает
+    кнопку включения/выключения устройства.
+
+    После выполнения сбрасывает кеш статуса — чтобы следующий запрос
+    /api/status вернул актуальное состояние.
+    """
     if not _check_token(request):
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
     try:
         body = await request.json()
-        service_str = body.get("service", "")   # e.g. "light.turn_on"
+        service_str = body.get("service", "")   # напр. "light.turn_on"
         entity_id   = body.get("entity_id", "")
         extra       = body.get("extra") or {}
         if "." not in service_str or not entity_id:
@@ -4825,7 +5152,19 @@ async def _web_ha_scan(request: aiohttp_web.Request) -> aiohttp_web.Response:
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
 async def _frigate_notify(entry: dict):
-    """Отправить уведомление в Telegram о новой детекции Frigate."""
+    """Отправить уведомление в Telegram о новой детекции Frigate.
+
+    Пытается получить снимок события и отправить его с подписью.
+    Если снимок недоступен — отправляет только текст.
+
+    Аргументы:
+        entry: словарь события Frigate с полями:
+            label       — тип объекта: "person", "car", "dog"...
+            score       — уверенность детекции 0..100%
+            camera      — имя камеры в Frigate
+            start_time  — Unix timestamp начала события
+            snapshot_url — URL снимка (через HA/Frigate API)
+    """
     label_map = {"person": "👤 Человек", "car": "🚗 Авто", "dog": "🐕 Собака", "cat": "🐱 Кот"}
     label_str = label_map.get(entry.get("label", ""), f"📦 {entry.get('label', '')}")
     camera = entry.get("camera", "")
@@ -4856,7 +5195,18 @@ async def _frigate_notify(entry: dict):
 
 
 async def _frigate_event_loop():
-    """Подписаться на HA события от Frigate через WebSocket и кешировать детекции."""
+    """Фоновая задача: слушать события Frigate через HA WebSocket.
+
+    Frigate интегрирован в HA и отправляет события через HA event bus.
+    Эта задача подписывается на событие "frigate.new_tracking_object"
+    и при каждом событии:
+      1. Добавляет событие в _frigate_events (список последних 100)
+      2. Кеширует список в файл frigate_events.json
+      3. Вызывает _frigate_notify() — отправляет уведомление в Telegram
+
+    При обрыве WebSocket соединения — автоматически переподключается.
+    Если библиотека websockets не установлена — задача не запускается.
+    """
     global _frigate_events
     _frigate_events = _frigate_events_load()
     if not HAS_WS:
@@ -5167,6 +5517,26 @@ async def _web_night_mode_post(request: aiohttp_web.Request) -> aiohttp_web.Resp
 
 
 async def _start_web():
+    """Запустить aiohttp веб-сервер для Mini App на 127.0.0.1:8766.
+
+    Регистрирует все HTTP маршруты и запускает сервер.
+    Сервер доступен только локально — nginx проксирует внешние запросы.
+
+    Структура маршрутов:
+      /ha-app/              — Mini App HTML
+      /ha-app/api/health    — проверка работоспособности
+      /ha-app/api/status    — состояние умного дома (кеш 5 сек)
+      /ha-app/api/events    — SSE поток (real-time обновления)
+      /ha-app/api/action    — вызов сервисов HA
+      /ha-app/api/devices   — управление устройствами
+      /ha-app/api/sections  — управление разделами
+      /ha-app/api/scenes    — сцены (CRUD + запуск)
+      /ha-app/api/alerts    — конфигурация алертов
+      /ha-app/api/activity  — журнал активности
+      /ha-app/api/frigate/* — проксирование камер Frigate
+      /ha-app/api/server-stats — статистика сервера
+      ... и другие
+    """
     app = aiohttp_web.Application()
     app.router.add_get("/ha-app/",                  _web_index)
     app.router.add_get("/ha-app",                   _web_index)
@@ -5344,22 +5714,39 @@ async def cb_scene_run_alert(cb: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("namaz_ok:"))
 async def cb_namaz_ok(cb: CallbackQuery):
+    """Обработчик кнопки 'Понял' в напоминании о намазе.
+
+    Убирает кнопку из сообщения после нажатия — чтобы не было соблазна
+    нажать повторно и засорять интерфейс.
+    """
     await cb.answer("✅ Принято!", show_alert=False)
     try:
         await cb.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
 
-# ── Запуск ────────────────────────────────────────────────────────────────────
+# ── Точка входа — запуск бота ─────────────────────────────────────────────────
 async def main():
+    """Главная функция: инициализация и запуск бота.
+
+    Порядок запуска:
+      1. _db_init()          — создать таблицы SQLite, мигрировать JSON→DB
+      2. _dev_init()         — загрузить устройства, собрать LIGHTS dict
+      3. _refresh_lights()   — запросить HA, добавить новые устройства
+      4. alert_loop()        — фон: проверка алертов каждую минуту
+      5. _start_web()        — фон: HTTP сервер Mini App на :8766
+      6. _frigate_event_loop() — фон: WebSocket для событий Frigate
+      7. _ha_state_watch_loop() — фон: WebSocket для SSE real-time
+      8. dp.start_polling()  — основной цикл Telegram bot polling
+    """
     log.info(f"HA Bot v{_BOT_VERSION} starting...")
     _db_init()             # создать таблицы SQLite + однократная миграция из JSON
     _dev_init()            # загрузить devices из DB → заполнить LIGHTS/LIGHTS_ICON
     await _refresh_lights()  # сканировать HA, добавить новые устройства
-    asyncio.create_task(alert_loop())
-    asyncio.create_task(_start_web())
-    asyncio.create_task(_frigate_event_loop())
-    asyncio.create_task(_ha_state_watch_loop())
+    asyncio.create_task(alert_loop())          # фоновая проверка алертов
+    asyncio.create_task(_start_web())          # HTTP сервер Mini App
+    asyncio.create_task(_frigate_event_loop()) # слушать события Frigate
+    asyncio.create_task(_ha_state_watch_loop()) # SSE real-time обновления
     _activity_log("bot_start", f"v{_BOT_VERSION}")
     await bot.send_message(
         ADMIN_ID,
