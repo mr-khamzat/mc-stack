@@ -1,9187 +1,4776 @@
 #!/usr/bin/env python3
 """
-MeshCentral Monitoring & Inventory Telegram Bot — v4
-All improvements: .env config, async HTTP, cached DB export, pagination,
-search, device alerts, change history, uptime graphs, device compare,
-WoL, software inventory, MC config backup, graceful shutdown,
-remote commands via MeshCentral API, PDF inventory export.
+Home Assistant Telegram Bot — управление умным домом.
+Версия 3.0: Намаз, TV, Семья, Покупки, Автоматизации (toggle), Inline режим.
 """
-
 import asyncio
-import json
-import os
-import subprocess
-import shutil
-import logging
-import time
+import hashlib
+import hmac
 import io
-import csv
-import re
-import ssl
-import signal
-import struct
-import socket
-import ipaddress
-from datetime import datetime, timezone, timedelta
+import os
+import json
+import logging
+import ssl as _ssl
+import subprocess
+import time as _time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib import parse as urlparse
 
 import aiohttp
-import psutil
+from aiohttp import web as aiohttp_web
+try:
+    import websockets
+    HAS_WS = True
+except ImportError:
+    HAS_WS = False
+
 import matplotlib
-matplotlib.use("Agg")
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-from dotenv import load_dotenv
-from fpdf import FPDF
-import pyzipper
-try:
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-    from openpyxl.utils import get_column_letter
-    HAS_OPENPYXL = True
-except ImportError:
-    HAS_OPENPYXL = False
-logging.getLogger("fontTools.subset").setLevel(logging.WARNING)
-from aiogram import Bot, Dispatcher, F, Router
+
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import Command, StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     Message, CallbackQuery, BufferedInputFile,
     InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardMarkup, KeyboardButton,
+    ReplyKeyboardMarkup, KeyboardButton, WebAppInfo,
+    InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
 )
-from aiogram.filters import Command
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.context import FSMContext
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from dotenv import load_dotenv
 
-# ─── Config ───────────────────────────────────────────────────────────
+load_dotenv("/opt/ha-bot/.env")
 
-load_dotenv("/opt/meshcentral-bot/.env")
+BOT_TOKEN  = os.environ["BOT_TOKEN"]
+ADMIN_ID   = int(os.environ["ADMIN_ID"])
+HA_URL     = os.environ["HA_URL"].rstrip("/")
+HA_TOKEN   = os.environ["HA_TOKEN"]
+HA_HEADERS = {"Authorization": f"Bearer {HA_TOKEN}", "Content-Type": "application/json"}
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-MC_URL = os.getenv("MC_URL", "https://hub.office.mooo.com")
-MC_DATA = os.getenv("MC_DATA", "/opt/meshcentral/meshcentral-data")
-MC_DIR = os.getenv("MC_DIR", "/opt/meshcentral")
-MC_WSS = os.getenv("MC_WSS", "wss://hub.office.mooo.com:443")
-MESHCTRL = f"{MC_DIR}/node_modules/meshcentral/meshctrl.js"
-ADMIN_FILE = "/opt/meshcentral-bot/admin.json"
-DATA_DIR = Path("/opt/meshcentral-bot")
-HISTORY_FILE = DATA_DIR / "history.json"
-UPTIME_FILE = DATA_DIR / "uptime.json"
-ALERTS_FILE = DATA_DIR / "alerts_cfg.json"
-SNAPSHOTS_FILE = DATA_DIR / "snapshots.json"
-SCRIPTS_FILE = DATA_DIR / "scripts.json"
-MUTE_FILE              = DATA_DIR / "mute.json"
-WIFI_FILE              = DATA_DIR / "wifi_clients.json"
-KEENETIC_PROBES_FILE   = DATA_DIR / "keenetic_probes.json"
-KEENETIC_PROBE_SCRIPT  = DATA_DIR / "keenetic_probe.ps1"
-NETMAP_FILE            = DATA_DIR / "public" / "netmap.html"
-NOTES_FILE             = DATA_DIR / "notes.json"
-DISK_HISTORY_FILE      = DATA_DIR / "disk_history.json"
-SNAP_HISTORY_FILE      = DATA_DIR / "snap_history.json"
-SCHEDULER_FILE         = DATA_DIR / "cmd_scheduler.json"
-SNMP_DATA_FILE         = DATA_DIR / "snmp_data.json"
-SNMP_PROBE_SCRIPT      = DATA_DIR / "snmp_probe.ps1"
-SNMP_POLL_INTERVAL     = 300  # seconds (5 min)
-PRINTERS_FILE          = DATA_DIR / "printers.json"
-PRINTER_INK_PS1        = DATA_DIR / "printer_ink.ps1"
-INK_ALERTS_FILE        = DATA_DIR / "ink_alerts.json"
-INK_WARN_PCT           = 20   # % threshold for low ink alert
-NETMAP_INTERVAL        = 60   # seconds
-WIFI_POLL_INTERVAL     = 8 * 3600  # seconds (8 hours)
-# ── New features ──
-HW_INVENTORY_FILE  = DATA_DIR / "hw_inventory.json"
-HW_INVENTORY_PS1   = DATA_DIR / "hw_inventory.ps1"
-TEMP_DATA_FILE     = DATA_DIR / "temp_data.json"
-TEMP_PROBE_PS1     = DATA_DIR / "temp_probe.ps1"
-STATUS_HTML_FILE   = DATA_DIR / "public" / "status.html"
-HW_POLL_INTERVAL   = 4 * 3600   # 4 hours
-TEMP_POLL_INTERVAL = 900         # 15 minutes
-TEMP_WARN_C        = 75          # °C alert threshold
+WEBAPP_TOKEN = os.environ.get("WEBAPP_TOKEN", "")
+WEBAPP_URL   = "https://hub.office.mooo.com/ha-app/"
+WEBAPP_DIR   = Path("/opt/ha-bot/webapp")
 
-HEALTH_CHECK_INTERVAL = 60
-DEVICE_CHECK_INTERVAL = 45
-INVENTORY_HOUR = 8
-DAILY_REPORT_HOUR = 9
-WEEKLY_DIGEST_HOUR = 10   # Sunday 10:00 UTC
-UPDATE_CHECK_HOUR = 11
-DB_CACHE_TTL = 60  # seconds — снижено для более актуального статуса
-SSL_DOMAINS = [d.strip() for d in os.getenv("SSL_DOMAINS", "hub.office.mooo.com,panelwin.mooo.com,subwin.mooo.com").split(",") if d.strip()]
-# HTTP services to monitor: "Name|url" pairs comma-separated in HTTP_SERVICES env var
-_HTTP_SERVICES_RAW = os.getenv(
-    "HTTP_SERVICES",
-    "MeshCentral|https://hub.office.mooo.com,"
-    "Remnawave Panel|https://panelwin.mooo.com/api/"
-)
-HTTP_SERVICES: list[tuple[str, str]] = []
-for _item in _HTTP_SERVICES_RAW.split(","):
-    _item = _item.strip()
-    if "|" in _item:
-        _sn, _su = _item.split("|", 1)
-        HTTP_SERVICES.append((_sn.strip(), _su.strip()))
-SSL_WARN_DAYS = int(os.getenv("SSL_WARN_DAYS", "30"))
-SSL_CRIT_DAYS = int(os.getenv("SSL_CRIT_DAYS", "7"))
-SSL_CHECK_HOUR = 11  # час UTC для ежедневной проверки
+FAMILY_USERS_FILE  = Path("/opt/ha-bot/family_users.json")
+DEVICES_FILE       = Path("/opt/ha-bot/devices.json")
+SECTIONS_FILE      = Path("/opt/ha-bot/sections.json")
+ACTIVITY_LOG_FILE  = Path("/opt/ha-bot/activity_log.json")
+ALERTS_CONFIG_FILE = Path("/opt/ha-bot/alerts_config.json")
+SCENES_FILE        = Path("/opt/ha-bot/scenes.json")
+FACES_LOG_FILE     = Path("/opt/ha-bot/faces_log.json")
 
-PAGE_SIZE = 5
+_ALERTS_DEFAULTS = {
+    "power_threshold":   3000,
+    "temp_min":          18,
+    "temp_max":          27,
+    "quiet_hours_start": 23,
+    "quiet_hours_end":   7,
+    "enabled": {
+        "power":   True,
+        "temp":    True,
+        "person":  True,
+        "namaz":   True,
+        "morning": True,
+        "frigate": True,
+        "inet":    True,
+    }
+}
+
+def _alerts_load() -> dict:
+    if ALERTS_CONFIG_FILE.exists():
+        try:
+            data = json.loads(ALERTS_CONFIG_FILE.read_text())
+            # merge with defaults for missing keys
+            cfg = dict(_ALERTS_DEFAULTS)
+            cfg.update(data)
+            cfg["enabled"] = {**_ALERTS_DEFAULTS["enabled"], **data.get("enabled", {})}
+            return cfg
+        except Exception:
+            pass
+    return dict(_ALERTS_DEFAULTS)
+
+def _alerts_save(cfg: dict):
+    try:
+        ALERTS_CONFIG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
+    except Exception as e:
+        log.error(f"alerts_save: {e}")
+
+# ── Сцены / Режимы ────────────────────────────────────────────────────────────
+_SCENES_DEFAULTS = {
+    "sleep": {
+        "name": "Спать",
+        "icon": "🌙",
+        "description": "Выключить весь свет",
+        "actions": [
+            {"entity_id": "light.svet_krovat",            "service": "light.turn_off"},
+            {"entity_id": "switch.vykliuchatel_kukhnia",  "service": "switch.turn_off"},
+            {"entity_id": "switch.kabinet_svet_pk_left",  "service": "switch.turn_off"},
+            {"entity_id": "switch.kabinet_svet_pk_right", "service": "switch.turn_off"},
+            {"entity_id": "switch.sonoff_100093f84f",     "service": "switch.turn_off"},
+            {"entity_id": "switch.sonoff_1000a60930",     "service": "switch.turn_off"},
+        ]
+    },
+    "away": {
+        "name": "Уходим",
+        "icon": "🚗",
+        "description": "Всё выключить",
+        "actions": [
+            {"entity_id": "light.svet_krovat",            "service": "light.turn_off"},
+            {"entity_id": "switch.vykliuchatel_kukhnia",  "service": "switch.turn_off"},
+            {"entity_id": "switch.kabinet_svet_pk_left",  "service": "switch.turn_off"},
+            {"entity_id": "switch.kabinet_svet_pk_right", "service": "switch.turn_off"},
+            {"entity_id": "switch.sonoff_100093f84f",     "service": "switch.turn_off"},
+            {"entity_id": "switch.sonoff_1000a60930",     "service": "switch.turn_off"},
+            {"entity_id": "media_player.android_tv",      "service": "media_player.turn_off"},
+        ]
+    },
+    "movie": {
+        "name": "Кино",
+        "icon": "🎬",
+        "description": "Приглушить свет, включить TV",
+        "actions": [
+            {"entity_id": "light.svet_krovat",            "service": "light.turn_on",
+             "extra": {"brightness_pct": 30}},
+            {"entity_id": "switch.vykliuchatel_kukhnia",  "service": "switch.turn_off"},
+            {"entity_id": "switch.sonoff_100093f84f",     "service": "switch.turn_off"},
+            {"entity_id": "media_player.android_tv",      "service": "media_player.turn_on"},
+        ]
+    },
+    "evening": {
+        "name": "Вечер",
+        "icon": "🌆",
+        "description": "Мягкий вечерний свет",
+        "actions": [
+            {"entity_id": "light.svet_krovat",            "service": "light.turn_on",
+             "extra": {"brightness_pct": 60, "color_temp": 400}},
+            {"entity_id": "switch.sonoff_100093f84f",     "service": "switch.turn_on"},
+            {"entity_id": "switch.vykliuchatel_kukhnia",  "service": "switch.turn_on"},
+        ]
+    },
+}
+
+def _scenes_load() -> dict:
+    if SCENES_FILE.exists():
+        try:
+            return json.loads(SCENES_FILE.read_text())
+        except Exception:
+            pass
+    return dict(_SCENES_DEFAULTS)
+
+def _scenes_save(scenes: dict):
+    try:
+        SCENES_FILE.write_text(json.dumps(scenes, ensure_ascii=False, indent=2))
+    except Exception as e:
+        log.error(f"scenes_save: {e}")
+
+_BOT_START_TIME   = _time.time()
+_BOT_VERSION      = "3.5"
+
+# Status API cache (5 sec TTL)
+_status_cache: dict = {"ts": 0.0, "data": None}
+_STATUS_CACHE_TTL   = 5
+
+_SECTIONS_DEFAULTS: dict = {
+    "cameras":     {"name": "📹 Камеры",      "icon": "📹", "enabled": False, "order": 10},
+    "automations": {"name": "🤖 Автоматизации","icon": "🤖", "enabled": False, "order": 11},
+    "sensors":     {"name": "📊 Сенсоры",      "icon": "📊", "enabled": False, "order": 12},
+    "media":       {"name": "📺 Медиа",        "icon": "📺", "enabled": False, "order": 13},
+}
+
+def _sect_load() -> dict:
+    if SECTIONS_FILE.exists():
+        try:
+            return json.loads(SECTIONS_FILE.read_text())
+        except Exception as e:
+            log.error(f"sections_load: {e}")
+    return dict(_SECTIONS_DEFAULTS)
+
+def _sect_save(d: dict):
+    try:
+        SECTIONS_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2))
+    except Exception as e:
+        log.error(f"sections_save: {e}")
+
+# Weather cache
+_weather_cache: dict | None = None
+_weather_cache_ts: float = 0.0
+_WEATHER_CACHE_TTL = 600  # 10 minutes
+
+# Грозный — координаты для Open-Meteo
+LAT, LON  = 43.31, 45.69
+TIMEZONE  = "Europe/Moscow"
+
+# Entities
+TV_EID    = "media_player.android_tv"
+NAMAZ_EID = "timer.namaz_obratnyi_otschet"
+SHOP_EID  = "todo.shopping_list"
+
+# Семья — auto-discovered from HA person.* entities (cached 1 hour)
+_family_cache: dict = {}       # {display_name: entity_id}
+_family_cache_ts: float = 0.0
+_FAMILY_CACHE_TTL = 3600
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-log = logging.getLogger("mc-bot")
+log = logging.getLogger(__name__)
 
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
-router = Router()
-dp.include_router(router)
+dp  = Dispatcher(storage=MemoryStorage())
 
-# ─── State ────────────────────────────────────────────────────────────
+# ── FSM ───────────────────────────────────────────────────────────────────────
+class AIChat(StatesGroup):
+    active = State()
 
-_known_devices: dict[str, dict] = {}
-_last_inventory_date = ""
-_last_daily_report = ""
-_last_weekly_digest = ""
-_last_update_check = ""
-_last_ssl_check = ""
-_ssl_cache: list = []  # [{domain, days_left, expires, ok, error}]
-_mc_was_down = False
-_http_down: dict[str, bool] = {}   # service name → was_down flag
-_db_cache: list = []
-_db_cache_time: float = 0
-_online_cache: set = set()       # node IDs currently online (from meshctrl)
-_online_cache_time: float = 0
-_shutdown_event = asyncio.Event()
-_background_tasks: list[asyncio.Task] = []
-_wifi_clients: dict = {}  # {agent_name: {ok, router, updated, count, clients: [...]}}
-_snmp_data:    dict = {}  # {agent_name: {ok, router, updated, data: {...}, prev: {...}}}
-_hw_inventory: dict = {}  # {device_name: {hostname, cpu_name, ram_total_gb, disks, ...}}
-_temp_data:    dict = {}  # {device_name: {temps, cpu_load_pct, updated}}
+class ShoppingAdd(StatesGroup):
+    waiting = State()
 
-# ─── Keyboard ─────────────────────────────────────────────────────────
+class AddFamilyMember(StatesGroup):
+    waiting_name = State()
 
-BTN_STATUS    = "🖥 Статус"
-BTN_DEVICES   = "📋 Устройства"
-BTN_INVENTORY = "📦 Инвентарь"
-BTN_HEALTH    = "❤️ Здоровье"
-BTN_TOOLS     = "🔧 Инструменты"
-BTN_WIFI      = "📡 WiFi сети"
+class DeviceMgmt(StatesGroup):
+    rename_wait = State()   # ожидаем новое имя устройства
 
-MAIN_KB = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_DEVICES)],
-        [KeyboardButton(text=BTN_INVENTORY), KeyboardButton(text=BTN_HEALTH)],
-        [KeyboardButton(text=BTN_TOOLS), KeyboardButton(text=BTN_WIFI)],
-    ],
-    resize_keyboard=True, is_persistent=True,
-)
+# ── HA REST API ───────────────────────────────────────────────────────────────
+async def ha_get(path: str) -> dict | list | None:
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{HA_URL}/api/{path}", headers=HA_HEADERS,
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as r:
+                if r.status == 200:
+                    return await r.json()
+    except Exception as e:
+        log.error(f"HA GET {path}: {e}")
+    return None
 
-# ─── Persistence helpers ─────────────────────────────────────────────
+async def ha_post(path: str, data: dict = None) -> dict | None:
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(
+                f"{HA_URL}/api/{path}", headers=HA_HEADERS,
+                json=data or {}, timeout=aiohttp.ClientTimeout(total=10)
+            ) as r:
+                return await r.json()
+    except Exception as e:
+        log.error(f"HA POST {path}: {e}")
+    return None
 
-def _load_json(path: Path, default=None):
-    if default is None:
-        default = {}
-    if path.exists():
-        try:
-            with open(path) as f:
-                return json.load(f)
-        except Exception:
-            pass
+async def ha_state(entity_id: str) -> str:
+    d = await ha_get(f"states/{entity_id}")
+    return d.get("state", "?") if d else "?"
+
+async def ha_attr(entity_id: str, attr: str, default="?"):
+    d = await ha_get(f"states/{entity_id}")
+    if d:
+        return d.get("attributes", {}).get(attr, default)
     return default
 
-def _save_json(path: Path, data):
-    tmp = path.with_suffix(".tmp")
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False, default=str)
-    tmp.replace(path)
+async def ha_call(domain: str, service: str, entity_id: str, extra: dict = None):
+    data = {"entity_id": entity_id, **(extra or {})}
+    return await ha_post(f"services/{domain}/{service}", data)
 
-
-# ─── Admin ────────────────────────────────────────────────────────────
-
-def load_admin() -> dict:
-    return _load_json(Path(ADMIN_FILE))
-
-def save_admin(d: dict):
-    _save_json(Path(ADMIN_FILE), d)
-
-def get_admin_id() -> int | None:
-    return load_admin().get("admin_id")
-
-def is_admin(uid: int) -> bool:
-    d = load_admin()
-    return True if not d.get("admin_id") else d["admin_id"] == uid
-
-def lock_admin(uid: int, uname: str) -> bool:
-    d = load_admin()
-    if not d.get("admin_id"):
-        d.update(admin_id=uid, username=uname)
-        save_admin(d)
-        return True
-    return False
-
-
-# ─── Alerts config ───────────────────────────────────────────────────
-
-DEFAULT_ALERTS = {
-    "disk_pct": 90,
-    "av_off": True,
-    "offline_hours": 24,
-    "new_device": True,
-}
-
-def load_alerts_cfg() -> dict:
-    cfg = _load_json(ALERTS_FILE, DEFAULT_ALERTS.copy())
-    for k, v in DEFAULT_ALERTS.items():
-        cfg.setdefault(k, v)
-    return cfg
-
-def save_alerts_cfg(cfg: dict):
-    _save_json(ALERTS_FILE, cfg)
-
-
-# ─── Quick Scripts ───────────────────────────────────────────────────
-
-DEFAULT_SCRIPTS = {
-    # ─── 🖥 СИСТЕМА ────────────────────────────────────────────────
-    "sys_info": {
-        "cmd": "systeminfo | findstr /C:\"OS Name\" /C:\"OS Version\" /C:\"System Boot Time\" /C:\"Total Physical Memory\" /C:\"Available Physical Memory\" /C:\"Domain\"",
-        "ps": False, "cat": "system",
-        "desc": "🖥 Версия ОС, домен, время загрузки, память",
-    },
-    "uptime": {
-        "cmd": "$b=(gcim Win32_OperatingSystem).LastBootUpTime; $u=(Get-Date)-$b; Write-Host \"Boot: $($b.ToString('dd.MM.yyyy HH:mm'))`nUptime: $($u.Days)д $($u.Hours)ч $($u.Minutes)м\"",
-        "ps": True, "cat": "system",
-        "desc": "⏱ Время работы без перезагрузки",
-    },
-    "top_cpu": {
-        "cmd": "Get-Process | Sort-Object CPU -Desc | Select-Object -First 10 Name,@{N='CPU';E={[Math]::Round($_.CPU,1)}},@{N='RAM_MB';E={[Math]::Round($_.WS/1MB,0)}},Id | Format-Table -Auto",
-        "ps": True, "cat": "system",
-        "desc": "📊 Топ-10 процессов по CPU",
-    },
-    "top_ram": {
-        "cmd": "Get-Process | Sort-Object WS -Desc | Select-Object -First 10 Name,@{N='RAM_MB';E={[Math]::Round($_.WS/1MB,0)}},Id | Format-Table -Auto",
-        "ps": True, "cat": "system",
-        "desc": "💾 Топ-10 процессов по памяти",
-    },
-    "disk_space": {
-        "cmd": "Get-PSDrive -PSProvider FileSystem | Select-Object Name,@{N='Used_GB';E={[Math]::Round($_.Used/1GB,1)}},@{N='Free_GB';E={[Math]::Round($_.Free/1GB,1)}},@{N='Total_GB';E={[Math]::Round(($_.Used+$_.Free)/1GB,1)}} | Format-Table -Auto",
-        "ps": True, "cat": "system",
-        "desc": "💿 Свободное место на всех дисках",
-    },
-    "logged_users": {
-        "cmd": "query user 2>&1",
-        "ps": False, "cat": "system",
-        "desc": "👤 Залогиненные пользователи на ПК",
-    },
-    "last_errors": {
-        "cmd": "Get-EventLog -LogName System -EntryType Error -Newest 10 | Select-Object TimeWritten,Source,@{N='Msg';E={$_.Message.Substring(0,[Math]::Min(100,$_.Message.Length))}} | Format-List",
-        "ps": True, "cat": "system",
-        "desc": "⚠️ Последние 10 ошибок системного журнала",
-    },
-    "autorun": {
-        "cmd": "Get-CimInstance Win32_StartupCommand | Select-Object Name,Command,User | Format-Table -Auto",
-        "ps": True, "cat": "system",
-        "desc": "🚀 Программы в автозапуске",
-    },
-    # ─── 🌐 СЕТЬ ───────────────────────────────────────────────────
-    "net_config": {
-        "cmd": "ipconfig /all",
-        "ps": False, "cat": "network",
-        "desc": "🌐 Полная сетевая конфигурация (ipconfig /all)",
-    },
-    "net_adapters": {
-        "cmd": "Get-NetAdapter | Where-Object Status -eq 'Up' | Select-Object Name,InterfaceDescription,LinkSpeed,MacAddress | Format-Table -Auto",
-        "ps": True, "cat": "network",
-        "desc": "🔌 Активные сетевые адаптеры",
-    },
-    "connections": {
-        "cmd": "Get-NetTCPConnection -State Established | Select-Object LocalAddress,LocalPort,RemoteAddress,RemotePort | Sort-Object RemoteAddress | Format-Table -Auto",
-        "ps": True, "cat": "network",
-        "desc": "🔗 Активные TCP-соединения",
-    },
-    "ping_inet": {
-        "cmd": "Test-Connection 8.8.8.8 -Count 4 | Select-Object Address,ResponseTime | Format-Table",
-        "ps": True, "cat": "network",
-        "desc": "🌍 Пинг до 8.8.8.8 (проверка интернета)",
-    },
-    "flush_dns": {
-        "cmd": "ipconfig /flushdns",
-        "ps": False, "cat": "network",
-        "desc": "🧹 Сброс DNS-кэша",
-    },
-    # ─── 🔧 ОБСЛУЖИВАНИЕ ───────────────────────────────────────────
-    "clear_temp": {
-        "cmd": "del /q/f/s %TEMP%\\* 2>nul & del /q/f/s C:\\Windows\\Temp\\* 2>nul & echo Done",
-        "ps": False, "cat": "maintenance",
-        "desc": "🗑 Очистка TEMP-папок (пользователь + система)",
-    },
-    "gpupdate": {
-        "cmd": "gpupdate /force",
-        "ps": False, "cat": "maintenance",
-        "desc": "🔄 Принудительное обновление групповых политик",
-    },
-    "sfc_scan": {
-        "cmd": "sfc /scannow",
-        "ps": False, "cat": "maintenance",
-        "desc": "🛡 Проверка целостности системных файлов Windows",
-    },
-    "check_updates": {
-        "cmd": "(New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher().Search('IsInstalled=0').Updates | Select-Object Title | Format-List",
-        "ps": True, "cat": "maintenance",
-        "desc": "🆙 Доступные обновления Windows",
-    },
-    "installed_soft": {
-        "cmd": "Get-ItemProperty 'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -EA 0 | Where-Object DisplayName | Select-Object DisplayName,DisplayVersion | Sort-Object DisplayName | Format-Table -Auto",
-        "ps": True, "cat": "maintenance",
-        "desc": "📦 Список установленного ПО",
-    },
-    # ─── 🖨 ПРИНТЕРЫ ───────────────────────────────────────────────
-    "printers": {
-        "cmd": "Get-Printer | Select-Object Name,PrinterStatus,PortName,Shared,Default | Format-Table -Auto",
-        "ps": True, "cat": "printers",
-        "desc": "🖨 Список принтеров и их статус",
-    },
-    "restart_spooler": {
-        "cmd": "net stop spooler && net start spooler",
-        "ps": False, "cat": "printers",
-        "desc": "🔄 Перезапуск службы печати (спулер)",
-    },
-    "clear_print_queue": {
-        "cmd": "net stop spooler & del /q/f/s %systemroot%\\System32\\spool\\PRINTERS\\* 2>nul & net start spooler & echo Done",
-        "ps": False, "cat": "printers",
-        "desc": "🗑 Очистка очереди печати + перезапуск спулера",
-    },
-    # ─── 🛡 БЕЗОПАСНОСТЬ ───────────────────────────────────────────
-    "local_admins": {
-        "cmd": "net localgroup administrators",
-        "ps": False, "cat": "security",
-        "desc": "👥 Локальные администраторы",
-    },
-    "local_users": {
-        "cmd": "Get-LocalUser | Select-Object Name,Enabled,LastLogon | Format-Table -Auto",
-        "ps": True, "cat": "security",
-        "desc": "👤 Локальные пользователи и статус учётных записей",
-    },
-    "firewall": {
-        "cmd": "netsh advfirewall show allprofiles state",
-        "ps": False, "cat": "security",
-        "desc": "🔥 Статус брандмауэра Windows (все профили)",
-    },
-    "shares": {
-        "cmd": "net share",
-        "ps": False, "cat": "security",
-        "desc": "📁 Общие папки (сетевые шары)",
-    },
-}
-
-def load_scripts() -> dict:
-    scripts = _load_json(SCRIPTS_FILE, {})
-    for k, v in DEFAULT_SCRIPTS.items():
-        scripts.setdefault(k, v)
-    return scripts
-
-def save_scripts(scripts: dict):
-    _save_json(SCRIPTS_FILE, scripts)
-
-
-# ─── Maintenance Mode (Mutes) ───────────────────────────────────────
-
-def load_mutes() -> dict:
-    return _load_json(MUTE_FILE, {})
-
-def save_mutes(mutes: dict):
-    _save_json(MUTE_FILE, mutes)
-
-def cleanup_expired_mutes():
-    mutes = load_mutes()
-    now = time.time()
-    changed = False
-    for key in list(mutes.keys()):
-        if mutes[key].get("until", 0) and mutes[key]["until"] < now:
-            del mutes[key]
-            changed = True
-    if changed:
-        save_mutes(mutes)
-
-def is_muted(device_name: str, group: str) -> bool:
-    cleanup_expired_mutes()
-    mutes = load_mutes()
-    now = time.time()
-    # Check exact device mute
-    if device_name in mutes:
-        m = mutes[device_name]
-        if m.get("until", 0) == 0 or m["until"] > now:
-            return True
-    # Check group mute
-    if group in mutes:
-        m = mutes[group]
-        if m.get("until", 0) == 0 or m["until"] > now:
-            return True
-    # Check __all__ mute
-    if "__all__" in mutes:
-        m = mutes["__all__"]
-        if m.get("until", 0) == 0 or m["until"] > now:
-            return True
-    return False
-
-def parse_duration(s: str) -> int | None:
-    """Parse duration string like 30m, 2h, 1d into seconds. Returns None on error."""
-    s = s.strip().lower()
-    m = re.match(r'^(\d+)\s*([mhd])$', s)
-    if not m:
-        return None
-    val = int(m.group(1))
-    unit = m.group(2)
-    if unit == 'm':
-        return val * 60
-    elif unit == 'h':
-        return val * 3600
-    elif unit == 'd':
-        return val * 86400
-    return None
-
-
-# ─── Alert Help System ───────────────────────────────────────────────
-
-ALERT_HELP = {
-    "disk": {
-        "title": "💿 Алерт: Диск заполнен",
-        "what": "Срабатывает когда использование диска превышает заданный порог.",
-        "when": "Проверка каждые {interval}с. Алерт отправляется 1 раз в день на устройство.",
-        "config": "🔧 Инструменты → 🔔 Алерты → 💿 Порог\nТекущий порог: {threshold}%\nВарианты: 80%, 85%, 90%, 95%",
-        "action": (
-            "1. Проверьте что занимает место: /run ИмяПК -ps Get-ChildItem C:\\ -Recurse | Sort Length -Desc | Select -First 20 FullName,Length\n"
-            "2. Очистите временные файлы: /run ИмяПК cleanmgr /d C\n"
-            "3. Проверьте корзину, загрузки, логи\n"
-            "4. Используйте /mute ИмяПК 2h для временного отключения"
-        ),
-        "example": "💿 Диск заполнен: PC-OFFICE\nC: 95%, D: 91%",
-    },
-    "av": {
-        "title": "🛡 Алерт: Антивирус выключен",
-        "what": "Срабатывает когда антивирус на устройстве отключён.",
-        "when": "Проверка каждые {interval}с. Алерт 1 раз в день.",
-        "config": "🔧 Инструменты → 🔔 Алерты → 🛡 AV\nВкл/Выкл переключатель",
-        "action": (
-            "1. Проверьте статус: /run ИмяПК -ps Get-MpComputerStatus | Select AntivirusEnabled,RealTimeProtectionEnabled\n"
-            "2. Включите защиту: /run ИмяПК -ps Set-MpPreference -DisableRealtimeMonitoring $false\n"
-            "3. Убедитесь что AV обновлён: /run ИмяПК -ps Update-MpSignature"
-        ),
-        "example": "🛡 Антивирус выключен: LAPTOP-USER\nWindows Defender (off)",
-    },
-    "offline": {
-        "title": "⏰ Алерт: Устройство долго офлайн",
-        "what": "Срабатывает когда устройство не подключалось дольше заданного времени.",
-        "when": "Проверка каждые {interval}с. Алерт 1 раз в день.",
-        "config": "🔧 Инструменты → 🔔 Алерты → ⏰ Офлайн\nТекущий порог: {offline_hours}ч\nВарианты: 6ч, 12ч, 24ч, 48ч, 72ч",
-        "action": (
-            "1. Проверьте физическое подключение устройства\n"
-            "2. Попробуйте Wake-on-LAN из карточки устройства\n"
-            "3. Проверьте сеть на стороне устройства\n"
-            "4. Убедитесь что служба Mesh Agent запущена"
-        ),
-        "example": "⏰ Долго офлайн: SERVER-BACKUP (72ч)",
-    },
-    "new_device": {
-        "title": "🆕 Алерт: Новое устройство",
-        "what": "Срабатывает при обнаружении нового устройства в MeshCentral.",
-        "when": "Проверка каждые {interval}с. Алерт при первом появлении.",
-        "config": "🔧 Инструменты → 🔔 Алерты → 🆕 Новое\nВкл/Выкл переключатель",
-        "action": (
-            "1. Проверьте карточку нового устройства\n"
-            "2. Убедитесь что оно в нужной группе\n"
-            "3. Проверьте установленное ПО и безопасность\n"
-            "4. При необходимости переместите в нужную группу в MC"
-        ),
-        "example": "🆕 Новое устройство: NEW-PC\n💻 Windows 11 Pro\n🌐 192.168.1.50",
-    },
-}
-
-
-# ─── DB Export & Parse (cached, async subprocess) ────────────────────
-
-async def _export_db_async() -> list:
-    global _db_cache, _db_cache_time
-    now = time.time()
-    if _db_cache and (now - _db_cache_time) < DB_CACHE_TTL:
-        return _db_cache
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "node", f"{MC_DIR}/node_modules/meshcentral/meshcentral.js", "--dbexport",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=MC_DIR,
-        )
-        await asyncio.wait_for(proc.wait(), timeout=30)
-    except asyncio.TimeoutError:
-        log.error("DB export timed out")
-        return _db_cache or []
-    except Exception as e:
-        log.error(f"DB export error: {e}")
-        return _db_cache or []
-
-    db_file = f"{MC_DATA}/meshcentral.db.json"
-    if not os.path.exists(db_file):
-        return _db_cache or []
-    try:
-        with open(db_file) as f:
-            data = json.load(f)
-        os.remove(db_file)
-        _db_cache = data
-        _db_cache_time = now
-    except Exception as e:
-        log.error(f"DB parse error: {e}")
-    return _db_cache
-
-
-async def _list_agents_quick() -> list[dict]:
-    """Fast agent list via meshctrl ListDevices (used for WiFi office FSM picker).
-    Returns [{name, group, online, id}]. Much faster than get_full_devices().
-    """
-    key = await _get_login_key()
-    if not key:
-        return []
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "node", MESHCTRL, "ListDevices",
-            "--url", MC_WSS,
-            "--loginkey", key,
-            "--json",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
-        raw = stdout.decode(errors="replace")
-        idx = raw.find("[")
-        if idx == -1:
-            return []
-        data = json.loads(raw[idx:])
-        return [
-            {
-                "id":     d.get("_id", ""),
-                "name":   d.get("name", "?"),
-                "group":  d.get("groupname", ""),
-                "online": bool(d.get("conn", 0) & 1),
-            }
-            for d in data if d.get("name")
-        ]
-    except Exception as e:
-        log.error(f"_list_agents_quick: {e}")
-        return []
-
-
-async def _get_realtime_online_ids() -> set:
-    """Get set of node IDs currently connected via meshctrl ListDevices.
-    Falls back to empty set on error (caller will use lastconnect fallback).
-    Cached for 45 seconds.
-    """
-    global _online_cache, _online_cache_time
-    now = time.time()
-    if _online_cache and (now - _online_cache_time) < 45:
-        return _online_cache
-
-    try:
-        login_key = await _get_login_key()
-        if not login_key:
-            return _online_cache
-        proc = await asyncio.create_subprocess_exec(
-            "node", MESHCTRL, "ListDevices",
-            "--url", MC_WSS,
-            "--loginkey", login_key,
-            "--json",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
-        raw = stdout.decode(errors="replace").strip()
-        # meshctrl may print log lines before JSON — find the JSON array
-        json_start = raw.find("[")
-        if json_start == -1:
-            return _online_cache
-        data = json.loads(raw[json_start:])
-        online_ids: set = set()
-        for dev in data:
-            # conn flag 1 = agent connected
-            if dev.get("conn", 0) & 1:
-                nid = dev.get("_id", "")
-                if nid:
-                    online_ids.add(nid)
-        _online_cache = online_ids
-        _online_cache_time = now
-        return _online_cache
-    except Exception as e:
-        log.warning(f"realtime online ids error: {e}")
-        return _online_cache
-
-
-def _extract_node_id(full_id: str) -> str:
-    for prefix in ("sinode//", "ifnode//", "lcnode//"):
-        if full_id.startswith(prefix):
-            return "node//" + full_id[len(prefix):]
-    return full_id
-
-
-def _fmt_size(b) -> str:
-    b = int(b) if b else 0
-    if b >= 1024**4:
-        return f"{b / 1024**4:.1f} TB"
-    if b >= 1024**3:
-        return f"{b / 1024**3:.0f} GB"
-    if b >= 1024**2:
-        return f"{b / 1024**2:.0f} MB"
-    return f"{b} B"
-
-
-async def get_full_devices() -> list[dict]:
-    """Parse DB into rich device objects with full hardware info."""
-    raw, realtime_online = await asyncio.gather(
-        _export_db_async(),
-        _get_realtime_online_ids(),
+async def ha_history(entity_id: str, hours: int = 24, max_points: int = 300) -> list:
+    """Returns list of (datetime_msk, float) from HA history API, downsampled to max_points."""
+    start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    data = await ha_get(
+        f"history/period/{start}?filter_entity_id={entity_id}&minimal_response=true"
     )
-    if not raw:
+    if not data or not isinstance(data, list) or not data[0]:
         return []
+    points = []
+    for entry in data[0]:
+        try:
+            # minimal_response uses last_changed; full entries also have last_updated
+            ts_str = entry.get("last_changed") or entry.get("last_updated", "")
+            ts  = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).astimezone(MSK)
+            val = float(entry["state"])
+            points.append((ts, val))
+        except (KeyError, ValueError, TypeError):
+            pass
+    # Downsample evenly if too many points
+    if len(points) > max_points:
+        step = len(points) / max_points
+        points = [points[int(i * step)] for i in range(max_points)]
+    return points
 
-    meshes = {r["_id"]: r.get("name", "?") for r in raw if r.get("type") == "mesh"}
-    nodes = {r["_id"]: r for r in raw if r.get("type") == "node"}
-
-    sysinfos = {}
-    ifinfos = {}
-    lastconns = {}
-    for r in raw:
-        rid = r.get("_id", "")
-        rtype = r.get("type", "")
-        if rtype == "sysinfo":
-            sysinfos[_extract_node_id(rid)] = r
-        elif rtype == "ifinfo":
-            ifinfos[_extract_node_id(rid)] = r
-        elif rtype == "lastconnect":
-            lastconns[_extract_node_id(rid)] = r
-
-    devices = []
-    for nid, n in nodes.items():
-        si = sysinfos.get(nid, {})
-        ii = ifinfos.get(nid, {})
-        lc = lastconns.get(nid, {})
-
-        hw = si.get("hardware", {})
-        win = hw.get("windows", {})
-        ident = hw.get("identifiers", {})
-        tpm = hw.get("tpm", {})
-        net_info = hw.get("network", {})
-
-        # CPU
-        cpus = win.get("cpu", [])
-        cpu_str = ", ".join(c.get("Name", "?").strip() for c in cpus) if cpus else ident.get("cpu_name", "-")
-
-        # RAM
-        ram_modules = win.get("memory", [])
-        ram_total = sum(int(m.get("Capacity", 0)) for m in ram_modules)
-        ram_details = []
-        for m in ram_modules:
-            cap = _fmt_size(m.get("Capacity", 0))
-            pn = m.get("PartNumber", "").strip()
-            spd = m.get("Speed", "")
-            slot = m.get("DeviceLocator", "")
-            ram_details.append(f"{slot}: {cap} {pn} {spd}MHz")
-
-        # GPU
-        gpus = win.get("gpu", [])
-        gpu_str = ", ".join(g.get("Name", "?") for g in gpus) if gpus else ", ".join(ident.get("gpu_name", []))
-
-        # Drives
-        drives = win.get("drives", []) or ident.get("storage_devices", [])
-        drive_details = []
-        for d in drives:
-            model = d.get("Model", d.get("Caption", "?"))
-            size = _fmt_size(d.get("Size", 0))
-            drive_details.append(f"{model} ({size})")
-
-        # Volumes
-        volumes = win.get("volumes", {})
-        vol_details = []
-        vol_alerts = []
-        for letter, v in volumes.items():
-            vname = v.get("name", "")
-            vtype = v.get("type", "")
-            vsize = v.get("size", 0)
-            vfree = v.get("sizeremaining", 0)
-            vsize_s = _fmt_size(vsize)
-            vfree_s = _fmt_size(vfree)
-            label = f" [{vname}]" if vname else ""
-            vol_details.append(f"{letter}:{label} {vtype} {vfree_s}/{vsize_s} free")
-            if vsize and vfree:
-                used_pct = (1 - int(vfree) / int(vsize)) * 100
-                if used_pct >= 90:
-                    vol_alerts.append(f"{letter}: {used_pct:.0f}%")
-
-        # Motherboard & BIOS
-        board = f"{ident.get('board_vendor', '')} {ident.get('board_name', '')}".strip() or "-"
-        board_sn = ident.get("board_serial", "-")
-        bios_date = ident.get("bios_date", "")
-        bios = f"{ident.get('bios_vendor', '')} v{ident.get('bios_version', '')} ({bios_date[:8]})".strip()
-        bios_mode = ident.get("bios_mode", "-")
-
-        # OS details
-        osinfo = win.get("osinfo", {})
-        os_full = osinfo.get("Caption", n.get("osdesc", ""))
-        os_arch = osinfo.get("OSArchitecture", "")
-        os_build = osinfo.get("BuildNumber", "")
-        os_sn = osinfo.get("SerialNumber", "-")
-        os_install = osinfo.get("InstallDate", "")[:8] if osinfo.get("InstallDate") else "-"
-        os_domain = osinfo.get("Domain", "WORKGROUP")
-
-        # Antivirus
-        av_list = n.get("av", [])
-        av_str = ", ".join(
-            f"{a.get('product', '?')} ({'on' if a.get('enabled') else 'off'})"
-            for a in av_list
-        ) if av_list else "-"
-        av_disabled = any(not a.get("enabled", True) for a in av_list) if av_list else False
-        wsc = n.get("wsc", {})
-
-        # TPM
-        tpm_str = f"v{tpm.get('SpecVersion', '?')} {tpm.get('ManufacturerId', '')}" if tpm else "-"
-
-        # Network interfaces
-        netifs = ii.get("netif2", {})
-        nic_details = []
-        for iname, addrs in netifs.items():
-            if "Loopback" in iname:
-                continue
-            ipv4s = [a["address"] for a in addrs if a.get("family") == "IPv4" and not a["address"].startswith("169.254")]
-            mac = addrs[0].get("mac", "") if addrs else ""
-            status = addrs[0].get("status", "") if addrs else ""
-            speed = addrs[0].get("speed", 0) if addrs else 0
-            speed_str = f"{speed // 1_000_000}Mbps" if speed and speed < 9e18 else ""
-            if ipv4s:
-                nic_details.append({"name": iname, "ips": ipv4s, "mac": mac, "status": status, "speed": speed_str})
-
-        # Online status: prefer real-time from meshctrl (conn flag), fallback to lastconnect
-        lc_time = lc.get("time")
-        lc_addr = lc.get("addr", "-")
-        if realtime_online:
-            # meshctrl gave us live data — use it as source of truth
-            online = nid in realtime_online
-            offline_hours = 0 if online else (
-                (time.time() * 1000 - lc_time) / 3_600_000 if lc_time else 0
-            )
-        else:
-            # fallback: use lastconnect timestamp (less accurate for stable connections)
-            online = False
-            offline_hours = 0
-            if lc_time:
-                diff_ms = time.time() * 1000 - lc_time
-                online = diff_ms < 300_000
-                offline_hours = diff_ms / 3_600_000 if not online else 0
-
-        # Users
-        users = n.get("users", [])
-        last_boot = n.get("lastbootuptime")
-        boot_str = datetime.fromtimestamp(last_boot / 1000, tz=timezone.utc).strftime("%d.%m.%Y %H:%M") if last_boot else "-"
-
-        # Resolution
-        res_str = "-"
-        if gpus:
-            g = gpus[0]
-            h = g.get("CurrentHorizontalResolution")
-            v = g.get("CurrentVerticalResolution")
-            if h and v:
-                res_str = f"{h}x{v}"
-
-        # Software
-        software = win.get("software", {})
-        sw_list = []
-        if isinstance(software, dict):
-            for sw_name, sw_info in software.items():
-                ver = sw_info.get("version", "") if isinstance(sw_info, dict) else ""
-                sw_list.append({"name": sw_name, "version": ver})
-        elif isinstance(software, list):
-            for sw in software:
-                sw_list.append({"name": sw.get("name", "?"), "version": sw.get("version", "")})
-
-        nic_str_list = []
-        for nic in nic_details[:5]:
-            nic_str_list.append(f"{nic['name']}: {', '.join(nic['ips'])} ({nic['mac']}) {nic['speed']} [{nic['status']}]")
-
-        devices.append({
-            "id": nid,
-            "name": n.get("name", "?"),
-            "group": meshes.get(n.get("meshid", ""), "?"),
-            "online": online,
-            "ip": n.get("ip", ""),
-            "lc_addr": lc_addr,
-            "offline_hours": offline_hours,
-            # OS
-            "os": os_full,
-            "os_arch": os_arch,
-            "os_build": os_build,
-            "os_sn": os_sn,
-            "os_install": os_install,
-            "os_domain": os_domain,
-            # Hardware
-            "cpu": cpu_str,
-            "ram_total": _fmt_size(ram_total),
-            "ram_details": ram_details,
-            "gpu": gpu_str or "-",
-            "resolution": res_str,
-            "drives": drive_details,
-            "volumes": vol_details,
-            "vol_alerts": vol_alerts,
-            "volumes_raw": {lt: {"total": int(v.get("size", 0)), "free": int(v.get("sizeremaining", 0))} for lt, v in volumes.items() if v.get("size", 0) > 0},
-            "board": board,
-            "board_sn": board_sn,
-            "bios": bios,
-            "bios_mode": bios_mode,
-            "tpm": tpm_str,
-            # Security
-            "antivirus": av_str,
-            "av_disabled": av_disabled,
-            "firewall": wsc.get("firewall", "-"),
-            "auto_update": wsc.get("autoUpdate", "-"),
-            # Network
-            "nics": nic_str_list,
-            "nic_details": nic_details,
-            "dns": net_info.get("dns", []),
-            # Users
-            "users": users,
-            "last_boot": boot_str,
-            # Agent
-            "agent_ver": str(n.get("agent", {}).get("ver", "")),
-            "agent_core": n.get("agent", {}).get("core", ""),
-            # Software
-            "software": sw_list,
-        })
-
-    return devices
-
-
-# ─── Device card ─────────────────────────────────────────────────────
-
-def build_device_card(d: dict) -> str:
-    icon = "🟢" if d["online"] else "⚪"
-    lines = [
-        f"━━━━━━━━━━━━━━━━━━━━━━",
-        f"📱 <b>{d['name']}</b>  {icon}",
-        f"━━━━━━━━━━━━━━━━━━━━━━",
-        f"",
-        f"📁 Группа: <b>{d['group']}</b>",
-        f"🌐 IP: <code>{d['ip']}</code>",
-        f"🔗 Endpoint: <code>{d['lc_addr']}</code>",
-        f"",
-        f"<b>── ОС ──</b>",
-        f"💻 {d['os']} {d['os_arch']}",
-        f"🔢 Build: {d['os_build']}  SN: <code>{d['os_sn']}</code>",
-        f"📅 Установлена: {d['os_install']}  Domain: {d['os_domain']}",
-        f"",
-        f"<b>── Железо ──</b>",
-        f"🧠 CPU: {d['cpu']}",
-        f"💾 RAM: <b>{d['ram_total']}</b>",
-    ]
-    for rm in d["ram_details"]:
-        lines.append(f"   • {rm}")
-
-    lines += [
-        f"🎮 GPU: {d['gpu']}",
-        f"🖥 Разрешение: {d['resolution']}",
-        f"🔧 Плата: {d['board']} (SN: {d['board_sn']})",
-        f"⚙️ BIOS: {d['bios']} [{d['bios_mode']}]",
-        f"🔐 TPM: {d['tpm']}",
-        f"",
-        f"<b>── Диски ──</b>",
-    ]
-    for dr in d["drives"]:
-        lines.append(f"   💿 {dr}")
-    if d["volumes"]:
-        lines.append(f"<b>── Тома ──</b>")
-        for v in d["volumes"]:
-            lines.append(f"   📂 {v}")
-
-    lines += [
-        f"",
-        f"<b>── Безопасность ──</b>",
-        f"🛡 AV: {d['antivirus']}",
-        f"🧱 Firewall: {d['firewall']}  Updates: {d['auto_update']}",
-        f"",
-        f"<b>── Сеть ──</b>",
-    ]
-    for nic in d["nics"][:5]:
-        lines.append(f"   🔌 {nic}")
-    if d["dns"]:
-        lines.append(f"   DNS: {', '.join(d['dns'])}")
-
-    lines += [
-        f"",
-        f"👤 Пользователи: {', '.join(d['users']) or '-'}",
-        f"🔄 Последняя загрузка: {d['last_boot']}",
-        f"🤖 Агент: v{d['agent_ver']} ({d['agent_core'][:20]})",
-    ]
-
-    if d.get("vol_alerts"):
-        lines.append(f"")
-        lines.append(f"⚠️ <b>Диск заполнен:</b> {', '.join(d['vol_alerts'])}")
-    if d.get("av_disabled"):
-        lines.append(f"⚠️ <b>Антивирус выключен!</b>")
-
-    return "\n".join(lines)
-
-
-def build_inventory_csv(devices: list[dict]) -> bytes:
-    buf = io.StringIO()
-    w = csv.writer(buf, delimiter=";")
-    w.writerow([
-        "Имя", "Группа", "Online", "IP", "ОС", "Архитектура", "Build", "OS SN", "Domain",
-        "CPU", "RAM", "RAM модули", "GPU", "Разрешение",
-        "Материнская плата", "Board SN", "BIOS", "TPM",
-        "Диски", "Тома",
-        "Антивирус", "Firewall", "Auto Update",
-        "Сетевые адаптеры", "DNS", "Пользователи", "Последняя загрузка",
-    ])
-    for d in devices:
-        w.writerow([
-            d["name"], d["group"], "Yes" if d["online"] else "No", d["ip"],
-            d["os"], d["os_arch"], d["os_build"], d["os_sn"], d["os_domain"],
-            d["cpu"], d["ram_total"], " | ".join(d["ram_details"]), d["gpu"], d["resolution"],
-            d["board"], d["board_sn"], d["bios"], d["tpm"],
-            " | ".join(d["drives"]), " | ".join(d["volumes"]),
-            d["antivirus"], d["firewall"], d["auto_update"],
-            " | ".join(d["nics"]), ", ".join(d["dns"]),
-            ", ".join(d["users"]), d["last_boot"],
-        ])
-    return ("\ufeff" + buf.getvalue()).encode("utf-8")
-
-
-def build_inventory_pdf(devices: list[dict], title: str = "MeshCentral Inventory") -> bytes:
-    """Generate a PDF report with device inventory."""
-    FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-    FONT_B = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-    FONT_M = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
-
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_font("ds", "", FONT, uni=True)
-    pdf.add_font("ds", "B", FONT_B, uni=True)
-    pdf.add_font("dm", "", FONT_M, uni=True)
-
-    # ── Title page ──
-    pdf.add_page()
-    pdf.set_font("ds", "B", 22)
-    pdf.cell(0, 40, "", ln=True)
-    pdf.cell(0, 15, title, ln=True, align="C")
-    pdf.set_font("ds", "", 12)
-    ts = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
-    pdf.cell(0, 10, ts, ln=True, align="C")
-    pdf.cell(0, 8, f"{len(devices)} devices", ln=True, align="C")
-
-    online = sum(1 for d in devices if d["online"])
-    offline = len(devices) - online
-    pdf.cell(0, 8, f"Online: {online}  |  Offline: {offline}", ln=True, align="C")
-    pdf.cell(0, 20, "", ln=True)
-
-    # ── Summary table ──
-    pdf.set_font("ds", "B", 14)
-    pdf.cell(0, 10, "Summary", ln=True)
-    pdf.set_font("ds", "", 9)
-
-    col_w = [8, 45, 30, 12, 40, 25, 22, 12]
-    headers = ["#", "Name", "Group", "Status", "OS", "CPU", "RAM", "Agent"]
-    pdf.set_fill_color(41, 128, 185)
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font("ds", "B", 8)
-    for i, h in enumerate(headers):
-        pdf.cell(col_w[i], 7, h, border=1, fill=True, align="C")
-    pdf.ln()
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_font("ds", "", 7)
-
-    for idx, d in enumerate(sorted(devices, key=lambda x: x["name"]), 1):
-        if pdf.get_y() > 270:
-            pdf.add_page()
-        fill = idx % 2 == 0
-        if fill:
-            pdf.set_fill_color(235, 245, 251)
-        status = "ON" if d["online"] else "OFF"
-        os_short = d["os"][:25] if len(d["os"]) > 25 else d["os"]
-        cpu_short = d["cpu"][:16] if len(d["cpu"]) > 16 else d["cpu"]
-        vals = [str(idx), d["name"][:28], d["group"][:18], status, os_short, cpu_short, d["ram_total"], d["agent_ver"][:8]]
-        for i, v in enumerate(vals):
-            pdf.cell(col_w[i], 6, v, border=1, fill=fill, align="C" if i in (0, 3) else "L")
-        pdf.ln()
-
-    # ── Device cards ──
-    for d in sorted(devices, key=lambda x: x["name"]):
-        pdf.add_page()
-        icon = "[ON]" if d["online"] else "[OFF]"
-
-        # Header bar
-        pdf.set_fill_color(41, 128, 185)
-        pdf.set_text_color(255, 255, 255)
-        pdf.set_font("ds", "B", 14)
-        pdf.cell(0, 10, f"  {d['name']}  {icon}", ln=True, fill=True)
-        pdf.set_text_color(0, 0, 0)
-        pdf.cell(0, 3, "", ln=True)
-
-        def section(label):
-            pdf.set_font("ds", "B", 10)
-            pdf.set_fill_color(230, 230, 230)
-            pdf.cell(0, 7, f"  {label}", ln=True, fill=True)
-
-        def row(key, val):
-            pdf.set_font("ds", "B", 8)
-            pdf.cell(45, 5, f"  {key}:", align="L")
-            pdf.set_font("ds", "", 8)
-            pdf.cell(0, 5, str(val)[:90], ln=True)
-
-        section("General")
-        row("Group", d["group"])
-        row("IP", d["ip"])
-        row("Endpoint", d["lc_addr"])
-        row("Last boot", d["last_boot"])
-        row("Users", ", ".join(d["users"]) or "-")
-
-        section("OS")
-        row("OS", f"{d['os']} {d['os_arch']}")
-        row("Build", d["os_build"])
-        row("OS SN", d["os_sn"])
-        row("Install date", d["os_install"])
-        row("Domain", d["os_domain"])
-
-        section("Hardware")
-        row("CPU", d["cpu"])
-        row("RAM", d["ram_total"])
-        for rm in d["ram_details"][:4]:
-            row("  Module", rm)
-        row("GPU", d["gpu"])
-        row("Resolution", d["resolution"])
-        row("Motherboard", f"{d['board']} (SN: {d['board_sn']})")
-        row("BIOS", f"{d['bios']} [{d['bios_mode']}]")
-        row("TPM", d["tpm"])
-
-        section("Storage")
-        for dr in d["drives"][:6]:
-            row("Drive", dr)
-        for v in d["volumes"][:6]:
-            row("Volume", v)
-
-        section("Security")
-        row("Antivirus", d["antivirus"])
-        row("Firewall", d["firewall"])
-        row("Auto Update", d["auto_update"])
-
-        section("Network")
-        for nic in d["nics"][:4]:
-            row("NIC", nic[:85])
-        if d["dns"]:
-            row("DNS", ", ".join(d["dns"]))
-
-        row("Agent", f"v{d['agent_ver']}")
-
-        # Alerts
-        if d.get("vol_alerts") or d.get("av_disabled"):
-            pdf.cell(0, 3, "", ln=True)
-            pdf.set_font("ds", "B", 9)
-            pdf.set_text_color(200, 0, 0)
-            if d.get("vol_alerts"):
-                pdf.cell(0, 6, f"  WARNING: Disk full — {', '.join(d['vol_alerts'])}", ln=True)
-            if d.get("av_disabled"):
-                pdf.cell(0, 6, "  WARNING: Antivirus disabled!", ln=True)
-            pdf.set_text_color(0, 0, 0)
-
-    buf = io.BytesIO()
-    pdf.output(buf)
-    buf.seek(0)
-    return buf.read()
-
-
-def build_single_device_pdf(d: dict) -> bytes:
-    """Generate a PDF for a single device."""
-    return build_inventory_pdf([d], title=f"Device Report: {d['name']}")
-
-
-def _xlsx_safe(v) -> str:
-    """Strip illegal control characters from a string for openpyxl cells."""
-    import re as _re
-    s = str(v) if v is not None else ""
-    # openpyxl rejects chars outside printable XML range
-    return _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', s)
-
-
-def build_inventory_xlsx(devices: list[dict]) -> bytes | None:
-    """Generate an Excel report with Summary + per-group sheets."""
-    if not HAS_OPENPYXL:
+def _make_chart(series: list, title: str, ylabel: str, color: str = "#4fc3f7") -> bytes | None:
+    """Generate dark-theme PNG chart with min/max/avg annotations."""
+    if not series:
         return None
+    times, values = zip(*series)
+    values_list = list(values)
+    v_min, v_max, v_avg = min(values_list), max(values_list), sum(values_list)/len(values_list)
+    v_last = values_list[-1]
 
-    wb = Workbook()
-    green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-    red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-    yellow_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
-    header_fill = PatternFill(start_color="2980B9", end_color="2980B9", fill_type="solid")
-    header_font = Font(bold=True, color="FFFFFF", size=10)
-    thin_border = Border(
-        left=Side(style='thin'), right=Side(style='thin'),
-        top=Side(style='thin'), bottom=Side(style='thin'),
-    )
+    fig, ax = plt.subplots(figsize=(11, 4.5))
+    fig.patch.set_facecolor("#0f0f1a")
+    ax.set_facecolor("#0f0f1a")
 
-    headers = [
-        "Имя", "Группа", "Статус", "IP", "ОС", "Build",
-        "CPU", "RAM", "GPU", "Диски", "Тома",
-        "Антивирус", "Firewall", "TPM", "Агент",
-    ]
+    # Fill + line
+    ax.fill_between(times, values, alpha=0.15, color=color)
+    ax.plot(times, values, color=color, linewidth=1.8, zorder=3)
 
-    def write_device_sheet(ws, devs_list):
-        for col_idx, h in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col_idx, value=h)
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.border = thin_border
-            cell.alignment = Alignment(horizontal="center")
+    # Current value dot
+    ax.scatter([times[-1]], [v_last], color=color, s=50, zorder=5)
 
-        for row_idx, d in enumerate(sorted(devs_list, key=lambda x: x["name"]), 2):
-            status = "Online" if d["online"] else "Offline"
-            has_alerts = bool(d.get("vol_alerts") or d.get("av_disabled"))
-            row_fill = green_fill if d["online"] else (yellow_fill if has_alerts else red_fill)
+    # Horizontal reference lines
+    ax.axhline(v_avg, color="#555577", linewidth=0.8, linestyle="--", alpha=0.7)
 
-            vals = [
-                d["name"], d["group"], status, d["ip"],
-                d["os"], d["os_build"],
-                d["cpu"], d["ram_total"], d["gpu"],
-                " | ".join(d["drives"]), " | ".join(d["volumes"]),
-                d["antivirus"], d["firewall"], d["tpm"], d["agent_ver"],
-            ]
-            for col_idx, val in enumerate(vals, 1):
-                cell = ws.cell(row=row_idx, column=col_idx, value=_xlsx_safe(val))
-                cell.border = thin_border
-                if col_idx == 3:
-                    cell.fill = row_fill
+    # Min/Max/Avg annotations
+    x_mid = times[len(times)//2]
+    ax.annotate(f"ср: {v_avg:.1f}", xy=(x_mid, v_avg),
+                xytext=(0, 6), textcoords="offset points",
+                color="#666688", fontsize=8, ha="center")
+    ax.annotate(f"▲ {v_max:.1f}", xy=(times[values_list.index(v_max)], v_max),
+                xytext=(0, 6), textcoords="offset points",
+                color="#ff8888", fontsize=8, ha="center")
+    ax.annotate(f"▼ {v_min:.1f}", xy=(times[values_list.index(v_min)], v_min),
+                xytext=(0, -12), textcoords="offset points",
+                color="#88aaff", fontsize=8, ha="center")
 
-        # Auto column widths
-        for col in range(1, len(headers) + 1):
-            max_len = len(str(headers[col - 1]))
-            for row in range(2, ws.max_row + 1):
-                val = ws.cell(row=row, column=col).value
-                if val:
-                    max_len = max(max_len, min(len(str(val)), 50))
-            ws.column_dimensions[get_column_letter(col)].width = max_len + 2
+    # Title with current value
+    ax.set_title(f"{title}  |  сейчас: {v_last:.1f} {ylabel}",
+                 color="#ccccee", fontsize=12, pad=10, loc="left")
+    ax.set_ylabel(ylabel, color="#666688", fontsize=9)
 
-    # Summary sheet
-    ws = wb.active
-    ws.title = "Summary"
-    write_device_sheet(ws, devices)
+    ax.tick_params(colors="#555577", labelsize=8)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=MSK))
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=4, maxticks=8))
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#222234")
+    ax.grid(axis="y", color="#1e1e2e", linewidth=0.8, alpha=0.9)
+    ax.grid(axis="x", color="#1a1a2a", linewidth=0.5, alpha=0.6)
+    ax.set_xlim(times[0], times[-1])
 
-    # Per-group sheets
-    by_group: dict[str, list] = {}
-    for d in devices:
-        by_group.setdefault(d["group"], []).append(d)
-    for group_name in sorted(by_group.keys()):
-        safe_name = re.sub(r'[\\/*?\[\]:]', '_', group_name)[:30]
-        ws_g = wb.create_sheet(title=safe_name)
-        write_device_sheet(ws_g, by_group[group_name])
-
-    # ── Printers sheet ───────────────────────────────────────────────
-    printers_db = _load_printers()
-    if printers_db:
-        ws_prn = wb.create_sheet(title="Принтеры")
-        prn_headers = ["Устройство", "Группа", "Принтер", "Драйвер", "IP", "Статус",
-                       "Умолч.", "Общий", "Чернила"]
-        for col_idx, h in enumerate(prn_headers, 1):
-            cell = ws_prn.cell(row=1, column=col_idx, value=h)
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.border = thin_border
-            cell.alignment = Alignment(horizontal="center")
-        prn_row = 2
-        for dev_name in sorted(printers_db.keys()):
-            pinfo = printers_db[dev_name]
-            grp   = pinfo.get("group", "")
-            for p in pinfo.get("printers", []):
-                if p.get("is_virtual"):
-                    continue
-                pname = p.get("name", "") or ""
-                if not pname.strip():
-                    continue
-                ink_parts = []
-                for s in p.get("supplies", []):
-                    pct = s.get("pct", -1)
-                    desc = s.get("desc", "")
-                    if pct >= 0:
-                        ink_parts.append(f"{desc}: {pct}%")
-                ink_str = " | ".join(ink_parts) if ink_parts else "—"
-                vals = [
-                    dev_name, grp, pname,
-                    p.get("driver", ""), p.get("printer_ip", ""),
-                    _printer_status_str(p.get("status", 0)).replace("✅ ", "").replace("❌ ", "").replace("⚠️ ", "").replace("🖨 ", "").replace("⏸ ", "").replace("🔌 ", "").replace("⏳ ", ""),
-                    "Да" if p.get("default") else "", "Да" if p.get("shared") else "",
-                    ink_str,
-                ]
-                for col_idx, val in enumerate(vals, 1):
-                    cell = ws_prn.cell(row=prn_row, column=col_idx, value=_xlsx_safe(val))
-                    cell.border = thin_border
-                prn_row += 1
-        # Auto column widths
-        for col in range(1, len(prn_headers) + 1):
-            max_len = len(str(prn_headers[col - 1]))
-            for row in range(2, ws_prn.max_row + 1):
-                val = ws_prn.cell(row=row, column=col).value
-                if val:
-                    max_len = max(max_len, min(len(str(val)), 50))
-            ws_prn.column_dimensions[get_column_letter(col)].width = max_len + 2
+    fig.autofmt_xdate(rotation=20)
+    fig.tight_layout(pad=1.2)
 
     buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return buf.read()
-
-
-# ─── Network Map Helpers ─────────────────────────────────────────────
-
-def _get_local_ip(d: dict) -> str:
-    """Best local IP: 192.168.x.x > 10.x.x.x > 172.x.x.x > other."""
-    best, priority = "", 999
-    for nic in d.get("nic_details", []):
-        for ip in nic.get("ips", []):
-            if ip.startswith("127.") or ip.startswith("169.254."):
-                continue
-            if ip.startswith("192.168."):
-                p = 0
-            elif ip.startswith("10."):
-                p = 1
-            elif ip.startswith("172."):
-                p = 2
-            else:
-                p = 3
-            if p < priority:
-                priority, best = p, ip
-    return best
-
-
-def _os_icon(os_str: str) -> str:
-    """Short OS label with emoji."""
-    s = (os_str or "").lower()
-    if "windows 11" in s:
-        return "W11"
-    if "windows 10" in s:
-        return "W10"
-    if "windows" in s:
-        return "Win"
-    if "linux" in s or "debian" in s or "ubuntu" in s:
-        return "Lnx"
-    if "mac" in s or "darwin" in s:
-        return "Mac"
-    return ""
-
-
-def _os_emoji(os_str: str) -> str:
-    """Emoji for OS (HTML map)."""
-    s = (os_str or "").lower()
-    if "windows" in s:
-        return "🪟"
-    if "linux" in s or "debian" in s or "ubuntu" in s:
-        return "🐧"
-    if "mac" in s or "darwin" in s:
-        return "🍎"
-    return "💻"
-
-
-def _os_node_color(os_str: str) -> tuple[str, str]:
-    """(border_color, bg_color) for HTML node by OS type."""
-    s = (os_str or "").lower()
-    if "windows" in s:
-        return "#0078d4", "#e8f4fd"
-    if "linux" in s or "debian" in s or "ubuntu" in s:
-        return "#e67e22", "#fef9f0"
-    if "mac" in s or "darwin" in s:
-        return "#555", "#f5f5f5"
-    return "#95a5a6", "#fafafa"
-
-
-def _fmt_offline(hours: float) -> str:
-    """Human-readable offline duration."""
-    if hours <= 0:
-        return ""
-    if hours < 1:
-        return f"{int(hours * 60)}м"
-    if hours < 24:
-        return f"{int(hours)}ч"
-    return f"{int(hours / 24)}д"
-
-
-def _read_vis_js() -> str:
-    """Read local vis-network.min.js for embedding."""
-    try:
-        return Path("/opt/meshcentral-bot/vis-network.min.js").read_text(encoding="utf-8")
-    except Exception:
-        return ""
-
-
-def build_network_map(devices: list[dict]) -> bytes | None:
-    """Build a professional network map grouped by office/location (ext IP) and MC group."""
-    from matplotlib.patches import FancyBboxPatch
-    from matplotlib.lines import Line2D
-
-    if not devices:
-        return None
-
-    # ── Group devices by external IP (= office/location) ──
-    locations: dict[str, dict[str, list[dict]]] = {}
-    for d in devices:
-        ext_ip = d.get("ip", "") or "Unknown"
-        group = d.get("group", "?")
-        d["_local_ip"] = _get_local_ip(d)
-        locations.setdefault(ext_ip, {}).setdefault(group, []).append(d)
-
-    # ── Office colors ──
-    office_colors = [
-        ("#1a5276", "#d4e6f1"),  # dark blue / light blue
-        ("#6c3483", "#e8daef"),  # purple / light purple
-        ("#117a65", "#d1f2eb"),  # teal / light teal
-        ("#935116", "#fae5d3"),  # brown / light brown
-        ("#1b4f72", "#d6eaf8"),  # navy / light navy
-    ]
-    group_badge_colors = ["#2980b9", "#8e44ad", "#27ae60", "#e67e22", "#c0392b", "#16a085", "#f39c12"]
-
-    # ── Sort locations: biggest first ──
-    sorted_locs = sorted(locations.items(), key=lambda x: -sum(len(v) for v in x[1].values()))
-
-    # ── Calculate layout ──
-    CARD_W, CARD_H = 2.8, 0.8
-    CARD_PAD = 0.3
-    COLS_PER_ROW = 4
-    GROUP_PAD = 0.6
-    LOC_PAD = 1.0
-    LEFT_MARGIN = 0.5
-    TOP_START = 0.0  # will be computed from top
-
-    # Pre-calculate total height
-    total_height = 3.0  # server block + gap
-    loc_layouts = []
-    for loc_ip, groups in sorted_locs:
-        loc_h = 1.0  # header
-        for grp_name, grp_devs in sorted(groups.items()):
-            n_devs = len(grp_devs)
-            n_rows = (n_devs + COLS_PER_ROW - 1) // COLS_PER_ROW
-            loc_h += 0.6 + n_rows * (CARD_H + CARD_PAD) + GROUP_PAD
-        loc_layouts.append((loc_ip, groups, loc_h))
-        total_height += loc_h + LOC_PAD
-
-    fig_w = max(14, COLS_PER_ROW * (CARD_W + CARD_PAD) + 3)
-    fig_h = max(8, total_height + 1)
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-    ax.set_xlim(-0.5, fig_w - 0.5)
-    ax.set_ylim(-0.5, fig_h + 0.5)
-    ax.axis("off")
-    fig.patch.set_facecolor("#f8f9fa")
-    ax.set_facecolor("#f8f9fa")
-
-    # ── Draw MeshCentral Server block at top ──
-    srv_y = fig_h - 1.5
-    srv_w, srv_h = 5, 1.2
-    srv_x = (fig_w - srv_w) / 2
-    srv_box = FancyBboxPatch((srv_x, srv_y - srv_h / 2), srv_w, srv_h,
-                              boxstyle="round,pad=0.15", facecolor="#2c3e50",
-                              edgecolor="#1a252f", linewidth=2)
-    ax.add_patch(srv_box)
-    ax.text(srv_x + srv_w / 2, srv_y + 0.15, "MeshCentral Server",
-            fontsize=11, fontweight="bold", color="white", ha="center", va="center")
-    mc_host = MC_URL.replace("https://", "").replace("http://", "").rstrip("/")
-    ax.text(srv_x + srv_w / 2, srv_y - 0.25, mc_host,
-            fontsize=8, color="#bdc3c7", ha="center", va="center", fontfamily="monospace")
-
-    # ── Draw each location ──
-    cur_y = srv_y - srv_h / 2 - 1.5
-    n_online = sum(1 for d in devices if d.get("online"))
-    n_total = len(devices)
-
-    for li, (loc_ip, groups, loc_h) in enumerate(loc_layouts):
-        ci = li % len(office_colors)
-        hdr_color, bg_color = office_colors[ci]
-
-        # Count devices in this location
-        loc_devs = sum(len(v) for v in groups.values())
-        loc_online = sum(1 for grp in groups.values() for d in grp if d.get("online"))
-
-        # Determine location subnet from local IPs
-        local_subnets = set()
-        for grp_devs in groups.values():
-            for d in grp_devs:
-                lip = d.get("_local_ip", "")
-                if lip:
-                    try:
-                        local_subnets.add(str(ipaddress.ip_network(f"{lip}/24", strict=False)))
-                    except (ValueError, TypeError):
-                        pass
-        subnet_str = ", ".join(sorted(local_subnets)) if local_subnets else "?"
-
-        # Location background
-        loc_box = FancyBboxPatch((LEFT_MARGIN - 0.3, cur_y - loc_h + 0.5), fig_w - 1.2, loc_h,
-                                  boxstyle="round,pad=0.2", facecolor=bg_color,
-                                  edgecolor=hdr_color, linewidth=1.5, alpha=0.6)
-        ax.add_patch(loc_box)
-
-        # Connection line from server to location
-        line_x = fig_w / 2
-        ax.annotate("", xy=(line_x, cur_y + 0.3), xytext=(line_x, cur_y + 1.0),
-                     arrowprops=dict(arrowstyle="-|>", color=hdr_color, lw=1.5))
-
-        # Location header
-        ax.text(LEFT_MARGIN, cur_y, f"WAN: {loc_ip}", fontsize=10, fontweight="bold",
-                color=hdr_color, va="center", fontfamily="monospace")
-        ax.text(LEFT_MARGIN, cur_y - 0.35, f"LAN: {subnet_str}  |  {loc_online}/{loc_devs} online",
-                fontsize=8, color="#555", va="center")
-
-        # Draw groups inside location
-        inner_y = cur_y - 0.8
-        for gi, (grp_name, grp_devs) in enumerate(sorted(groups.items())):
-            badge_color = group_badge_colors[gi % len(group_badge_colors)]
-
-            # Group badge
-            badge_w = len(grp_name) * 0.12 + 0.5
-            badge = FancyBboxPatch((LEFT_MARGIN, inner_y - 0.15), badge_w, 0.35,
-                                    boxstyle="round,pad=0.08", facecolor=badge_color,
-                                    edgecolor="none", alpha=0.85)
-            ax.add_patch(badge)
-            ax.text(LEFT_MARGIN + badge_w / 2, inner_y + 0.03, grp_name,
-                    fontsize=8, fontweight="bold", color="white", ha="center", va="center")
-
-            inner_y -= 0.55
-
-            # Draw device cards in grid
-            sorted_devs = sorted(grp_devs, key=lambda x: x.get("_local_ip", ""))
-            for di, d in enumerate(sorted_devs):
-                col = di % COLS_PER_ROW
-                row = di // COLS_PER_ROW
-                cx = LEFT_MARGIN + col * (CARD_W + CARD_PAD)
-                cy = inner_y - row * (CARD_H + CARD_PAD)
-
-                # Card background
-                is_on = d.get("online", False)
-                off_h = d.get("offline_hours", 0)
-                is_stale = (not is_on) and off_h > 7 * 24  # >7 days
-                if is_on:
-                    card_face, card_edge, card_lw = "#ffffff", "#2ecc71", 1.5
-                elif is_stale:
-                    card_face, card_edge, card_lw = "#f0f0f0", "#aaaaaa", 0.6
-                else:
-                    card_face, card_edge, card_lw = "#fff5f5", "#e74c3c", 0.9
-
-                card = FancyBboxPatch((cx, cy - CARD_H), CARD_W, CARD_H,
-                                       boxstyle="round,pad=0.08", facecolor=card_face,
-                                       edgecolor=card_edge, linewidth=card_lw)
-                ax.add_patch(card)
-
-                # Status dot
-                dot_color = "#2ecc71" if is_on else ("#aaaaaa" if is_stale else "#e74c3c")
-                dot = plt.Circle((cx + 0.18, cy - 0.2), 0.08, color=dot_color, ec="none")
-                ax.add_patch(dot)
-
-                # Device name (truncate if needed)
-                dev_name = d.get("name", "?")
-                if len(dev_name) > 22:
-                    dev_name = dev_name[:20] + ".."
-                ax.text(cx + 0.35, cy - 0.22, dev_name,
-                        fontsize=7, fontweight="bold", color="#2c3e50", va="center",
-                        clip_on=True)
-
-                # Local IP
-                lip = d.get("_local_ip", "")
-                if lip:
-                    ax.text(cx + 0.18, cy - 0.5, lip,
-                            fontsize=6.5, color="#7f8c8d", va="center", fontfamily="monospace")
-
-                # OS label (right side)
-                os_short = _os_icon(d.get("os", ""))
-                if os_short:
-                    os_colors = {"W11": "#0078d4", "W10": "#0078d4", "Win": "#0078d4",
-                                 "Lnx": "#e67e22", "Mac": "#555"}
-                    ax.text(cx + CARD_W - 0.12, cy - 0.22, os_short,
-                            fontsize=6, fontweight="bold",
-                            color=os_colors.get(os_short, "#95a5a6"),
-                            va="center", ha="right")
-
-                # Offline duration (bottom-right of card)
-                if not is_on and off_h > 0:
-                    off_str = _fmt_offline(off_h)
-                    ax.text(cx + CARD_W - 0.12, cy - 0.52, off_str,
-                            fontsize=5.5, color="#e74c3c" if not is_stale else "#aaaaaa",
-                            va="center", ha="right")
-
-            n_rows = (len(sorted_devs) + COLS_PER_ROW - 1) // COLS_PER_ROW
-            inner_y -= n_rows * (CARD_H + CARD_PAD) + GROUP_PAD
-
-        cur_y -= loc_h + LOC_PAD
-
-    # ── Legend ──
-    n_stale = sum(1 for d in devices if not d.get("online") and d.get("offline_hours", 0) > 7 * 24)
-    legend_y = fig_h - 0.15
-    legend_elements = [
-        Line2D([0], [0], marker="o", color="w", markerfacecolor="#2ecc71",
-               markersize=8, label=f"Online ({n_online})"),
-        Line2D([0], [0], marker="o", color="w", markerfacecolor="#e74c3c",
-               markersize=8, label=f"Offline ({n_total - n_online - n_stale})"),
-        Line2D([0], [0], marker="o", color="w", markerfacecolor="#aaaaaa",
-               markersize=8, label=f"Stale >7д ({n_stale})"),
-        Line2D([0], [0], marker="s", color="w", markerfacecolor="#0078d4",
-               markersize=8, label="Windows"),
-        Line2D([0], [0], marker="s", color="w", markerfacecolor="#e67e22",
-               markersize=8, label="Linux"),
-    ]
-    ax.legend(handles=legend_elements, loc="upper right", fontsize=8,
-              framealpha=0.9, edgecolor="#ccc", fancybox=True,
-              bbox_to_anchor=(1.0, (legend_y + 0.5) / fig_h))
-
-    # Title + timestamp
-    now_str = datetime.now().strftime("%d.%m.%Y %H:%M")
-    ax.text(fig_w / 2, fig_h + 0.2, "Network Map — MeshCentral",
-            fontsize=14, fontweight="bold", color="#2c3e50", ha="center", va="center")
-    ax.text(fig_w / 2, fig_h - 0.15,
-            f"Устройств: {n_total}  |  Online: {n_online}  |  Локации: {len(sorted_locs)}  |  {now_str}",
-            fontsize=9, color="#7f8c8d", ha="center", va="center")
-
-    fig.tight_layout(pad=0.5)
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+    fig.savefig(buf, format="png", dpi=130, bbox_inches="tight",
+                facecolor=fig.get_facecolor())
     plt.close(fig)
     buf.seek(0)
     return buf.read()
 
-
-def build_network_map_html(devices: list[dict], web_mode: bool = False) -> str | None:  # noqa: C901
-    """Build interactive SVG network topology map (pan/zoom/click). No external deps."""
-    import json as _json
-    import math as _math
-    if not devices:
-        return None
-
-    def _xe(s: str) -> str:
-        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
-
-    # Group by MeshCentral group (= office / location name)
-    locations: dict[str, list[dict]] = {}
-    for d in devices:
-        group = d.get("group", "?") or "?"
-        d["_local_ip"] = _get_local_ip(d)
-        locations.setdefault(group, []).append(d)
-
-    n_online = sum(1 for d in devices if d.get("online"))
-    n_offline = sum(1 for d in devices if not d.get("online") and d.get("offline_hours", 0) <= 7 * 24)
-    n_stale = sum(1 for d in devices if not d.get("online") and d.get("offline_hours", 0) > 7 * 24)
-    n_total = len(devices)
-    now_str = datetime.now().strftime("%d.%m.%Y %H:%M")
-    n_win = sum(1 for d in devices if "windows" in (d.get("os") or "").lower())
-    n_lnx = sum(1 for d in devices if any(x in (d.get("os") or "").lower() for x in ("linux", "ubuntu", "debian")))
-    mc_host = MC_URL.replace("https://", "").replace("http://", "").rstrip("/")
-
-    loc_colors = ["#3498db", "#9b59b6", "#2ecc71", "#e67e22", "#e74c3c", "#1abc9c", "#f39c12", "#00b4d8"]
-    sorted_locs = sorted(locations.items(), key=lambda x: -len(x[1]))
-    n_locs = len(sorted_locs)
-
-    # ── Layout constants ────────────────────────────────────────────────
-    MARGIN    = 60
-    SRV_W, SRV_H  = 240, 60
-    LOC_W, LOC_H  = 200, 58
-    DEV_W, DEV_H  = 172, 80
-    DEV_GAP_X     = 14
-    DEV_GAP_Y     = 10
-    LOC_GAP       = 36
-    DEVS_PER_ROW  = 4
-    Y_SRV         = MARGIN + SRV_H // 2          # center y of server node
-    Y_LOC         = Y_SRV + SRV_H // 2 + 110     # center y of location nodes
-    Y_DEV_TOP     = Y_LOC + LOC_H // 2 + 80      # top y of first device row
-
-    # Per-location geometry
-    loc_meta: list[dict] = []
-    for li, (grp_name, grp_devs) in enumerate(sorted_locs):
-        lc = loc_colors[li % len(loc_colors)]
-        all_devs: list[dict] = sorted(grp_devs, key=lambda d: d.get("_local_ip", ""))
-        n = len(all_devs)
-        n_rows  = max(1, (n + DEVS_PER_ROW - 1) // DEVS_PER_ROW)
-        max_col = min(n, DEVS_PER_ROW)
-        col_w   = max(LOC_W, max_col * DEV_W + (max_col - 1) * DEV_GAP_X)
-        dev_h   = n_rows * DEV_H + (n_rows - 1) * DEV_GAP_Y
-
-        subnets: set[str] = set()
-        wan_ips: set[str] = set()
-        for d in all_devs:
-            lip = d.get("_local_ip", "")
-            if lip:
-                try:
-                    subnets.add(str(ipaddress.ip_network(f"{lip}/24", strict=False)))
-                except Exception:
-                    pass
-            w = d.get("ip", "")
-            if w:
-                wan_ips.add(w)
-        loc_online = sum(1 for d in all_devs if d.get("online"))
-        loc_meta.append({
-            "name": grp_name, "wan_ips": sorted(wan_ips), "color": lc, "devs": all_devs,
-            "n": n, "col_w": col_w, "dev_h": dev_h,
-            "subnets": sorted(subnets), "online": loc_online,
-        })
-
-    # X positions (centered)
-    total_w = sum(m["col_w"] for m in loc_meta) + (n_locs - 1) * LOC_GAP
-    canvas_w = max(SRV_W + 100, total_w + 2 * MARGIN)
-    x0 = (canvas_w - total_w) // 2
-    xc = x0
-    for m in loc_meta:
-        m["cx"] = xc + m["col_w"] // 2
-        xc += m["col_w"] + LOC_GAP
-
-    srv_cx = canvas_w // 2
-    max_dev_h = max((m["dev_h"] for m in loc_meta), default=0)
-    canvas_h = Y_DEV_TOP + max_dev_h + MARGIN
-
-    # ── SVG element builder ──────────────────────────────────────────────
-    parts: list[str] = []
-
-    def bez(x1: int, y1: int, x2: int, y2: int, color: str, w: float = 2, dash: str = "") -> str:
-        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-        ctrl = abs(y2 - y1) // 2
-        da = f' stroke-dasharray="{dash}"' if dash else ""
-        return (f'<path d="M{x1},{y1} C{x1},{y1+ctrl} {x2},{y2-ctrl} {x2},{y2}"'
-                f' stroke="{color}" stroke-width="{w}" fill="none" stroke-opacity="0.6"{da}/>')
-
-    def rect_node(x: int, y: int, w: int, h: int, fill: str, stroke: str, sw: float = 2.0,
-                  rx: int = 10) -> str:
-        return (f'<rect x="{x - w//2}" y="{y - h//2}" width="{w}" height="{h}"'
-                f' rx="{rx}" fill="{fill}" stroke="{stroke}" stroke-width="{sw}"/>')
-
-    def txt(x: int, y: int, s: str, fill: str, sz: int, anchor: str = "middle",
-            bold: bool = False, mono: bool = False) -> str:
-        fw = ' font-weight="bold"' if bold else ""
-        ff = ' font-family="monospace"' if mono else ""
-        return (f'<text x="{x}" y="{y}" text-anchor="{anchor}" fill="{fill}"'
-                f' font-size="{sz}"{fw}{ff}>{_xe(s)}</text>')
-
-    # ── Edges (drawn first, behind nodes) ───────────────────────────────
-    for m in loc_meta:
-        lc = m["color"]
-        parts.append(bez(srv_cx, Y_SRV + SRV_H // 2,
-                         m["cx"], Y_LOC - LOC_H // 2, lc, 2.5, "8,5"))
-        for di, d in enumerate(m["devs"]):
-            row = di // DEVS_PER_ROW
-            col = di % DEVS_PER_ROW
-            n_in_row = min(DEVS_PER_ROW, m["n"] - row * DEVS_PER_ROW)
-            row_w = n_in_row * DEV_W + (n_in_row - 1) * DEV_GAP_X
-            dx = m["cx"] - row_w // 2 + col * (DEV_W + DEV_GAP_X) + DEV_W // 2
-            dy = Y_DEV_TOP + row * (DEV_H + DEV_GAP_Y) + DEV_H // 2
-            parts.append(bez(m["cx"], Y_LOC + LOC_H // 2,
-                             dx, dy - DEV_H // 2, lc, 1.2))
-
-    # ── Server node ──────────────────────────────────────────────────────
-    srv_info = _json.dumps({
-        "type": "server", "name": "MeshCentral Server",
-        "host": mc_host, "url": MC_URL,
-        "total": n_total, "online": n_online, "locs": n_locs,
-    })
-    parts.append(f'<g class="nd" data-i="{_xe(srv_info)}">')
-    parts.append(rect_node(srv_cx, Y_SRV, SRV_W, SRV_H, "#0d1b2a", "#3498db", 2.5))
-    parts.append(txt(srv_cx, Y_SRV - 12, "🖥 MeshCentral", "#85c1e9", 13, bold=True))
-    parts.append(txt(srv_cx, Y_SRV + 5, mc_host, "#5dade2", 10, mono=True))
-    parts.append(txt(srv_cx, Y_SRV + 20, f"{n_total} устройств  ·  {n_online} online", "#6b8fa8", 10))
-    parts.append('</g>')
-
-    # ── Location nodes ───────────────────────────────────────────────────
-    for m in loc_meta:
-        lc = m["color"]
-        sn = " · ".join(m["subnets"]) if m["subnets"] else ""
-        wan_str = ", ".join(m["wan_ips"]) if m["wan_ips"] else ""
-        loc_info = _json.dumps({
-            "type": "loc", "name": m["name"], "wan": wan_str,
-            "subnets": m["subnets"], "total": m["n"], "online": m["online"],
-        })
-        parts.append(f'<g class="nd" data-i="{_xe(loc_info)}">')
-        parts.append(rect_node(m["cx"], Y_LOC, LOC_W, LOC_H, "#0f1c29", lc, 2.5))
-        parts.append(txt(m["cx"], Y_LOC - 12, f"📍 {m['name']}", lc, 12, bold=True))
-        parts.append(txt(m["cx"], Y_LOC + 6,
-                         f"{m['online']}/{m['n']} online", "#8fb3cc", 10))
-        if sn:
-            parts.append(txt(m["cx"], Y_LOC + 21, sn[:38], "#4a7a99", 9, mono=True))
-        parts.append('</g>')
-
-    # ── Device nodes ─────────────────────────────────────────────────────
-    for m in loc_meta:
-        lc = m["color"]
-        for di, d in enumerate(m["devs"]):
-            row = di // DEVS_PER_ROW
-            col = di % DEVS_PER_ROW
-            n_in_row = min(DEVS_PER_ROW, m["n"] - row * DEVS_PER_ROW)
-            row_w = n_in_row * DEV_W + (n_in_row - 1) * DEV_GAP_X
-            dx = m["cx"] - row_w // 2 + col * (DEV_W + DEV_GAP_X) + DEV_W // 2
-            dy = Y_DEV_TOP + row * (DEV_H + DEV_GAP_Y) + DEV_H // 2
-
-            is_on  = d.get("online", False)
-            off_h  = d.get("offline_hours", 0)
-            is_st  = not is_on and off_h > 7 * 24
-            name   = str(d.get("name", "?") or "?")
-            lip    = d.get("_local_ip", "")
-            os_s   = str(d.get("os", "") or "")
-            cpu    = str(d.get("cpu", "-") or "-")
-            ram    = str(d.get("ram_total", "-") or "-")
-            grp    = d.get("group", "?")
-            drives_list = d.get("drives", [])
-            drives_s = "; ".join(drives_list) if isinstance(drives_list, list) else str(drives_list)
-
-            if is_on:
-                os_border, _ = _os_node_color(os_s)
-                bg, bc = "#081c2e", os_border
-            elif is_st:
-                bg, bc = "#111114", "#555"
-            else:
-                bg, bc = "#1c0909", "#c0392b"
-
-            status = "🟢" if is_on else ("⚫" if is_st else "🔴")
-            os_em  = _os_emoji(os_s)
-
-            _d_macs = [nic.get("mac","") for nic in d.get("nic_details",[])
-                       if nic.get("mac","") not in ("","00:00:00:00:00:00")]
-            dev_info = _json.dumps({
-                "type": "dev", "name": name, "group": grp,
-                "wan": d.get("ip", "") or "", "lan": lip, "online": is_on,
-                "stale": is_st, "off_h": round(off_h, 1),
-                "os": os_s[:100], "cpu": cpu[:80], "ram": ram,
-                "gpu": str(d.get("gpu", "-") or "-")[:80],
-                "drives": drives_s[:200],
-                "av": str(d.get("antivirus", "-") or "-")[:80],
-                "boot": str(d.get("last_boot", "-") or "-"),
-                "agent": str(d.get("agent_ver", "-") or "-"),
-                "mac": _d_macs[0] if _d_macs else "",
-                "mc_id": str(d.get("id", "") or ""),
-                "mc_url": MC_URL,
-            })
-
-            parts.append(f'<g class="nd" data-i="{_xe(dev_info)}">')
-            parts.append(rect_node(dx, dy, DEV_W, DEV_H, bg, bc, 1.8))
-            lbl = f"{status}{os_em} {name[:20]}"
-            parts.append(txt(dx, dy - 24, lbl, "#d0e4f7", 11, bold=True))
-            if lip:
-                parts.append(txt(dx, dy - 9, lip, "#5dade2", 9, mono=True))
-            if os_s:
-                parts.append(txt(dx, dy + 6, os_s[:30], "#7a9ab8", 9))
-            if not is_on and off_h > 0:
-                parts.append(txt(dx, dy + 21, f"⏱ {_fmt_offline(off_h)} назад", "#e74c3c", 9))
-            elif cpu and cpu != "-":
-                hw = f"{cpu[:22]}  ·  {ram}" if ram and ram != "-" else cpu[:30]
-                parts.append(txt(dx, dy + 21, hw[:36], "#4a7a99", 9))
-            parts.append('</g>')
-
-    # ── Printer nodes: horizontal rows per location, below all devices ───
-    PRN_W, PRN_H   = 150, 46
-    PRN_GAP_X      = 10
-    PRN_GAP_Y      = 8
-    PRN_PER_ROW    = 4
-    PRN_TOP_MARGIN = 28   # gap from bottom of device section to printer label
-
-    _VIRT_KW = ("anydesk", "pdf", "xps", "microsoft", "onenote", "fax",
-                "cutepdf", "adobe", "bullzip", "nitro", "biztalk")
-
+# ── HA WebSocket (для todo items) ─────────────────────────────────────────────
+async def ha_ws_get_todo_items(entity_id: str) -> list:
+    if not HAS_WS:
+        return []
+    ws_url = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
+    ssl_ctx = _ssl.create_default_context()
     try:
-        _pdb = _load_printers()
-    except Exception:
-        _pdb = {}
-
-    # Store device center positions for edge drawing: name → (dx, dy)
-    _dev_pos: dict[str, tuple[int, int]] = {}
-    for m in loc_meta:
-        for di, d in enumerate(m["devs"]):
-            _ri = di // DEVS_PER_ROW
-            _ci = di % DEVS_PER_ROW
-            _nir = min(DEVS_PER_ROW, m["n"] - _ri * DEVS_PER_ROW)
-            _rw = _nir * DEV_W + (_nir - 1) * DEV_GAP_X
-            _dx = m["cx"] - _rw // 2 + _ci * (DEV_W + DEV_GAP_X) + DEV_W // 2
-            _dy = Y_DEV_TOP + _ri * (DEV_H + DEV_GAP_Y) + DEV_H // 2
-            _dev_pos[d.get("name", "")] = (_dx, _dy)
-
-    # Per-location: collect real printers, deduplicate by (host, name)
-    _loc_printers: dict[str, list[dict]] = {}  # loc_name → [{pp, host, name}]
-    for _pc, _pinfo in sorted(_pdb.items()):
-        _grp = _pinfo.get("group", "")
-        _seen = {(item["host"], item["name"]) for item in _loc_printers.get(_grp, [])}
-        for _pp in _pinfo.get("printers", []):
-            _pn = (_pp.get("name") or "").strip()
-            if not _pn or (_pc, _pn) in _seen:
-                continue
-            _drv = (_pp.get("driver") or "").lower()
-            if _pp.get("is_virtual") or any(k in _drv for k in _VIRT_KW):
-                continue
-            _loc_printers.setdefault(_grp, []).append({"name": _pn, "pp": _pp, "host": _pc})
-            _seen.add((_pc, _pn))
-
-    _prn_section_h = 0   # extra canvas height for all printer sections
-    for m in loc_meta:
-        loc_prns = _loc_printers.get(m["name"], [])
-        if not loc_prns:
-            continue
-
-        # Base Y: below the tallest device section (global baseline keeps all columns aligned)
-        base_y = Y_DEV_TOP + max_dev_h + PRN_TOP_MARGIN
-        _prn_section_h = max(_prn_section_h, PRN_TOP_MARGIN)
-
-        # Separator label
-        parts.append(txt(m["cx"], base_y, "── 🖨 Принтеры ──", "#7a3aaa", 9))
-
-        n_prn = len(loc_prns)
-        for pi, item in enumerate(loc_prns):
-            row = pi // PRN_PER_ROW
-            col = pi % PRN_PER_ROW
-            n_in_row = min(PRN_PER_ROW, n_prn - row * PRN_PER_ROW)
-            row_w = n_in_row * PRN_W + (n_in_row - 1) * PRN_GAP_X
-            pnx = m["cx"] - row_w // 2 + col * (PRN_W + PRN_GAP_X) + PRN_W // 2
-            pny = base_y + 14 + row * (PRN_H + PRN_GAP_Y) + PRN_H // 2
-
-            pp  = item["pp"]
-            prn_status = pp.get("status", 0)
-            prn_ok     = (prn_status == 0)
-            pstroke    = "#7a2aaa" if prn_ok else "#aa2a2a"
-            pbg        = "#160820" if prn_ok else "#250d10"
-
-            # Edge: host PC → printer node
-            host_pos = _dev_pos.get(item["host"], None)
-            if host_pos:
-                hx, hy = host_pos
-                parts.append(bez(hx, hy + DEV_H // 2, pnx, pny - PRN_H // 2,
-                                  "#6a3a9a", 1.0, "2,4"))
-
-            prn_info = _json.dumps({
-                "type": "printer_node", "name": item["name"],
-                "host": item["host"], "ip": pp.get("printer_ip", ""),
-                "driver": pp.get("driver", ""), "status": prn_status,
-                "default": pp.get("default", False),
-            })
-            parts.append(f'<g class="nd" data-i="{_xe(prn_info)}">')
-            # Node body
-            parts.append(f'<rect x="{pnx-PRN_W//2}" y="{pny-PRN_H//2}" '
-                          f'width="{PRN_W}" height="{PRN_H}" rx="7" '
-                          f'fill="{pbg}" stroke="{pstroke}" stroke-width="1.8"/>')
-            # Top accent strip
-            parts.append(f'<rect x="{pnx-PRN_W//2+2}" y="{pny-PRN_H//2}" '
-                          f'width="{PRN_W-4}" height="5" rx="4" fill="{pstroke}" opacity="0.7"/>')
-            # Printer SVG icon (left side)
-            ix = pnx - PRN_W // 2 + 8
-            iy = pny - 11
-            parts.append(f'<rect x="{ix}" y="{iy+6}" width="18" height="13" rx="2" '
-                          f'fill="#3a1060" stroke="#c060f8" stroke-width="1.2"/>')
-            parts.append(f'<rect x="{ix+4}" y="{iy+1}" width="10" height="6" rx="1" fill="#c890e8"/>')
-            parts.append(f'<rect x="{ix+4}" y="{iy+18}" width="8" height="2" rx="1" fill="#c890e8"/>')
-            parts.append(f'<rect x="{ix+4}" y="{iy+22}" width="5" height="1.5" rx="0.5" fill="#9060c0"/>')
-            led_c = "#00ff88" if prn_ok else "#ff4444"
-            parts.append(f'<circle cx="{ix+15}" cy="{iy+12}" r="2.5" fill="{led_c}"/>')
-            # Text: printer name (= model from agent)
-            tx0 = pnx - PRN_W // 2 + 32
-            parts.append(txt(pnx + 8, pny - 11, item["name"][:22], "#e0b8ff", 9, bold=True))
-            # Host PC line
-            parts.append(txt(pnx + 8, pny + 2, f"📌 {item['host'][:18]}", "#9a7ac0", 8))
-            # IP or USB
-            pip = pp.get("printer_ip", "")
-            pdef = "⭐ " if pp.get("default") else ""
-            if pip:
-                parts.append(txt(pnx + 8, pny + 14, f"{pdef}{pip}", "#5dade2", 8, mono=True))
-            else:
-                parts.append(txt(pnx + 8, pny + 14, f"{pdef}USB/WSD", "#7a5aaa", 8))
-            parts.append('</g>')
-
-            # Track height
-            _prn_section_h = max(_prn_section_h,
-                                  PRN_TOP_MARGIN + (row + 1) * (PRN_H + PRN_GAP_Y) + 14)
-
-    canvas_h += _prn_section_h
-
-    # ── WiFi / LAN client nodes ───────────────────────────────────────────
-    # Build lookup: device_name → group_name, also carry router IP
-    _load_wifi_clients()
-    wifi_by_loc: dict[str, dict] = {}  # group_name → {"router": str|None, "clients": [...]}
-
-    # Build printer info lookup: printer_ip → {name, host_pc} (from printers.json)
-    _printer_info_by_ip: dict[str, dict] = {}
-    try:
-        for _pc_name, _pinfo in _load_printers().items():
-            for _pp in _pinfo.get("printers", []):
-                _pmd_ip = _pp.get("printer_ip", "")
-                _pmd_name = _pp.get("name", "")
-                if _pmd_ip and _pmd_name and not _pp.get("is_virtual"):
-                    _printer_info_by_ip[_pmd_ip] = {"name": _pmd_name, "host": _pc_name}
-    except Exception:
-        pass
-    if _wifi_clients:
-        dev_name_to_grp = {}
-        for m in loc_meta:
-            for d in m["devs"]:
-                dev_name_to_grp[d.get("name", "")] = m["name"]
-        for aname, wdata in _wifi_clients.items():
-            if not wdata.get("ok"):
-                continue
-            grp = dev_name_to_grp.get(aname)
-            if grp:
-                entry = wifi_by_loc.setdefault(grp, {"router": None, "clients": []})
-                entry["clients"].extend(wdata.get("clients") or [])
-                if not entry["router"] and wdata.get("router"):
-                    entry["router"] = wdata["router"]
-
-    WIFI_W, WIFI_H   = 148, 58
-    WIFI_GAP_X       = 10
-    WIFI_GAP_Y       = 8
-    WIFI_PER_ROW     = 4
-    WIFI_TOP_MARGIN  = 24   # gap between device rows and separator label
-    RTR_W, RTR_H     = 180, 50  # router node size
-    RTR_MARGIN       = 16   # gap between router node bottom and wifi clients top
-
-    for m in loc_meta:
-        entry = wifi_by_loc.get(m["name"])
-        if not entry:
-            continue
-        wclients_all = entry["clients"]
-        rtr_ip       = entry.get("router")
-        # Printer-type clients are already shown in the dedicated printer section
-        wclients = [c for c in wclients_all if c.get("type") != "printer"]
-        if not wclients and not rtr_ip:
-            continue
-
-        n_wifi = len(wclients)
-
-        # Base Y: below devices + printer section (global baselines, no per-location overlap)
-        base_y = Y_DEV_TOP + max_dev_h + _prn_section_h + WIFI_TOP_MARGIN
-
-        # separator label
-        parts.append(txt(m["cx"], base_y - 10, "── 🔌 Сеть офиса ──", "#5a7a9a", 9))
-
-        # ── Router node ──────────────────────────────────────────────────
-        rtr_cy = base_y + RTR_H // 2
-        if rtr_ip:
-            n_w = sum(1 for c in wclients_all if c.get("type") == "wifi")
-            n_l = sum(1 for c in wclients_all if c.get("type") == "lan")
-            n_p = sum(1 for c in wclients_all if c.get("type") == "printer")
-            rtr_info = _json.dumps({
-                "type": "router", "ip": rtr_ip, "location": m["name"],
-                "clients_wifi": n_w, "clients_lan": n_l, "clients_printer": n_p,
-            })
-            # edge: location → router
-            parts.append(bez(m["cx"], Y_LOC + LOC_H // 2,
-                             m["cx"], rtr_cy - RTR_H // 2, m["color"], 2.0, "6,4"))
-            parts.append(f'<g class="nd" data-i="{_xe(rtr_info)}">')
-            parts.append(rect_node(m["cx"], rtr_cy, RTR_W, RTR_H, "#081828", "#1a8a9a", 2.0))
-            parts.append(txt(m["cx"], rtr_cy - 13, "🌐 Роутер", "#7ecfda", 12, bold=True))
-            parts.append(txt(m["cx"], rtr_cy + 4,  rtr_ip, "#5dade2", 10, mono=True))
-            summary_parts = []
-            if n_w: summary_parts.append(f"📶{n_w}")
-            if n_l: summary_parts.append(f"🔌{n_l}")
-            if n_p: summary_parts.append(f"🖨{n_p}")
-            parts.append(txt(m["cx"], rtr_cy + 18,
-                             "  ".join(summary_parts), "#4a8a9a", 9))
-            parts.append('</g>')
-        else:
-            # No router IP: connect location directly to wifi block
-            rtr_cy = base_y - RTR_MARGIN  # collapse router space
-
-        # Y where wifi client rows begin
-        wifi_y_top = rtr_cy + RTR_H // 2 + RTR_MARGIN
-
-        # ── WiFi/LAN client nodes ─────────────────────────────────────────
-        for wi, wc in enumerate(wclients):
-            row = wi // WIFI_PER_ROW
-            col = wi % WIFI_PER_ROW
-            n_in_row = min(WIFI_PER_ROW, n_wifi - row * WIFI_PER_ROW)
-            row_w = n_in_row * WIFI_W + (n_in_row - 1) * WIFI_GAP_X
-            wx = m["cx"] - row_w // 2 + col * (WIFI_W + WIFI_GAP_X) + WIFI_W // 2
-            wy = wifi_y_top + row * (WIFI_H + WIFI_GAP_Y) + WIFI_H // 2
-
-            ctype   = wc.get("type", "lan")
-            is_wifi    = (ctype == "wifi")
-            is_printer = (ctype == "printer")
-            if is_wifi:       cicon = "📶"
-            elif is_printer:  cicon = "🖨"
-            else:             cicon = "🔌"
-            cname   = str(wc.get("name") or wc.get("mac") or "?")
-            cip     = str(wc.get("ip") or "")
-            cmac    = str(wc.get("mac") or "")
-            crssi   = wc.get("rssi")
-            cup     = wc.get("online_sec")
-            cup_s   = f"⏱ {cup//3600}h{(cup%3600)//60}m" if cup else ""
-            crssi_s = f"{crssi}dBm" if crssi is not None else ""
-
-            # Visual style: WiFi=green, LAN=blue, Printer=purple
-            if is_wifi:
-                cbg, cstroke, clbl = "#0e1f0e", "#4a9a3a", "#90d878"
-            elif is_printer:
-                cbg, cstroke, clbl = "#1a0a28", "#8a4aaa", "#c890e8"
-            else:
-                cbg, cstroke, clbl = "#0a1525", "#2a6aaa", "#6ab4e8"
-
-            # edge: router (or location) → client
-            src_x = m["cx"]
-            src_y = (rtr_cy + RTR_H // 2) if rtr_ip else (Y_LOC + LOC_H // 2)
-            parts.append(bez(src_x, src_y, wx, wy - WIFI_H // 2, cstroke, 0.9, "3,4"))
-
-            # Printer: look up model and host PC from printers.json by IP
-            pinfo_match = _printer_info_by_ip.get(cip, {}) if is_printer else {}
-            pmodel_name = pinfo_match.get("name", "")
-            phost_pc    = pinfo_match.get("host", "")
-
-            wifi_info = _json.dumps({
-                "type": ctype, "name": cname, "mac": cmac,
-                "ip": cip, "iface": wc.get("iface", ""), "kind": ctype,
-                "rssi": crssi_s, "uptime": cup_s,
-                "model": pmodel_name, "host_pc": phost_pc,
-            })
-
-            parts.append(f'<g class="nd" data-i="{_xe(wifi_info)}">')
-
-            if is_printer:
-                # ── Printer node: distinct shape + SVG printer icon ──────────
-                PW, PH = WIFI_W + 10, WIFI_H + 10   # slightly larger
-                px, py = wx - PW // 2, wy - PH // 2
-                # Outer border with dashed effect (top accent stripe)
-                parts.append(f'<rect x="{px}" y="{py}" width="{PW}" height="{PH}"'
-                              f' rx="6" fill="#1a0828" stroke="#9a3acc" stroke-width="2"/>')
-                # Top accent bar (paper output indicator)
-                parts.append(f'<rect x="{px}" y="{py}" width="{PW}" height="7"'
-                              f' rx="6" fill="#6a1a9a"/>')
-                parts.append(f'<rect x="{px}" y="{py+4}" width="{PW}" height="3" fill="#6a1a9a"/>')
-                # SVG printer icon (left side, 22x18px)
-                ix, iy = px + 6, py + 10
-                # Printer body
-                parts.append(f'<rect x="{ix}" y="{iy+5}" width="20" height="13" rx="2"'
-                              f' fill="#4a1a7a" stroke="#b060e8" stroke-width="1.2"/>')
-                # Paper in slot (top)
-                parts.append(f'<rect x="{ix+4}" y="{iy}" width="12" height="6" rx="1" fill="#c890e8"/>')
-                # Paper out slot (bottom lines)
-                parts.append(f'<rect x="{ix+4}" y="{iy+17}" width="12" height="2" rx="1" fill="#c890e8"/>')
-                parts.append(f'<rect x="{ix+4}" y="{iy+21}" width="8" height="2" rx="1" fill="#a070c8"/>')
-                # LED dot on printer body
-                parts.append(f'<circle cx="{ix+17}" cy="{iy+10}" r="2" fill="#00ff88"/>')
-                # Printer label: model name
-                model_lbl = (pmodel_name[:19] if pmodel_name else cname[:19])
-                parts.append(txt(wx + 14, wy - 13, model_lbl, "#d8a8f8", 9, bold=True))
-                if cip:
-                    parts.append(txt(wx + 14, wy + 1, cip, "#5dade2", 8, mono=True))
-                if phost_pc:
-                    parts.append(txt(wx + 14, wy + 13, f"via {phost_pc[:14]}", "#8a6aaa", 8))
-                elif cmac:
-                    parts.append(txt(wx + 14, wy + 13, cmac[:17], "#4a3a6a", 8, mono=True))
-            else:
-                # ── WiFi / LAN node (unchanged) ──────────────────────────────
-                parts.append(f'<rect x="{wx - WIFI_W//2}" y="{wy - WIFI_H//2}" width="{WIFI_W}" height="{WIFI_H}"'
-                             f' rx="8" fill="{cbg}" stroke="{cstroke}" stroke-width="1.4"/>')
-                lbl = f"{cicon} {cname[:18]}"
-                parts.append(txt(wx, wy - 18, lbl, clbl, 10, bold=True))
-                if cip:
-                    parts.append(txt(wx, wy - 4, cip, "#5dade2", 9, mono=True))
-                if is_wifi and crssi_s:
-                    parts.append(txt(wx, wy + 10, crssi_s, "#a0c090", 9))
-                else:
-                    parts.append(txt(wx, wy + 10, "LAN", "#4a7aaa", 9))
-                if cup_s:
-                    parts.append(txt(wx, wy + 22, cup_s, "#708060", 9))
-                elif cmac:
-                    parts.append(txt(wx, wy + 22, cmac[:17], "#4a5a6a", 8, mono=True))
-            parts.append('</g>')
-
-    # Recalculate canvas height to include router + wifi rows
-    extra_h = 0
-    for m in loc_meta:
-        entry = wifi_by_loc.get(m["name"])
-        if entry and (entry["clients"] or entry.get("router")):
-            n_wifi = sum(1 for c in entry["clients"] if c.get("type") != "printer")
-            n_rows_w = max(1, (n_wifi + WIFI_PER_ROW - 1) // WIFI_PER_ROW)
-            block_h = (RTR_H + RTR_MARGIN +
-                       n_rows_w * WIFI_H + (n_rows_w - 1) * WIFI_GAP_Y +
-                       WIFI_TOP_MARGIN + 20)
-            extra_h = max(extra_h, block_h)
-    canvas_h = canvas_h + extra_h
-
-    svg_body = "\n".join(parts)
-
-    # ── Full HTML ────────────────────────────────────────────────────────
-    html = f"""<!DOCTYPE html>
-<html lang="ru">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Network Map — MeshCentral</title>
-{'<meta http-equiv="cache-control" content="no-cache"><meta http-equiv="pragma" content="no-cache">' if web_mode else ''}
-<style>
-*{{margin:0;padding:0;box-sizing:border-box}}
-html,body{{width:100%;height:100%;overflow:hidden;background:#0a1120;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#c8d6e5}}
-#hdr{{background:linear-gradient(135deg,#0d1b2a,#172535);padding:8px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;border-bottom:1px solid #1e3a5f;position:relative;z-index:10}}
-#hdr h1{{font-size:14px;font-weight:700;color:#85c1e9}}
-.st{{font-size:11px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;color:#8fb3cc}}
-#srch{{background:#0a1628;border:1px solid #1e3a5f;border-radius:5px;color:#c8d6e5;padding:3px 8px;font-size:12px;width:160px;outline:none}}
-#srch:focus{{border-color:#3498db}}
-#srch-count{{font-size:10px;color:#4a7a99;min-width:60px}}
-.nd.nd-dim rect,.nd.nd-dim text,.nd.nd-dim circle{{opacity:0.18}}
-.nd.nd-dim{{pointer-events:none}}
-.nd.nd-match rect{{filter:drop-shadow(0 0 6px #f39c12) brightness(1.3)}}
-.nd.nd-match text{{fill:#fff!important}}
-.dot{{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:2px;vertical-align:middle}}
-.don{{background:#2ecc71}}.doff{{background:#e74c3c}}.dst{{background:#555}}
-.osbg{{background:#ffffff12;border-radius:3px;padding:0 5px;font-size:10px}}
-#wrap{{width:100%;height:calc(100vh - 44px);overflow:hidden;cursor:grab;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:none}}
-#wrap.dragging{{cursor:grabbing}}
-.nd{{cursor:pointer}}
-.nd rect{{transition:filter .15s}}
-.nd:hover rect{{filter:brightness(1.35)}}
-#panel{{position:fixed;top:50px;right:14px;width:280px;background:#0f1e2e;border:1px solid #1e3a5f;border-radius:10px;padding:14px;font-size:12px;display:none;z-index:20;box-shadow:0 4px 24px #000a;max-height:calc(100vh - 70px);overflow-y:auto}}
-#panel h2{{font-size:13px;color:#aed6f1;margin-bottom:8px;padding-right:20px;word-break:break-all}}
-.row{{display:flex;gap:6px;margin:4px 0;align-items:flex-start}}
-.lbl{{color:#6b8fa8;min-width:70px;font-size:11px;flex-shrink:0;padding-top:1px}}
-.val{{color:#c8d6e5;word-break:break-all;flex:1}}
-.xbtn{{position:absolute;top:12px;right:12px;cursor:pointer;font-size:16px;color:#6b8fa8;line-height:1}}
-.xbtn:hover{{color:#aed6f1}}
-.son{{color:#2ecc71;font-weight:600}}.soff{{color:#e74c3c;font-weight:600}}.sst{{color:#777}}
-#hint{{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);background:#0f1e2e88;border:1px solid #1e3a5f;border-radius:6px;padding:4px 12px;font-size:10px;color:#4a7a99;pointer-events:none}}
-#reload-badge{{position:fixed;bottom:12px;right:14px;background:#0f1e2e88;border:1px solid #1e3a5f;border-radius:6px;padding:4px 10px;font-size:10px;color:#4a7a99;pointer-events:none;display:none}}
-@media(max-width:640px){{
-  #hdr{{padding:5px 8px}}
-  #hdr h1{{font-size:11px}}
-  .st{{font-size:10px;gap:3px}}
-  #srch{{width:90px;font-size:10px}}
-  #wrap{{height:calc(100dvh - 48px)}}
-  #panel{{width:calc(100vw - 16px)!important;right:8px!important;left:8px!important;top:auto!important;bottom:6px;max-height:52vh;border-radius:12px 12px 0 0}}
-  #hint{{display:none}}
-  #reload-badge{{bottom:auto;top:6px;right:8px;font-size:9px;padding:2px 6px}}
-}}
-</style>
-</head>
-<body>
-<div id="hdr">
-  <h1>🗺 Network Map — MeshCentral</h1>
-  <div class="st">
-    <span><span class="dot don"></span>{n_online} online</span>
-    <span><span class="dot doff"></span>{n_offline} offline</span>
-    <span><span class="dot dst"></span>{n_stale} stale</span>
-    <span>|</span>
-    <span>🪟<span class="osbg">{n_win}</span></span>
-    <span>🐧<span class="osbg">{n_lnx}</span></span>
-    <span>💻 {n_total}</span>
-    <span>|</span>
-    <span>📍 {n_locs} лок.</span>
-    <span>🕐 {now_str}</span>
-    <span>|</span>
-    <input id="srch" type="search" placeholder="🔍 Поиск устройства…" autocomplete="off">
-    <span id="srch-count"></span>
-  </div>
-</div>
-<div id="wrap">
-  <svg id="cvs" xmlns="http://www.w3.org/2000/svg"
-       width="100%" height="100%"
-       viewBox="0 0 {canvas_w} {canvas_h}"
-       preserveAspectRatio="none"
-       data-w="{canvas_w}" data-h="{canvas_h}">
-    <rect width="{canvas_w}" height="{canvas_h}" fill="#0a1120"/>
-{svg_body}
-  </svg>
-</div>
-<div id="panel">
-  <span class="xbtn" id="xbtn">✕</span>
-  <h2 id="pname"></h2>
-  <div id="pbody"></div>
-</div>
-<div id="hint">Колёсико: зум · Тащи фон: перемещение · Клик на узел: детали</div>
-<div id="reload-badge"></div>
-<script>
-(function(){{
-  var wrap=document.getElementById('wrap'),
-      cvs=document.getElementById('cvs'),
-      panel=document.getElementById('panel');
-  var cw=parseInt(cvs.getAttribute('data-w')),
-      ch=parseInt(cvs.getAttribute('data-h'));
-  // viewBox state: vx/vy = top-left in SVG coords; sc = pixels per SVG unit
-  var vx=0,vy=0,sc=1;
-  function vw(){{return wrap.clientWidth/sc;}}
-  function vh(){{return wrap.clientHeight/sc;}}
-  function applyVB(){{
-    cvs.setAttribute('viewBox',vx+' '+vy+' '+vw()+' '+vh());
-  }}
-  // ── Fit on load — restore from sessionStorage after auto-reload ───────────────
-  function fit(){{
-    var saved=sessionStorage.getItem('nm_sc');
-    if(saved!==null){{
-      sc=parseFloat(saved);
-      vx=parseFloat(sessionStorage.getItem('nm_vx')||0);
-      vy=parseFloat(sessionStorage.getItem('nm_vy')||0);
-      sessionStorage.removeItem('nm_sc');sessionStorage.removeItem('nm_vx');sessionStorage.removeItem('nm_vy');
-      applyVB();return;
-    }}
-    var fw=wrap.clientWidth,fh=wrap.clientHeight;
-    var fitSc=Math.min(fw/cw,fh/ch)*0.95;
-    sc=fw<640?Math.max(fitSc,fw/(cw*0.35)):fitSc;
-    vx=(cw-fw/sc)/2; vy=(ch-fh/sc)/2;
-    applyVB();
-  }}
-  // ── Wheel zoom ───────────────────────────────────────────────────────────────
-  wrap.addEventListener('wheel',function(e){{
-    e.preventDefault();
-    var r=wrap.getBoundingClientRect();
-    var mx=e.clientX-r.left,my=e.clientY-r.top;
-    var factor=e.deltaY<0?1.15:0.87;
-    var nsc=Math.max(0.1,Math.min(sc*factor,10));
-    var svgX=vx+mx/sc,svgY=vy+my/sc;
-    sc=nsc;vx=svgX-mx/sc;vy=svgY-my/sc;
-    applyVB();
-  }},{{passive:false}});
-  // ── Mouse pan ────────────────────────────────────────────────────────────────
-  var mDown=false,mDist=0,mLx=0,mLy=0,mSx=0,mSy=0;
-  wrap.addEventListener('mousedown',function(e){{
-    if(e.button!==0)return;
-    mDown=true;mDist=0;
-    mLx=mSx=e.clientX;mLy=mSy=e.clientY;
-    wrap.classList.add('dragging');
-    e.preventDefault();
-  }});
-  document.addEventListener('mousemove',function(e){{
-    if(!mDown)return;
-    var dx=e.clientX-mLx,dy=e.clientY-mLy;
-    vx-=dx/sc;vy-=dy/sc;
-    mDist+=Math.abs(dx)+Math.abs(dy);
-    mLx=e.clientX;mLy=e.clientY;
-    applyVB();
-  }});
-  document.addEventListener('mouseup',function(e){{
-    if(!mDown)return;
-    mDown=false;wrap.classList.remove('dragging');
-    if(mDist<6){{
-      var el=document.elementFromPoint(mSx,mSy);
-      var nd=el&&el.closest('.nd');
-      if(nd)openPanel(nd);else panel.style.display='none';
-    }}
-  }});
-  // ── Touch pan & pinch zoom ───────────────────────────────────────────────────
-  var tDown=false,tDist=0,tLx=0,tLy=0,tSx=0,tSy=0;
-  var pinching=false,pinchD0=0,pinchSc0=0,pinchVx0=0,pinchVy0=0,pinchMx=0,pinchMy=0;
-  wrap.addEventListener('touchstart',function(e){{
-    e.preventDefault();
-    if(e.touches.length===1){{
-      tDown=true;pinching=false;tDist=0;
-      tLx=tSx=e.touches[0].clientX;tLy=tSy=e.touches[0].clientY;
-    }}else if(e.touches.length===2){{
-      tDown=false;pinching=true;
-      var a=e.touches[0],b=e.touches[1];
-      pinchD0=Math.hypot(b.clientX-a.clientX,b.clientY-a.clientY);
-      pinchSc0=sc;pinchVx0=vx;pinchVy0=vy;
-      var r=wrap.getBoundingClientRect();
-      pinchMx=(a.clientX+b.clientX)/2-r.left;
-      pinchMy=(a.clientY+b.clientY)/2-r.top;
-    }}
-  }},{{passive:false}});
-  wrap.addEventListener('touchmove',function(e){{
-    e.preventDefault();
-    if(tDown&&e.touches.length===1){{
-      var dx=e.touches[0].clientX-tLx,dy=e.touches[0].clientY-tLy;
-      vx-=dx/sc;vy-=dy/sc;
-      tDist+=Math.abs(dx)+Math.abs(dy);
-      tLx=e.touches[0].clientX;tLy=e.touches[0].clientY;
-      applyVB();
-    }}else if(pinching&&e.touches.length===2){{
-      var a=e.touches[0],b=e.touches[1];
-      var d=Math.hypot(b.clientX-a.clientX,b.clientY-a.clientY);
-      var nsc=Math.max(0.1,Math.min(pinchSc0*(d/pinchD0),10));
-      var svgX=pinchVx0+pinchMx/pinchSc0,svgY=pinchVy0+pinchMy/pinchSc0;
-      sc=nsc;vx=svgX-pinchMx/sc;vy=svgY-pinchMy/sc;
-      applyVB();
-    }}
-  }},{{passive:false}});
-  wrap.addEventListener('touchend',function(e){{
-    if(tDown&&tDist<8&&e.changedTouches.length){{
-      var t=e.changedTouches[0];
-      var el=document.elementFromPoint(t.clientX,t.clientY);
-      var nd=el&&el.closest('.nd');
-      if(nd)openPanel(nd);else panel.style.display='none';
-    }}
-    tDown=false;pinching=false;
-  }});
-  // Node panel
-  function xe(s){{return s==null||s==='-'?'—':String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}}
-  function row(l,v){{return '<div class="row"><span class="lbl">'+l+'</span><span class="val">'+v+'</span></div>';}}
-  function fmtH(h){{return h<1?Math.round(h*60)+'м':h<24?Math.round(h)+'ч':Math.round(h/24)+'д';}}
-  function openPanel(nd){{
-    var i=JSON.parse(nd.getAttribute('data-i'));
-    var pn=document.getElementById('pname'),pb=document.getElementById('pbody');
-    if(i.type==='server'){{
-      pn.textContent='🖥 '+i.name;
-      pb.innerHTML=row('Хост','<a href="'+i.url+'" target="_blank" style="color:#3498db">'+xe(i.host)+'</a>')+
-        row('Устройств',i.total)+row('Online',i.online)+row('Локаций',i.locs);
-    }}else if(i.type==='loc'){{
-      pn.textContent='📍 '+i.name;
-      pb.innerHTML=row('Online',i.online+'/'+i.total)+
-        (i.wan?row('WAN IP',xe(i.wan)):'')+(i.subnets.length?row('LAN',i.subnets.join(', ')):'');
-    }}else if(i.type==='router'){{
-      pn.textContent='🌐 Роутер — '+i.location;
-      pb.innerHTML=row('IP (шлюз)',xe(i.ip))+(i.clients_wifi?row('📶 WiFi',i.clients_wifi):'')+
-        (i.clients_lan?row('🔌 LAN',i.clients_lan):'')+
-        (i.clients_printer?row('🖨 Принтеры',i.clients_printer):'');
-    }}else if(i.type==='wifi'||i.type==='lan'||i.type==='printer'){{
-      var icons={{'wifi':'📶','lan':'🔌','printer':'🖨'}};
-      pn.textContent=(icons[i.type]||'🔌')+' '+i.name;
-      pb.innerHTML=row('IP',xe(i.ip))+(i.mac?row('MAC','<code>'+xe(i.mac)+'</code>'):'')+
-        row('Тип',xe(i.kind||i.type))+(i.iface?row('Интерфейс',xe(i.iface)):'')+
-        (i.rssi?row('Сигнал',xe(i.rssi)):'')+
-        (i.uptime?row('Онлайн',xe(i.uptime)):'');
-    }}else{{
-      var sc2=i.online?'son':(i.stale?'sst':'soff');
-      var st=i.online?'🟢 Online':(i.stale?'⚫ Stale (>7 дней)':'🔴 Offline'+(i.off_h>0?' — '+fmtH(i.off_h)+' назад':''));
-      pn.textContent=i.name;
-      pb.innerHTML=row('Статус','<span class="'+sc2+'">'+st+'</span>')+
-        row('Группа',xe(i.group))+row('WAN',xe(i.wan))+(i.lan?row('LAN',xe(i.lan)):'')+
-        (i.mac?row('MAC','<code>'+xe(i.mac)+'</code>'):'')+
-        row('OS',xe(i.os))+row('CPU',xe(i.cpu))+row('RAM',xe(i.ram))+
-        (i.gpu&&i.gpu!=='-'?row('GPU',xe(i.gpu)):'')+
-        row('Диски',xe(i.drives))+row('Антивирус',xe(i.av))+
-        row('Загрузка',xe(i.boot))+row('Агент',xe(i.agent))+
-        (i.mc_id?row('MC Link','<a href="'+i.mc_url+'" target="_blank" style="color:#3498db">Открыть ↗</a>'):'');
-    }}
-    panel.style.display='block';
-  }}
-  document.getElementById('xbtn').onclick=function(){{panel.style.display='none';}};
-  window.addEventListener('resize',fit);
-  fit();
-  // ── Search ──
-  var srch=document.getElementById('srch');
-  var srchCount=document.getElementById('srch-count');
-  function doSearch(){{
-    var q=(srch.value||'').trim().toLowerCase();
-    var nodes=cvs.querySelectorAll('.nd');
-    if(!q){{
-      nodes.forEach(function(n){{n.classList.remove('nd-dim','nd-match');}});
-      srchCount.textContent='';
-      return;
-    }}
-    var matches=0;
-    nodes.forEach(function(n){{
-      var info={{}};
-      try{{info=JSON.parse(n.getAttribute('data-i'));}}catch(e){{}}
-      var name=(info.name||'').toLowerCase();
-      var grp=(info.group||'').toLowerCase();
-      var ip=(info.wan||info.lan||info.ip||'').toLowerCase();
-      var os2=(info.os||'').toLowerCase();
-      var hit=name.includes(q)||grp.includes(q)||ip.includes(q)||os2.includes(q);
-      if(hit){{n.classList.remove('nd-dim');n.classList.add('nd-match');matches++;}}
-      else{{n.classList.remove('nd-match');n.classList.add('nd-dim');}}
-    }});
-    srchCount.textContent=matches>0?matches+' найд.':'не найдено';
-    var first=cvs.querySelector('.nd-match');
-    if(first){{
-      var r=first.getBoundingClientRect(),wr=wrap.getBoundingClientRect();
-      vx-=(wr.left+wr.width/2-(r.left+r.width/2))/sc;
-      vy-=(wr.top+wr.height/2-(r.top+r.height/2))/sc;
-      applyVB();
-    }}
-  }}
-  srch.addEventListener('input',doSearch);
-  srch.addEventListener('keydown',function(e){{
-    if(e.key==='Escape'){{srch.value='';doSearch();srch.blur();}}
-    if(e.key==='Enter'){{
-      var all=Array.from(cvs.querySelectorAll('.nd-match'));
-      if(all.length>0){{
-        var cur=cvs.querySelector('.nd-match.nd-current');
-        var idx=cur?all.indexOf(cur):-1;
-        if(cur)cur.classList.remove('nd-current');
-        var next=all[(idx+1)%all.length];
-        next.classList.add('nd-current');
-        var r=next.getBoundingClientRect(),wr=wrap.getBoundingClientRect();
-        vx-=(wr.left+wr.width/2-(r.left+r.width/2))/sc;
-        vy-=(wr.top+wr.height/2-(r.top+r.height/2))/sc;
-        applyVB();
-      }}
-    }}
-  }});
-  {'// auto-refresh countdown' if web_mode else '// static mode'}
-  {'''var badge=document.getElementById('reload-badge');
-  badge.style.display='block';
-  var secs=300;
-  function tick(){{
-    var m=Math.floor(secs/60),s=secs%60;
-    badge.textContent='🔄 '+m+'м'+s+'с';
-    secs--;
-    if(secs<0){{
-      sessionStorage.setItem('nm_vx',vx);
-      sessionStorage.setItem('nm_vy',vy);
-      sessionStorage.setItem('nm_sc',sc);
-      location.reload(true);
-    }}
-  }}
-  tick(); setInterval(tick,1000);''' if web_mode else ''}
-}})();
-</script>
-</body>
-</html>"""
-    return html
-
-
-def _svg_server_icon() -> str:
-    """Inline SVG for server node icon."""
-    return (
-        "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E"
-        "%3Crect x='8' y='6' width='48' height='16' rx='3' fill='%232c3e50' stroke='%231a252f' stroke-width='1.5'/%3E"
-        "%3Ccircle cx='16' cy='14' r='2' fill='%232ecc71'/%3E"
-        "%3Crect x='22' y='12' width='28' height='3' rx='1' fill='%2334495e'/%3E"
-        "%3Crect x='8' y='24' width='48' height='16' rx='3' fill='%232c3e50' stroke='%231a252f' stroke-width='1.5'/%3E"
-        "%3Ccircle cx='16' cy='32' r='2' fill='%232ecc71'/%3E"
-        "%3Crect x='22' y='30' width='28' height='3' rx='1' fill='%2334495e'/%3E"
-        "%3Crect x='8' y='42' width='48' height='16' rx='3' fill='%232c3e50' stroke='%231a252f' stroke-width='1.5'/%3E"
-        "%3Ccircle cx='16' cy='50' r='2' fill='%23e74c3c'/%3E"
-        "%3Crect x='22' y='48' width='28' height='3' rx='1' fill='%2334495e'/%3E"
-        "%3C/svg%3E"
-    )
-
-
-def _svg_router_icon(color: str = "#2980b9") -> str:
-    """Inline SVG for router/office node icon."""
-    c = color.replace("#", "%23")
-    return (
-        "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E"
-        f"%3Crect x='4' y='20' width='56' height='28' rx='5' fill='{c}' stroke='%231a252f' stroke-width='1'/%3E"
-        "%3Ccircle cx='16' cy='34' r='3' fill='%23ffffff80'/%3E"
-        "%3Ccircle cx='28' cy='34' r='3' fill='%23ffffff80'/%3E"
-        "%3Crect x='38' y='30' width='16' height='2' rx='1' fill='%23ffffff60'/%3E"
-        "%3Crect x='38' y='36' width='12' height='2' rx='1' fill='%23ffffff40'/%3E"
-        "%3Cline x1='20' y1='48' x2='20' y2='56' stroke='{c}' stroke-width='2'/%3E"
-        "%3Cline x1='32' y1='48' x2='32' y2='56' stroke='{c}' stroke-width='2'/%3E"
-        "%3Cline x1='44' y1='48' x2='44' y2='56' stroke='{c}' stroke-width='2'/%3E"
-        "%3Cline x1='32' y1='14' x2='32' y2='20' stroke='{c}' stroke-width='2'/%3E"
-        "%3Ccircle cx='32' cy='12' r='4' fill='none' stroke='{c}' stroke-width='1.5'/%3E"
-        "%3C/svg%3E"
-    )
-
-
-# ─── Utility ─────────────────────────────────────────────────────────
-
-async def mc_is_alive() -> bool:
-    ssl_ctx = ssl.create_default_context()
-    ssl_ctx.check_hostname = False
-    ssl_ctx.verify_mode = ssl.CERT_NONE
-    try:
-        async with aiohttp.ClientSession() as sess:
-            async with sess.get(MC_URL, timeout=aiohttp.ClientTimeout(total=10), ssl=ssl_ctx) as resp:
-                return resp.status == 200
-    except Exception:
-        return False
-
-
-async def check_http_service(url: str) -> tuple[bool, int | None]:
-    """Return (ok, status_code). ok=True if response is 2xx or 3xx."""
-    ssl_ctx = ssl.create_default_context()
-    ssl_ctx.check_hostname = False
-    ssl_ctx.verify_mode = ssl.CERT_NONE
-    try:
-        async with aiohttp.ClientSession() as sess:
-            async with sess.get(url, timeout=aiohttp.ClientTimeout(total=10),
-                                ssl=ssl_ctx, allow_redirects=False) as resp:
-                return resp.status < 500, resp.status
-    except Exception:
-        return False, None
-
-
-async def check_all_http_services() -> list[dict]:
-    """Check all HTTP_SERVICES, return list of {name, url, ok, status}."""
-    results = []
-    for name, url in HTTP_SERVICES:
-        ok, status = await check_http_service(url)
-        results.append({"name": name, "url": url, "ok": ok, "status": status})
-    return results
-
-async def mc_restart():
-    proc = await asyncio.create_subprocess_exec(
-        "systemctl", "restart", "meshcentral",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    await proc.wait()
-
-async def check_mc_update() -> dict:
-    """Check if a newer MeshCentral version is available on npm.
-    Returns {"current": "x.y.z", "latest": "x.y.z", "has_update": bool}.
-    """
-    current = "unknown"
-    latest = "unknown"
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "node", "-e",
-            "console.log(require('/opt/meshcentral/node_modules/meshcentral/package.json').version)",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-        current = stdout.decode().strip()
+        async with websockets.connect(ws_url, ssl=ssl_ctx) as ws:
+            msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+            if msg.get("type") != "auth_required":
+                return []
+            await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
+            auth_resp = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+            if auth_resp.get("type") != "auth_ok":
+                return []
+            await ws.send(json.dumps({
+                "id": 1, "type": "call_service",
+                "domain": "todo", "service": "get_items",
+                "service_data": {"entity_id": entity_id},
+                "return_response": True,
+            }))
+            result = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+            return (result.get("result", {}).get("response", {})
+                    .get(entity_id, {}).get("items", []))
     except Exception as e:
-        log.error(f"Update check (current): {e}")
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "npm", "view", "meshcentral", "version",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
-        latest = stdout.decode().strip()
-    except Exception as e:
-        log.error(f"Update check (npm): {e}")
-
-    has_update = False
-    if current != "unknown" and latest != "unknown":
-        try:
-            from packaging.version import Version
-            has_update = Version(latest) > Version(current)
-        except Exception:
-            has_update = latest != current
-    return {"current": current, "latest": latest, "has_update": has_update}
-
-
-async def perform_mc_update(aid: int):
-    """Perform MeshCentral update: backup config, npm update, restart, verify."""
-    try:
-        await bot.send_message(aid, "🔄 <b>Обновление MeshCentral</b>\n\n1/4 Бэкап конфига...", parse_mode="HTML")
-        config_path = f"{MC_DATA}/config.json"
-        if os.path.exists(config_path):
-            ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-            backup_path = f"{MC_DATA}/config_backup_{ts}.json"
-            shutil.copy2(config_path, backup_path)
-
-        await bot.send_message(aid, "2/4 npm update meshcentral...", parse_mode="HTML")
-        proc = await asyncio.create_subprocess_exec(
-            "npm", "update", "meshcentral",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            cwd=MC_DIR,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-        npm_out = stdout.decode(errors="replace").strip()
-
-        await bot.send_message(aid, "3/4 Перезапуск MeshCentral...", parse_mode="HTML")
-        await mc_restart()
-        await asyncio.sleep(15)
-
-        alive = await mc_is_alive()
-        info = await check_mc_update()
-
-        if alive:
-            await bot.send_message(
-                aid,
-                f"✅ <b>Обновление завершено!</b>\n\n"
-                f"📦 Версия: <b>{info['current']}</b>\n"
-                f"🟢 MeshCentral работает\n\n"
-                f"<pre>{npm_out[:500]}</pre>",
-                parse_mode="HTML",
-            )
-        else:
-            await bot.send_message(
-                aid,
-                f"⚠️ <b>Обновление выполнено, но MC не отвечает</b>\n\n"
-                f"Подождите 30 секунд или проверьте вручную.\n"
-                f"<pre>{npm_out[:500]}</pre>",
-                parse_mode="HTML",
-            )
-    except asyncio.TimeoutError:
-        await bot.send_message(aid, "❌ npm update timed out (120s)", parse_mode="HTML")
-    except Exception as e:
-        await bot.send_message(aid, f"❌ Ошибка обновления: {e}", parse_mode="HTML")
-
-
-async def mc_service_status() -> str:
-    proc = await asyncio.create_subprocess_exec(
-        "systemctl", "is-active", "meshcentral",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, _ = await proc.communicate()
-    return stdout.decode().strip()
-
-def fmt_bytes(b) -> str:
-    b = float(b)
-    for u in ["B", "KB", "MB", "GB", "TB"]:
-        if b < 1024:
-            return f"{b:.1f} {u}"
-        b /= 1024
-    return f"{b:.1f} PB"
-
-def fmt_uptime(s: float) -> str:
-    d, s = divmod(int(s), 86400)
-    h, s = divmod(s, 3600)
-    m = s // 60
-    return f"{d}д {h}ч {m}м" if d else (f"{h}ч {m}м" if h else f"{m}м")
-
-def fmt_offline(hours: float) -> str:
-    """Format offline duration from hours: '3ч 20м' or '2д 5ч'."""
-    if hours <= 0:
-        return "только что"
-    total_min = int(hours * 60)
-    d, rem = divmod(total_min, 1440)
-    h, m = divmod(rem, 60)
-    if d:
-        return f"{d}д {h}ч" if h else f"{d}д"
-    return f"{h}ч {m}м" if h else f"{m}м"
-
-def pbar(pct: float, w=10) -> str:
-    f = int(pct / 100 * w)
-    return "█" * f + "░" * (w - f)
-
-
-# ─── SSL certificate check ─────────────────────────────────────────
-
-async def check_ssl_cert(hostname: str) -> dict:
-    """Check SSL cert expiry for hostname. Returns dict with days_left, expires, ok, error."""
-    loop = asyncio.get_event_loop()
-    def _check():
-        ctx = ssl.create_default_context()
-        try:
-            with ctx.wrap_socket(socket.create_connection((hostname, 443), timeout=8), server_hostname=hostname) as s:
-                cert = s.getpeercert()
-                not_after = cert.get("notAfter", "")
-                exp = datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
-                days = (exp - datetime.now(timezone.utc)).days
-                return {"domain": hostname, "days_left": days, "expires": exp.strftime("%d.%m.%Y"), "ok": True, "error": ""}
-        except ssl.SSLCertVerificationError as e:
-            return {"domain": hostname, "days_left": -1, "expires": "—", "ok": False, "error": f"Ошибка верификации: {e}"}
-        except Exception as e:
-            return {"domain": hostname, "days_left": -1, "expires": "—", "ok": False, "error": str(e)}
-    try:
-        return await asyncio.wait_for(loop.run_in_executor(None, _check), timeout=12)
-    except asyncio.TimeoutError:
-        return {"domain": hostname, "days_left": -1, "expires": "—", "ok": False, "error": "Timeout"}
-
-
-async def check_all_ssl() -> list[dict]:
-    """Check all configured SSL domains concurrently."""
-    results = await asyncio.gather(*[check_ssl_cert(d) for d in SSL_DOMAINS], return_exceptions=False)
-    return list(results)
-
-
-def ssl_status_text(results: list[dict]) -> str:
-    lines = []
-    for r in results:
-        if not r["ok"]:
-            icon = "❌"
-            info = r["error"][:60]
-        elif r["days_left"] <= SSL_CRIT_DAYS:
-            icon = "🔴"
-            info = f"истекает {r['expires']} (осталось {r['days_left']}д!)"
-        elif r["days_left"] <= SSL_WARN_DAYS:
-            icon = "🟡"
-            info = f"истекает {r['expires']} ({r['days_left']}д)"
-        else:
-            icon = "🟢"
-            info = f"до {r['expires']} ({r['days_left']}д)"
-        lines.append(f"{icon} <code>{r['domain']}</code>: {info}")
-    return "\n".join(lines)
-
-
-# ─── Uptime tracking ────────────────────────────────────────────────
-
-def record_uptime(devices: list[dict]):
-    data = _load_json(UPTIME_FILE, {})
-    now = datetime.now(timezone.utc).isoformat()
-    for d in devices:
-        name = d["name"]
-        if name not in data:
-            data[name] = []
-        data[name].append({"t": now, "on": d["online"]})
-        # keep last 7 days = ~13440 entries at 45s interval
-        if len(data[name]) > 14000:
-            data[name] = data[name][-13000:]
-    _save_json(UPTIME_FILE, data)
-
-
-def build_uptime_graph(device_name: str) -> bytes | None:
-    data = _load_json(UPTIME_FILE, {})
-    records = data.get(device_name, [])
-    if len(records) < 2:
-        return None
-
-    times = []
-    values = []
-    for r in records[-2000:]:
-        try:
-            t = datetime.fromisoformat(r["t"])
-            times.append(t)
-            values.append(1 if r["on"] else 0)
-        except Exception:
-            continue
-
-    if not times:
-        return None
-
-    fig, ax = plt.subplots(figsize=(10, 3))
-    ax.fill_between(times, values, alpha=0.4, color="#2ecc71", step="post")
-    ax.step(times, values, where="post", color="#27ae60", linewidth=1)
-    ax.set_yticks([0, 1])
-    ax.set_yticklabels(["Offline", "Online"])
-    ax.set_title(f"Uptime: {device_name}", fontsize=12)
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m %H:%M"))
-    ax.tick_params(axis="x", rotation=30)
-    fig.tight_layout()
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=100)
-    plt.close(fig)
-    buf.seek(0)
-    return buf.read()
-
-
-# ─── Snapshots / change tracking ────────────────────────────────────
-
-def save_snapshot(devices: list[dict]):
-    snaps = _load_json(SNAPSHOTS_FILE, {})
-    for d in devices:
-        snap = {
-            "os": d["os"],
-            "cpu": d["cpu"],
-            "ram_total": d["ram_total"],
-            "gpu": d["gpu"],
-            "drives": d["drives"],
-            "antivirus": d["antivirus"],
-            "software_count": len(d.get("software", [])),
-            "ip": d["ip"],
-            "agent_ver": d["agent_ver"],
-        }
-        snaps[d["name"]] = snap
-    _save_json(SNAPSHOTS_FILE, snaps)
-
-
-def detect_changes(devices: list[dict]) -> list[str]:
-    snaps = _load_json(SNAPSHOTS_FILE, {})
-    changes = []
-    for d in devices:
-        name = d["name"]
-        old = snaps.get(name)
-        if not old:
-            continue
-        fields = {
-            "os": "ОС", "cpu": "CPU", "ram_total": "RAM",
-            "gpu": "GPU", "antivirus": "Антивирус",
-            "ip": "IP", "agent_ver": "Агент",
-        }
-        for key, label in fields.items():
-            old_val = old.get(key, "")
-            new_val = d.get(key, "")
-            if old_val and new_val and str(old_val) != str(new_val):
-                changes.append(f"📱 <b>{name}</b>: {label} <code>{old_val}</code> → <code>{new_val}</code>")
-        old_drives = old.get("drives", [])
-        new_drives = d.get("drives", [])
-        if old_drives and new_drives and set(map(str, old_drives)) != set(map(str, new_drives)):
-            changes.append(f"📱 <b>{name}</b>: Диски изменились")
-    return changes
-
-
-# ─── Weekly digest ───────────────────────────────────────────────────
-
-async def _send_weekly_digest(admin_id: int, devs: list[dict]):
-    """Send weekly summary report (called every Sunday)."""
-    try:
-        from datetime import timedelta
-        now = datetime.now(timezone.utc)
-        week_start = (now - timedelta(days=7)).strftime("%d.%m")
-        week_end   = now.strftime("%d.%m.%Y")
-
-        total   = len(devs)
-        online  = sum(1 for d in devs if d["online"])
-        offline = total - online
-
-        # Long-offline devices (>24h)
-        cfg = load_alerts_cfg()
-        offline_thresh = cfg.get("offline_hours", 24)
-        long_offline = [d for d in devs if not d["online"] and d.get("offline_hours", 0) >= offline_thresh]
-        long_offline.sort(key=lambda d: d.get("offline_hours", 0), reverse=True)
-
-        # New devices (in known_devices but not in previous snapshot)
-        snaps = _load_json(SNAPSHOTS_FILE, {})
-        new_devices = [d for d in devs if d["name"] not in snaps]
-
-        # Disk warnings
-        disk_warn = []
-        for d in devs:
-            for alert in d.get("vol_alerts", []):
-                disk_warn.append(f"  💿 {d['name']}: {alert}")
-
-        # Security issues
-        sec_issues = []
-        for d in devs:
-            if d.get("av_disabled"):
-                sec_issues.append(f"  🛡 {d['name']}: AV выключен")
-
-        # Disk trends: any critical
-        trends = get_disk_trends()
-        crit_trends = [t for t in trends if t["days_to_full"] is not None and t["days_to_full"] <= 30]
-
-        # Average uptime ratio
-        uptime_pct = (online / total * 100) if total > 0 else 0
-
-        lines = [
-            f"━━━━━━━━━━━━━━━━━━━━━━",
-            f"📅 <b>Еженедельный дайджест</b>",
-            f"{week_start} – {week_end}",
-            f"━━━━━━━━━━━━━━━━━━━━━━",
-            f"",
-            f"📱 Устройств: {total}  🟢 {online} онлайн  ⚪ {offline} офлайн",
-            f"📈 Доступность: {uptime_pct:.0f}%",
-        ]
-
-        if new_devices:
-            lines += ["", f"✨ <b>Новые устройства ({len(new_devices)}):</b>"]
-            for d in new_devices[:5]:
-                lines.append(f"  • {d['name']} ({d['group']})")
-            if len(new_devices) > 5:
-                lines.append(f"  <i>... и ещё {len(new_devices)-5}</i>")
-
-        if long_offline:
-            lines += ["", f"⚪ <b>Долго офлайн ({len(long_offline)}):</b>"]
-            for d in long_offline[:5]:
-                lines.append(f"  • {d['name']}: {fmt_offline(d['offline_hours'])}")
-            if len(long_offline) > 5:
-                lines.append(f"  <i>... и ещё {len(long_offline)-5}</i>")
-
-        if disk_warn:
-            lines += ["", f"💿 <b>Диски (&gt;90%):</b>"]
-            lines += disk_warn[:5]
-            if len(disk_warn) > 5:
-                lines.append(f"  <i>... и ещё {len(disk_warn)-5}</i>")
-
-        if crit_trends:
-            lines += ["", f"📈 <b>Диски заполнятся &lt;30 дней:</b>"]
-            for t in crit_trends[:3]:
-                lines.append(f"  • {t['device']} {t['letter']}: ~{int(t['days_to_full'])} д. ({t['used_pct']:.0f}%)")
-
-        if sec_issues:
-            lines += ["", f"🛡 <b>Безопасность:</b>"]
-            lines += sec_issues[:5]
-
-        if not (new_devices or long_offline or disk_warn or sec_issues or crit_trends):
-            lines += ["", "✅ Неделя прошла без проблем!"]
-
-        lines += ["", "━━━━━━━━━━━━━━━━━━━━━━"]
-
-        await bot.send_message(admin_id, "\n".join(lines), parse_mode="HTML")
-    except Exception as e:
-        log.error(f"weekly_digest: {e}")
-
-
-# ─── Disk fill-rate trend ────────────────────────────────────────────
-
-def save_disk_snapshot(devices: list[dict]) -> None:
-    """Append today's disk snapshot for each online device (one entry per day)."""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    hist = _load_json(DISK_HISTORY_FILE, {})
-    for d in devices:
-        if not d.get("online"):
-            continue
-        vols = d.get("volumes_raw", {})
-        if not vols:
-            continue
-        name = d["name"]
-        entries = hist.setdefault(name, [])
-        # Replace today's entry or append
-        existing = next((e for e in entries if e["date"] == today), None)
-        snap = {"date": today, "volumes": vols}
-        if existing:
-            existing["volumes"] = vols
-        else:
-            entries.append(snap)
-        # Keep last 60 days
-        hist[name] = sorted(entries, key=lambda e: e["date"])[-60:]
-    _save_json(DISK_HISTORY_FILE, hist)
-
-
-def save_snap_history(devices: list[dict]) -> None:
-    """Save daily snapshot of device info to SNAP_HISTORY_FILE. Keeps last 30 days."""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    hist = _load_json(SNAP_HISTORY_FILE, {})
-    day_snap = {}
-    for d in devices:
-        day_snap[d["name"]] = {
-            "os": d.get("os", ""), "cpu": d.get("cpu", ""),
-            "ram_total": d.get("ram_total", ""), "gpu": d.get("gpu", ""),
-            "ip": d.get("ip", ""), "agent_ver": d.get("agent_ver", ""),
-            "online": d.get("online", False),
-        }
-    hist[today] = day_snap
-    # Keep last 30 days
-    keys = sorted(hist.keys())[-30:]
-    _save_json(SNAP_HISTORY_FILE, {k: hist[k] for k in keys})
-
-
-def compare_snap_history(devices: list[dict], days: int = 7) -> str:
-    """Compare current device state with snapshot from N days ago."""
-    hist = _load_json(SNAP_HISTORY_FILE, {})
-    if not hist:
-        return "⚠️ История снапшотов пуста. Данные накапливаются постепенно."
-    now = datetime.now(timezone.utc)
-    target_date = (now - timedelta(days=days)).strftime("%Y-%m-%d")
-    # Find closest snapshot on or before target_date
-    past_key = None
-    for k in sorted(hist.keys()):
-        if k <= target_date:
-            past_key = k
-    if not past_key:
-        oldest = min(hist.keys())
-        return f"⚠️ Нет снапшота за {days} дней назад. Самый ранний: {oldest}."
-    past = hist[past_key]
-    curr_map = {d["name"]: d for d in devices}
-    lines = [f"📊 <b>Сравнение с {past_key}</b>", ""]
-    fields = [("ОС", "os"), ("CPU", "cpu"), ("RAM", "ram_total"), ("IP", "ip"), ("Агент", "agent_ver")]
-    appeared, disappeared, changed = [], [], []
-    for name, old in past.items():
-        if name not in curr_map:
-            disappeared.append(name)
-    for name, d in curr_map.items():
-        if name not in past:
-            appeared.append(name)
-        else:
-            old = past[name]
-            diffs = []
-            for label, key in fields:
-                ov = str(old.get(key, "") or "")
-                nv = str(d.get(key, "") or "")
-                if ov and nv and ov != nv:
-                    diffs.append(f"  {label}: <code>{ov[:30]}</code> → <code>{nv[:30]}</code>")
-            if diffs:
-                changed.append(f"📱 <b>{name}</b>\n" + "\n".join(diffs))
-    if appeared:
-        lines += [f"✨ <b>Новые ({len(appeared)}):</b>"] + [f"  + {n}" for n in appeared[:10]] + [""]
-    if disappeared:
-        lines += [f"🗑 <b>Исчезли ({len(disappeared)}):</b>"] + [f"  — {n}" for n in disappeared[:10]] + [""]
-    if changed:
-        lines += [f"🔄 <b>Изменились ({len(changed)}):</b>", ""] + changed[:20]
-    if not appeared and not disappeared and not changed:
-        lines.append("✅ Изменений не обнаружено.")
-    return "\n".join(lines)
-
-
-def get_disk_trends() -> list[dict]:
-    """
-    Returns list of dicts with fill-rate info per device per volume.
-    Only includes volumes where trend is calculable (≥2 data points).
-    Result sorted by days_to_full ascending (most critical first).
-    """
-    hist = _load_json(DISK_HISTORY_FILE, {})
-    trends = []
-    for device_name, entries in hist.items():
-        if len(entries) < 2:
-            continue
-        # Group by volume letter
-        vol_series: dict[str, list[tuple[float, float]]] = {}  # letter -> [(day_num, used_gb)]
-        dates = [e["date"] for e in entries]
-        # Use day offset from first entry
-        from datetime import datetime as dt
-        d0 = dt.strptime(dates[0], "%Y-%m-%d")
-        for entry in entries:
-            day_num = (dt.strptime(entry["date"], "%Y-%m-%d") - d0).days
-            for letter, v in entry.get("volumes", {}).items():
-                total = v.get("total", 0)
-                free  = v.get("free", 0)
-                if total <= 0:
-                    continue
-                used_gb = (total - free) / 1_073_741_824
-                vol_series.setdefault(letter, []).append((day_num, used_gb))
-
-        for letter, pts in vol_series.items():
-            if len(pts) < 2:
-                continue
-            # Linear regression: used = a*day + b
-            n = len(pts)
-            sx  = sum(p[0] for p in pts)
-            sy  = sum(p[1] for p in pts)
-            sxx = sum(p[0] ** 2 for p in pts)
-            sxy = sum(p[0] * p[1] for p in pts)
-            denom = n * sxx - sx * sx
-            if denom == 0:
-                continue
-            a = (n * sxy - sx * sy) / denom  # GB per day fill rate
-            b = (sy - a * sx) / n
-
-            # Current values from latest entry
-            latest = sorted(pts, key=lambda p: p[0])[-1]
-            day_latest = latest[0]
-            used_latest = latest[1]
-
-            # Get total_gb from last entry
-            last_entry = entries[-1]
-            total_bytes = last_entry.get("volumes", {}).get(letter, {}).get("total", 0)
-            if total_bytes <= 0:
-                continue
-            total_gb = total_bytes / 1_073_741_824
-            free_gb  = total_gb - used_latest
-            used_pct = (used_latest / total_gb * 100) if total_gb > 0 else 0
-
-            if a > 0.001:  # growing
-                days_to_full = (total_gb - used_latest) / a if a > 0 else None
-            else:
-                days_to_full = None  # stable or shrinking
-
-            trends.append({
-                "device": device_name,
-                "letter": letter,
-                "used_gb": round(used_latest, 1),
-                "total_gb": round(total_gb, 1),
-                "free_gb": round(free_gb, 1),
-                "used_pct": round(used_pct, 1),
-                "fill_rate_gb_day": round(a, 3),
-                "days_to_full": round(days_to_full, 0) if days_to_full is not None else None,
-                "points": n,
-            })
-
-    # Sort: disks filling fastest first
-    trends.sort(key=lambda t: (t["days_to_full"] is None, t["days_to_full"] or 99999))
-    return trends
-
-
-# ─── Wake-on-LAN ────────────────────────────────────────────────────
-
-def send_wol(mac_address: str) -> bool:
-    """Send a magic WoL packet to the given MAC address."""
-    mac = mac_address.replace(":", "").replace("-", "").upper()
-    if len(mac) != 12:
-        return False
-    try:
-        mac_bytes = bytes.fromhex(mac)
-        magic = b'\xff' * 6 + mac_bytes * 16
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        sock.sendto(magic, ("255.255.255.255", 9))
-        sock.close()
-        return True
-    except Exception:
-        return False
-
-
-# ─── Agent Installer Generator ───────────────────────────────────────
-
-async def _get_mesh_groups() -> dict[str, str]:
-    """Return {group_name: mesh_id} mapping (raw MC IDs)."""
-    raw = await _export_db_async()
-    return {r.get("name", "?"): r["_id"].replace("mesh//", "") for r in raw if r.get("type") == "mesh"}
-
-
-async def _download_configured_agent(mesh_id: str, agent_type: int = 4) -> bytes | None:
-    """Download pre-configured agent binary from MC server (with MeshID+ServerID embedded).
-    agent_type: 4=win64 exe, 6=win64 msi
-    """
-    import urllib.parse
-    encoded = urllib.parse.quote(mesh_id, safe='')
-    url = f"{MC_URL}/meshagents?id={agent_type}&meshid={encoded}&installflags=0"
-
-    ssl_ctx = ssl.create_default_context()
-    ssl_ctx.check_hostname = False
-    ssl_ctx.verify_mode = ssl.CERT_NONE
-
-    try:
-        async with aiohttp.ClientSession() as sess:
-            async with sess.get(url, timeout=aiohttp.ClientTimeout(total=30), ssl=ssl_ctx) as resp:
-                if resp.status == 200:
-                    data = await resp.read()
-                    if len(data) > 100_000:  # agent should be >1MB
-                        return data
-    except Exception as e:
-        log.error(f"Agent download failed: {e}")
-    return None
-
-
-def generate_local_installer_bat(group_name: str) -> str:
-    """BAT installer for MeshAgent.exe — supports Windows 10/11 including 24H2/25H2.
-    Workaround for KB5074105/KB5077181 breaking ShellExecuteW in the agent.
-    """
-    return f'''@echo off
-chcp 65001 >nul 2>&1
-title MeshCentral Agent — {group_name}
-color 0A
-
-:: ─── Save original directory before elevation ───
-set "ORIG_DIR=%~dp0"
-
-:: ─── Check administrator rights ───
-net session >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [*] Requesting administrator rights...
-    powershell -Command "Start-Process cmd -ArgumentList '/c cd /d \"%ORIG_DIR%\" && \"%~f0\"' -Verb RunAs"
-    exit /b
-)
-
-:: Ensure we are in the correct directory (where EXE is)
-cd /d "%ORIG_DIR%"
-
-echo.
-echo  =============================================
-echo   MeshCentral Agent Installer
-echo   Group: {group_name}
-echo   Windows 10 / 11 (including 24H2)
-echo  =============================================
-echo.
-
-:: ─── Check that MeshAgent.exe is next to this BAT ───
-if not exist "%~dp0MeshAgent.exe" (
-    echo [ERROR] MeshAgent.exe not found!
-    echo         Place this BAT in same folder as MeshAgent.exe
-    pause
-    exit /b 1
-)
-
-:: ─── Fix DLL search order (KB5074105/KB5077181 workaround) ───
-:: Ensure system DLLs are found first, not from user folders
-set "PATH=%SystemRoot%\\System32;%SystemRoot%;%PATH%"
-
-:: ─── Unblock downloaded files (MOTW / Zone.Identifier) ───
-echo [*] Configuring Windows security...
-powershell -Command "Unblock-File -Path '%~dp0MeshAgent.exe' -ErrorAction SilentlyContinue; Remove-Item -Path '%~dp0MeshAgent.exe:Zone.Identifier' -ErrorAction SilentlyContinue; Unblock-File -Path '%~f0' -ErrorAction SilentlyContinue" >nul 2>&1
-
-:: ─── Defender exclusions (paths + process) ───
-echo [*] Adding Defender exclusions...
-powershell -Command "$p='%ProgramFiles%\\Mesh Agent'; Add-MpPreference -ExclusionPath $p -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionPath '%~dp0' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess 'MeshAgent.exe' -ErrorAction SilentlyContinue" >nul 2>&1
-timeout /t 2 /nobreak >nul
-
-:: ─── Remove old agent if exists ───
-sc query "Mesh Agent" >nul 2>&1
-if %errorlevel% equ 0 (
-    echo [*] Removing previous agent...
-    net stop "Mesh Agent" >nul 2>&1
-    timeout /t 3 /nobreak >nul
-    "%ProgramFiles%\\Mesh Agent\\MeshAgent.exe" -uninstall >nul 2>&1
-    timeout /t 3 /nobreak >nul
-    sc delete "Mesh Agent" >nul 2>&1
-    timeout /t 2 /nobreak >nul
-    rd /s /q "%ProgramFiles%\\Mesh Agent" >nul 2>&1
-)
-
-:: ─── Copy agent to Program Files and install ───
-echo [*] Installing agent...
-if not exist "%ProgramFiles%\\Mesh Agent" mkdir "%ProgramFiles%\\Mesh Agent"
-copy /y "%~dp0MeshAgent.exe" "%ProgramFiles%\\Mesh Agent\\MeshAgent.exe" >nul 2>&1
-
-:: Unblock the copy in Program Files too
-powershell -Command "Unblock-File -Path '%ProgramFiles%\\Mesh Agent\\MeshAgent.exe' -ErrorAction SilentlyContinue" >nul 2>&1
-
-:: Run -fullinstall from Program Files (with system PATH)
-:: This bypasses the ShellExecuteW bug in the agent
-cd /d "%ProgramFiles%\\Mesh Agent"
-echo [*] Running: MeshAgent.exe -fullinstall
-"%ProgramFiles%\\Mesh Agent\\MeshAgent.exe" -fullinstall
-
-echo [*] Waiting for service to start...
-timeout /t 5 /nobreak >nul
-
-:: ─── Firewall rules ───
-echo [*] Configuring firewall...
-netsh advfirewall firewall delete rule name="MeshCentral Agent" >nul 2>&1
-netsh advfirewall firewall delete rule name="MeshCentral Agent In" >nul 2>&1
-netsh advfirewall firewall add rule name="MeshCentral Agent" dir=out action=allow program="%ProgramFiles%\\Mesh Agent\\MeshAgent.exe" enable=yes >nul 2>&1
-netsh advfirewall firewall add rule name="MeshCentral Agent In" dir=in action=allow program="%ProgramFiles%\\Mesh Agent\\MeshAgent.exe" enable=yes >nul 2>&1
-
-:: ─── Verify service status ───
-echo.
-sc query "Mesh Agent" | findstr "RUNNING" >nul 2>&1
-if %errorlevel% equ 0 (
-    echo  =============================================
-    echo   [OK] Agent installed and running!
-    echo  =============================================
-    echo.
-    echo  Service: Mesh Agent
-    echo  Location: %ProgramFiles%\\Mesh Agent
-    echo  Group: {group_name}
-) else (
-    echo  [!] Service is not running yet.
-    echo  [*] Retrying start...
-    net start "Mesh Agent" >nul 2>&1
-    timeout /t 3 /nobreak >nul
-    sc query "Mesh Agent" | findstr "RUNNING" >nul 2>&1
-    if %errorlevel% equ 0 (
-        echo  [OK] Agent started on second attempt!
-    ) else (
-        echo  [!] Could not start. Try manually:
-        echo      cd "%ProgramFiles%\\Mesh Agent"
-        echo      MeshAgent.exe -fullinstall
-    )
-)
-
-echo.
-pause
-'''
-
-
-# ─── Remote commands via MeshCentral API ─────────────────────────────
-
-async def _get_login_key() -> str:
-    """Generate a fresh meshctrl login key."""
-    proc = await asyncio.create_subprocess_exec(
-        "node", f"{MC_DIR}/node_modules/meshcentral/meshcentral.js", "--logintokenkey",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=MC_DIR,
-    )
-    stdout, _ = await proc.communicate()
-    return stdout.decode().strip()
-
-
-async def mc_run_command(device_id: str, command: str, powershell: bool = False,
-                         run_as_user: bool = False, timeout: int = 30) -> str:
-    """Execute a command on a remote device via meshctrl RunCommand."""
-    login_key = await _get_login_key()
-    if not login_key:
-        return "Error: failed to generate login key"
-
-    args = [
-        "node", MESHCTRL, "RunCommand",
-        "--url", MC_WSS,
-        "--loginkey", login_key,
-        "--id", device_id,
-        "--run", command,
-        "--reply",
-    ]
-    if powershell:
-        args.append("--powershell")
-    if run_as_user:
-        args.append("--runasuser")
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=MC_DIR,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        output = stdout.decode(errors="replace").strip()
-        if not output and stderr:
-            output = stderr.decode(errors="replace").strip()
-        return output[:4000] if output else "(пустой ответ)"
-    except asyncio.TimeoutError:
-        return "Error: command timed out (30s)"
-    except Exception as e:
-        return f"Error: {e}"
-
-
-async def mc_device_power(device_id: str, action: str) -> str:
-    """Send power action (wake/sleep/reset/off) to a device."""
-    login_key = await _get_login_key()
-    if not login_key:
-        return "Error: failed to generate login key"
-
-    args = [
-        "node", MESHCTRL, "DevicePower",
-        "--url", MC_WSS,
-        "--loginkey", login_key,
-        "--id", device_id,
-        f"--{action}",
-    ]
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=MC_DIR,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
-        return stdout.decode(errors="replace").strip() or "OK"
-    except asyncio.TimeoutError:
-        return "Error: timed out"
-    except Exception as e:
-        return f"Error: {e}"
-
-
-# ─── Keenetic WiFi probe ───────────────────────────────────────────────
-
-def _load_wifi_clients() -> dict:
-    """Load wifi_clients.json into _wifi_clients."""
-    global _wifi_clients
-    try:
-        if WIFI_FILE.exists():
-            _wifi_clients = json.loads(WIFI_FILE.read_text())
-    except Exception:
-        _wifi_clients = {}
-    return _wifi_clients
-
-
-def _save_wifi_clients() -> None:
-    try:
-        WIFI_FILE.write_text(json.dumps(_wifi_clients, ensure_ascii=False, indent=2))
-    except Exception as e:
-        log.error(f"wifi save: {e}")
-
-
-def _load_keenetic_probes() -> list[dict]:
-    try:
-        if KEENETIC_PROBES_FILE.exists():
-            return json.loads(KEENETIC_PROBES_FILE.read_text())
-    except Exception:
-        pass
+        log.error(f"WS todo {entity_id}: {e}")
     return []
 
+# ── Auth ──────────────────────────────────────────────────────────────────────
+def is_admin(uid: int) -> bool:
+    return uid == ADMIN_ID
 
-async def run_keenetic_probe(device_id: str, probe: dict) -> dict | None:
-    """Run keenetic_probe.ps1 on the remote device; return parsed JSON or None."""
-    try:
-        script = KEENETIC_PROBE_SCRIPT.read_text(encoding="utf-8")
-    except Exception as e:
-        log.error(f"keenetic probe: cannot read script: {e}")
-        return None
-
-    script = script.replace("ROUTER_LOGIN", probe.get("router_login", "admin"))
-    script = script.replace("ROUTER_PASSWORD", probe.get("router_password", ""))
-
-    login_key = await _get_login_key()
-    if not login_key:
-        return None
-
-    args = [
-        "node", MESHCTRL, "RunCommand",
-        "--url", MC_WSS,
-        "--loginkey", login_key,
-        "--id", device_id,
-        "--run", script,
-        "--reply",
-        "--powershell",
-    ]
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=MC_DIR,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
-        raw = stdout.decode(errors="replace").strip()
-        # meshctrl may emit log lines before JSON and after (PS warnings).
-        # Find first '{', then use raw_decode to ignore trailing garbage.
-        brace = raw.find("{")
-        if brace == -1:
-            return None
-        obj, _ = json.JSONDecoder().raw_decode(raw, brace)
-        return obj
-    except asyncio.TimeoutError:
-        log.warning(f"keenetic probe timeout for device {device_id}")
-    except Exception as e:
-        log.error(f"keenetic probe error: {e}")
+def _get_user_role(uid: int) -> str:
+    """Вернуть роль пользователя: 'owner' | 'admin' | 'viewer' | None."""
+    if uid == ADMIN_ID:
+        return "owner"
+    users = _load_family_users()
+    info = users.get(str(uid))
+    if info:
+        return info.get("role", "viewer")
     return None
 
+def is_bot_admin(uid: int) -> bool:
+    """Owner или admin-роль (может управлять устройствами)."""
+    return uid == ADMIN_ID or _get_user_role(uid) == "admin"
 
-async def wifi_poll_loop():
-    """Background loop: poll all keenetic probes every WIFI_POLL_INTERVAL seconds."""
-    global _wifi_clients
-    _load_wifi_clients()
-    await asyncio.sleep(10)  # short delay on startup
-    while not _shutdown_event.is_set():
-        try:
-            probes = _load_keenetic_probes()
-            if probes:
-                devs = await get_full_devices()
-                name_to_id = {d["name"]: d["id"] for d in devs}
-                for probe in probes:
-                    aname = probe.get("agent_name", "")
-                    dev_id = name_to_id.get(aname)
-                    if not dev_id:
-                        log.info(f"wifi_poll: agent '{aname}' not found in devices")
-                        continue
-                    # only poll if device is online
-                    dev = next((d for d in devs if d["id"] == dev_id), None)
-                    if not dev or not dev.get("online"):
-                        log.info(f"wifi_poll: agent '{aname}' is offline, skipping")
-                        continue
-                    log.info(f"wifi_poll: polling keenetic via {aname} ({dev_id})")
-                    result = await run_keenetic_probe(dev_id, probe)
-                    if result:
-                        _wifi_clients[aname] = result
-                        _save_wifi_clients()
-                        log.info(f"wifi_poll: {aname} → {result.get('count', '?')} clients, ok={result.get('ok')}")
-        except Exception as e:
-            log.error(f"wifi_poll_loop: {e}")
-        try:
-            await asyncio.wait_for(_shutdown_event.wait(), timeout=WIFI_POLL_INTERVAL)
-            break
-        except asyncio.TimeoutError:
-            pass
+def is_viewer(uid: int) -> bool:
+    """Только просмотр, без управления."""
+    return _get_user_role(uid) == "viewer"
 
-
-# ─── Status page builder ─────────────────────────────────────────────
-
-def build_status_html(devices: list[dict]) -> str:
-    """Generate a public status page grouped by location."""
-    from collections import defaultdict
-    now_str = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
-    groups: dict[str, list[dict]] = defaultdict(list)
-    for d in devices:
-        loc = d.get("group", "Без группы") or "Без группы"
-        groups[loc].append(d)
-
-    rows = ""
-    for loc in sorted(groups.keys()):
-        devs = groups[loc]
-        n_on  = sum(1 for d in devs if d.get("online"))
-        n_off = len(devs) - n_on
-        if n_on == len(devs):
-            cls, icon, label = "ok",   "●", "Все онлайн"
-        elif n_on == 0:
-            cls, icon, label = "down", "●", "Все офлайн"
-        else:
-            cls, icon, label = "warn", "●", f"{n_on}/{len(devs)} онлайн"
-        rows += (
-            f'<div class="card">'
-            f'<span class="dot {cls}">{icon}</span>'
-            f'<div class="info"><div class="loc">{loc}</div>'
-            f'<div class="sub">{label} &nbsp;·&nbsp; '
-            f'<span class="on">{n_on} ↑</span> '
-            f'<span class="off">{n_off} ↓</span></div></div>'
-            f'</div>\n'
-        )
-
-    n_total = len(devices)
-    n_online = sum(1 for d in devices if d.get("online"))
-    overall = "ok" if n_online == n_total else ("down" if n_online == 0 else "warn")
-    overall_label = (
-        "Все системы работают" if n_online == n_total
-        else f"Частичный сбой: {n_online}/{n_total} онлайн"
-        if n_online > 0 else "Нет связи с устройствами"
-    )
-
-    return f"""<!DOCTYPE html>
-<html lang="ru">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="60">
-<title>Статус сети — MeshCentral</title>
-<style>
-*{{margin:0;padding:0;box-sizing:border-box}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-      background:#0a1120;color:#c8d6e5;min-height:100vh;padding:20px}}
-.hdr{{text-align:center;padding:24px 0 8px}}
-.hdr h1{{font-size:22px;color:#85c1e9;margin-bottom:6px}}
-.hdr .ts{{font-size:12px;color:#4a7a99}}
-.overall{{display:flex;align-items:center;justify-content:center;gap:10px;
-          margin:18px auto;padding:12px 24px;border-radius:8px;max-width:500px;
-          font-size:15px;font-weight:600}}
-.overall.ok  {{background:#0f2a1a;border:1px solid #2ecc71;color:#2ecc71}}
-.overall.warn{{background:#2a1f0a;border:1px solid #f39c12;color:#f39c12}}
-.overall.down{{background:#2a0a0a;border:1px solid #e74c3c;color:#e74c3c}}
-.cards{{max-width:600px;margin:0 auto;display:flex;flex-direction:column;gap:10px}}
-.card{{display:flex;align-items:center;gap:14px;padding:14px 18px;
-       border-radius:8px;background:#0f1e2e;border:1px solid #1e3a5f}}
-.dot{{font-size:22px;flex-shrink:0}}
-.dot.ok  {{color:#2ecc71}}
-.dot.warn{{color:#f39c12}}
-.dot.down{{color:#e74c3c}}
-.loc{{font-size:14px;font-weight:600;color:#aed6f1}}
-.sub{{font-size:12px;color:#6b8fa8;margin-top:3px}}
-.on {{color:#2ecc71}}.off{{color:#e74c3c}}
-.footer{{text-align:center;margin-top:30px;font-size:11px;color:#2a4a6a}}
-.footer a{{color:#3498db;text-decoration:none}}
-</style>
-</head>
-<body>
-<div class="hdr">
-  <h1>🗺 Статус сети</h1>
-  <div class="ts">Обновлено: {now_str} &nbsp;·&nbsp; Обновляется каждые 60 сек</div>
-</div>
-<div class="overall {overall}">{overall_label}</div>
-<div class="cards">
-{rows}</div>
-<div class="footer">
-  MeshCentral &nbsp;·&nbsp; <a href="/netmap">Карта сети</a> &nbsp;·&nbsp; <a href="/rack">RackViz</a>
-</div>
-</body>
-</html>"""
-
-
-# ─── Availability heatmap (text) ─────────────────────────────────────
-
-def build_availability_heatmap(device_name: str) -> str:
-    """Build a 7-day per-hour text heatmap from uptime data."""
-    data = _load_json(UPTIME_FILE, {})
-    records = data.get(device_name, [])
-    if not records:
-        return f"Нет данных о доступности для «{device_name}»"
-
-    # bucket records by (date, hour)
-    from collections import defaultdict
-    buckets: dict[tuple, list[int]] = defaultdict(list)
-    for r in records:
-        try:
-            t = datetime.fromisoformat(r["t"])
-            buckets[(t.date(), t.hour)].append(1 if r["on"] else 0)
-        except Exception:
-            continue
-
-    now = datetime.now(timezone.utc)
-    lines = ["<pre>"]
-    lines.append(f"  Доступность: <b>{device_name}</b> (7 дней × 24ч)\n")
-    lines.append("  Чч: " + " ".join(f"{h:02d}" for h in range(0, 24, 2)) + "\n")
-
-    total_on = 0
-    total_buckets = 0
-    for day_offset in range(6, -1, -1):
-        day = (now - timedelta(days=day_offset)).date()
-        day_str = day.strftime("%d.%m")
-        cells = []
-        for hour in range(24):
-            vals = buckets.get((day, hour), [])
-            if not vals:
-                cells.append("·")
-            else:
-                pct = sum(vals) / len(vals)
-                total_on += sum(vals)
-                total_buckets += len(vals)
-                cells.append("█" if pct >= 0.8 else ("▒" if pct >= 0.4 else "░"))
-        lines.append(f"  {day_str}: " + " ".join(cells[h] for h in range(0, 24, 2)) + "\n")
-
-    uptime_pct = round(total_on / total_buckets * 100, 1) if total_buckets else 0
-    lines.append(f"\n  █ онлайн  ▒ частично  ░ офлайн  · нет данных")
-    lines.append(f"\n  Доступность за 7 дней: <b>{uptime_pct}%</b>")
-    lines.append("</pre>")
-    return "".join(lines)
-
-
-# ─── HW Inventory helpers ────────────────────────────────────────────
-
-def _hw_inventory_text(inv: dict, device_name: str) -> str:
-    if not inv:
-        return f"Нет данных HW для <b>{device_name}</b>"
-    lines = [f"💻 <b>{device_name}</b> — аппаратный инвентарь\n"]
-    lines.append(f"🏭 {inv.get('manufacturer','')} {inv.get('model','')}")
-    if inv.get('serial'): lines.append(f"🔢 Серийный: <code>{inv['serial']}</code>")
-    lines.append(f"\n🖥 ОС: {inv.get('os_name','')} {inv.get('os_arch','')}")
-    if inv.get('os_install'): lines.append(f"   Установлена: {inv['os_install']}")
-    if inv.get('last_boot'):  lines.append(f"   Последний старт: {inv['last_boot']}")
-    lines.append(f"\n⚡ CPU: {inv.get('cpu_name','?')}")
-    lines.append(f"   Ядра/Потоки: {inv.get('cpu_cores','?')}/{inv.get('cpu_threads','?')}"
-                 f" @ {inv.get('cpu_mhz','?')} МГц")
-    lines.append(f"\n🧠 RAM: {inv.get('ram_total_gb','?')} GB"
-                 f"  ({inv.get('ram_slots','?')} модулей)")
-    disks = inv.get('disks', [])
-    if disks:
-        lines.append("\n💾 Диски:")
-        for d in disks:
-            bar = "▓" * int(d.get('used_pct', 0) / 10) + "░" * (10 - int(d.get('used_pct', 0) / 10))
-            lines.append(f"   {d['letter']} [{d.get('dtype','?')}] "
-                         f"{d.get('size_gb','?')}GB — "
-                         f"свободно {d.get('free_gb','?')}GB [{bar}] {d.get('used_pct','?')}%")
-    if inv.get('gpu'): lines.append(f"\n🎮 GPU: {inv['gpu']}")
-    if inv.get('updated'): lines.append(f"\n🕐 Обновлено: {inv['updated']}")
-    return "\n".join(lines)
-
-
-async def _collect_hw_for_device(device_id: str, device_name: str):
-    """Run hw_inventory.ps1 on one device via meshctrl."""
-    global _hw_inventory
-    if not HW_INVENTORY_PS1.exists():
-        return
+def _load_family_users() -> dict:
     try:
-        script = HW_INVENTORY_PS1.read_text(encoding="utf-8")
-        raw = await mc_run_command(device_id, script, powershell=True, timeout=60)
-        if not raw:
-            return
-        # extract JSON from output (clean BOM/control chars from PowerShell output)
-        for line in reversed(raw.strip().splitlines()):
-            line = line.strip().lstrip("\ufeff").replace("\r", "").replace("\x00", "")
-            if line.startswith("{"):
-                inv = json.loads(line)
-                inv["updated"] = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M")
-                _hw_inventory[device_name] = inv
-                _save_json(HW_INVENTORY_FILE, _hw_inventory)
-                log.info(f"hw_inventory: collected {device_name}")
-                break
-    except Exception as e:
-        log.warning(f"hw_inventory: {device_name}: {e}")
-
-
-async def _collect_temp_for_device(device_id: str, device_name: str) -> dict | None:
-    """Run temp_probe.ps1 on one device."""
-    if not TEMP_PROBE_PS1.exists():
-        return None
-    try:
-        script = TEMP_PROBE_PS1.read_text(encoding="utf-8")
-        raw = await mc_run_command(device_id, script, powershell=True, timeout=30)
-        if not raw:
-            return None
-        for line in reversed(raw.strip().splitlines()):
-            line = line.strip().lstrip("\ufeff").replace("\r", "").replace("\x00", "")
-            if line.startswith("{"):
-                return json.loads(line)
-    except Exception as e:
-        log.warning(f"temp_probe: {device_name}: {e}")
-    return None
-
-
-# ─── HW Inventory loop ───────────────────────────────────────────────
-
-async def hw_inventory_loop():
-    """Collect hardware inventory from online agents every HW_POLL_INTERVAL seconds."""
-    global _hw_inventory
-    _hw_inventory = _load_json(HW_INVENTORY_FILE, {})
-    await asyncio.sleep(120)  # delay on startup
-    while not _shutdown_event.is_set():
-        try:
-            devs = await get_full_devices()
-            online = [d for d in devs if d.get("online")]
-            log.info(f"hw_inventory_loop: polling {len(online)} online devices")
-            for d in online:
-                if _shutdown_event.is_set():
-                    break
-                await _collect_hw_for_device(d["id"], d["name"])
-                await asyncio.sleep(5)  # throttle
-        except Exception as e:
-            log.error(f"hw_inventory_loop: {e}")
-        try:
-            await asyncio.wait_for(_shutdown_event.wait(), timeout=HW_POLL_INTERVAL)
-            break
-        except asyncio.TimeoutError:
-            pass
-
-
-# ─── Temperature loop ────────────────────────────────────────────────
-
-async def temp_loop():
-    """Collect CPU temperature from online agents every TEMP_POLL_INTERVAL."""
-    global _temp_data
-    _temp_data = _load_json(TEMP_DATA_FILE, {})
-    await asyncio.sleep(90)
-    while not _shutdown_event.is_set():
-        try:
-            aid = get_admin_id()
-            devs = await get_full_devices()
-            online = [d for d in devs if d.get("online")]
-            for d in online:
-                if _shutdown_event.is_set():
-                    break
-                result = await _collect_temp_for_device(d["id"], d["name"])
-                if not result:
-                    continue
-                result["updated"] = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M")
-                _temp_data[d["name"]] = result
-                _save_json(TEMP_DATA_FILE, _temp_data)
-                # Alert if any sensor is critical
-                if aid:
-                    for sensor in result.get("temps", []):
-                        if sensor.get("temp_c", 0) >= TEMP_WARN_C:
-                            await bot.send_message(
-                                aid,
-                                f"🌡 <b>Высокая температура!</b>\n"
-                                f"💻 {d['name']}\n"
-                                f"🌡 {sensor['zone']}: <b>{sensor['temp_c']}°C</b>\n"
-                                f"⚠️ Порог: {TEMP_WARN_C}°C",
-                                parse_mode="HTML",
-                            )
-                            break  # one alert per device per cycle
-                await asyncio.sleep(3)
-        except Exception as e:
-            log.error(f"temp_loop: {e}")
-        try:
-            await asyncio.wait_for(_shutdown_event.wait(), timeout=TEMP_POLL_INTERVAL)
-            break
-        except asyncio.TimeoutError:
-            pass
-
-
-async def netmap_loop():
-    """Background loop: regenerate netmap.html every NETMAP_INTERVAL seconds."""
-    NETMAP_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATUS_HTML_FILE.parent.mkdir(parents=True, exist_ok=True)
-    await asyncio.sleep(5)  # short delay on startup
-    while not _shutdown_event.is_set():
-        try:
-            devs = await get_full_devices()
-            if devs:
-                html = build_network_map_html(devs, web_mode=True)
-                if html:
-                    NETMAP_FILE.write_text(html, encoding="utf-8")
-                # Status page
-                status_html = build_status_html(devs)
-                STATUS_HTML_FILE.write_text(status_html, encoding="utf-8")
-                log.info(f"netmap: updated ({len(devs)} devices)")
-        except Exception as e:
-            log.error(f"netmap_loop: {e}")
-        try:
-            await asyncio.wait_for(_shutdown_event.wait(), timeout=NETMAP_INTERVAL)
-            break
-        except asyncio.TimeoutError:
-            pass
-
-
-# Quick command presets for devices
-QUICK_COMMANDS = {
-    "info": ("systeminfo | findstr /B /C:\"OS Name\" /C:\"OS Version\" /C:\"System Model\" /C:\"Total Physical\"", False),
-    "ipconfig": ("ipconfig /all", False),
-    "disk": ("wmic logicaldisk get caption,freespace,size", False),
-    "uptime": ("powershell (Get-Date) - (gcim Win32_OperatingSystem).LastBootUpTime | Select Days,Hours,Minutes | fl", True),
-    "users": ("query user", False),
-    "procs": ("powershell Get-Process | Sort-Object CPU -Descending | Select-Object -First 15 Name,CPU,WorkingSet | Format-Table -AutoSize", True),
-    "services": ("powershell Get-Service | Where-Object {$_.Status -eq 'Running'} | Select-Object -First 20 Name,DisplayName | Format-Table -AutoSize", True),
-    "netstat": ("netstat -an | findstr LISTEN", False),
-}
-
-
-# ─── Pagination helpers ──────────────────────────────────────────────
-
-def paginated_buttons(items: list[dict], page: int, prefix: str, name_key: str = "name",
-                      icon_fn=None, extra_buttons: list = None) -> InlineKeyboardMarkup:
-    total_pages = max(1, (len(items) + PAGE_SIZE - 1) // PAGE_SIZE)
-    page = max(0, min(page, total_pages - 1))
-    start = page * PAGE_SIZE
-    end = start + PAGE_SIZE
-    buttons = []
-    for item in items[start:end]:
-        icon = icon_fn(item) if icon_fn else ""
-        label = f"{icon} {item[name_key]}" if icon else item[name_key]
-        buttons.append([InlineKeyboardButton(text=label, callback_data=f"{prefix}:{item[name_key][:40]}")])
-
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton(text="◀️", callback_data=f"page:{prefix}:{page - 1}"))
-    nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
-    if page < total_pages - 1:
-        nav.append(InlineKeyboardButton(text="▶️", callback_data=f"page:{prefix}:{page + 1}"))
-    if nav:
-        buttons.append(nav)
-
-    if extra_buttons:
-        buttons.extend(extra_buttons)
-
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-# ─── Handlers ────────────────────────────────────────────────────────
-
-@router.message(Command("start"))
-async def cmd_start(msg: Message):
-    uid = msg.from_user.id
-    uname = msg.from_user.username or msg.from_user.first_name or str(uid)
-    locked = lock_admin(uid, uname)
-    if not is_admin(uid):
-        await msg.answer("🔒 Доступ запрещён.")
-        return
-    t = (
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🖥  <b>MeshCentral Monitor v4</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🌐 {MC_URL}\n\n"
-        "• Уведомления о подключениях\n"
-        "• Полный инвентарь железа\n"
-        "• Поиск устройств\n"
-        "• Алерты (диск, AV, офлайн)\n"
-        "• История изменений\n"
-        "• Графики аптайма\n"
-        "• Сравнение устройств\n"
-        "• Wake-on-LAN\n"
-        "• Инвентаризация ПО\n"
-        "• 🆕 Удалённые команды\n"
-        "• 🆕 PDF-отчёты\n"
-        "• 🆕 Установщик агента (BAT/PS1)\n"
-        "• Бэкап конфига MC\n"
-        "• Мониторинг + автоперезапуск\n\n"
-    )
-    if locked:
-        t += "✅ Вы — администратор.\n\n"
-    t += "Клавиатура 👇"
-    await msg.answer(t, reply_markup=MAIN_KB, parse_mode="HTML")
-
-
-# ─── Status ──────────────────────────────────────────────────────────
-
-@router.message(F.text == BTN_STATUS)
-async def msg_status(msg: Message):
-    if not is_admin(msg.from_user.id):
-        return
-    alive = await mc_is_alive()
-    svc = await mc_service_status()
-    devs = await get_full_devices()
-    online = sum(1 for d in devs if d["online"])
-    cpu = psutil.cpu_percent(interval=0.5)
-    mem = psutil.virtual_memory()
-    disk = shutil.disk_usage("/")
-    up = time.time() - psutil.boot_time()
-    # SSL quick summary from cache
-    ssl_summary = ""
-    if _ssl_cache:
-        crit = [r for r in _ssl_cache if not r["ok"] or r["days_left"] <= SSL_CRIT_DAYS]
-        warn = [r for r in _ssl_cache if r["ok"] and SSL_CRIT_DAYS < r["days_left"] <= SSL_WARN_DAYS]
-        ok_n = len(_ssl_cache) - len(crit) - len(warn)
-        if crit:
-            ssl_summary = f"\n🔐 SSL: 🔴 {len(crit)} крит  🟡 {len(warn)} предупр  🟢 {ok_n} ок"
-        elif warn:
-            ssl_summary = f"\n🔐 SSL: 🟡 {len(warn)} предупр  🟢 {ok_n} ок"
-        else:
-            ssl_summary = f"\n🔐 SSL: 🟢 все {ok_n} ок"
-    # HTTP services status from cache (updated by health_loop every 60s)
-    http_lines = ""
-    if HTTP_SERVICES:
-        svc_parts = []
-        for svc_name, svc_url in HTTP_SERVICES:
-            is_down = _http_down.get(svc_name, False)
-            svc_parts.append(f"{'🔴' if is_down else '🟢'} {svc_name}")
-        http_lines = "\n" + "  ".join(svc_parts)
-
-    t = (
-        "━━━━━━━━━━━━━━━━━━━━━━\n🖥  <b>Status</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{'🟢' if alive else '🔴'} Web: <b>{'OK' if alive else 'DOWN'}</b>  •  ⚙️ <code>{svc}</code>\n"
-        f"📱 Устройств: <b>{len(devs)}</b> (🟢 {online} online)\n"
-        f"⏱ Uptime: {fmt_uptime(up)}\n\n"
-        f"🧠 CPU: {pbar(cpu)} {cpu:.0f}%\n"
-        f"💾 RAM: {pbar(mem.percent)} {mem.percent:.0f}%\n"
-        f"💿 Disk: {pbar(disk.used / disk.total * 100)} {disk.used / disk.total * 100:.0f}%"
-        f"{ssl_summary}"
-        f"{http_lines}"
-    )
-    await msg.answer(t, parse_mode="HTML", reply_markup=MAIN_KB)
-    if _ssl_cache:
-        crit_items = [r for r in _ssl_cache if not r["ok"] or r["days_left"] <= SSL_WARN_DAYS]
-        if crit_items:
-            await msg.answer(
-                "🔐 <b>SSL детали:</b>\n" + ssl_status_text(crit_items),
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🔄 Проверить SSL", callback_data="tool:certs")],
-                ]),
-            )
-
-
-# ─── Devices (paginated) ────────────────────────────────────────────
-
-@router.message(F.text == BTN_DEVICES)
-async def msg_devices(msg: Message):
-    if not is_admin(msg.from_user.id):
-        return
-    devs = await get_full_devices()
-    if not devs:
-        await msg.answer("📭 Нет устройств.", reply_markup=MAIN_KB)
-        return
-
-    by_group: dict[str, list] = {}
-    for d in devs:
-        by_group.setdefault(d["group"], []).append(d)
-
-    t = "━━━━━━━━━━━━━━━━━━━━━━\n📋  <b>Устройства</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-    for group, gdevs in sorted(by_group.items()):
-        t += f"📁 <b>{group}</b>\n"
-        for d in sorted(gdevs, key=lambda x: x["name"]):
-            icon = "🟢" if d["online"] else "⚪"
-            t += f"  {icon} {d['name']} — <code>{d['ip']}</code>\n"
-        t += "\n"
-
-    sorted_devs = sorted(devs, key=lambda x: x["name"])
-    extra = []
-    groups = sorted(by_group.keys())
-    if groups:
-        grp_btns = []
-        for g in groups:
-            grp_btns.append(InlineKeyboardButton(text=f"📁 {g}", callback_data=f"grp:{g[:40]}"))
-        extra.append(grp_btns)
-
-    kb = paginated_buttons(
-        sorted_devs, 0, "dev",
-        icon_fn=lambda d: "🟢" if d["online"] else "⚪",
-        extra_buttons=extra,
-    )
-    await msg.answer(t, parse_mode="HTML", reply_markup=kb)
-
-
-@router.callback_query(F.data.startswith("page:"))
-async def cb_page(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    parts = cb.data.split(":")
-    prefix = parts[1]
-    page = int(parts[2])
-
-    if prefix == "dev":
-        devs = await get_full_devices()
-        sorted_devs = sorted(devs, key=lambda x: x["name"])
-        by_group = {}
-        for d in devs:
-            by_group.setdefault(d["group"], [])
-        extra = []
-        groups = sorted(by_group.keys())
-        if groups:
-            grp_btns = [InlineKeyboardButton(text=f"📁 {g}", callback_data=f"grp:{g[:40]}") for g in groups]
-            extra.append(grp_btns)
-        kb = paginated_buttons(sorted_devs, page, "dev",
-                               icon_fn=lambda d: "🟢" if d["online"] else "⚪",
-                               extra_buttons=extra)
-        try:
-            await cb.message.edit_reply_markup(reply_markup=kb)
-        except Exception:
-            pass
-    elif prefix == "sw":
-        # software pagination - data in callback
-        dev_name = parts[3] if len(parts) > 3 else ""
-        devs = await get_full_devices()
-        d = next((x for x in devs if x["name"] == dev_name), None)
-        if d and d.get("software"):
-            sw = d["software"]
-            total_pages = max(1, (len(sw) + 20 - 1) // 20)
-            page = max(0, min(page, total_pages - 1))
-            start = page * 20
-            end = start + 20
-            lines = [f"📦 <b>ПО: {dev_name}</b> (стр {page + 1}/{total_pages})\n"]
-            for s in sw[start:end]:
-                lines.append(f"  • {s['name']} {s['version']}")
-            nav = []
-            if page > 0:
-                nav.append(InlineKeyboardButton(text="◀️", callback_data=f"page:sw:{page - 1}:{dev_name[:30]}"))
-            nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
-            if page < total_pages - 1:
-                nav.append(InlineKeyboardButton(text="▶️", callback_data=f"page:sw:{page + 1}:{dev_name[:30]}"))
-            try:
-                await cb.message.edit_text("\n".join(lines), parse_mode="HTML",
-                                           reply_markup=InlineKeyboardMarkup(inline_keyboard=[nav]))
-            except Exception:
-                pass
-    elif prefix == "search":
-        query = parts[3] if len(parts) > 3 else ""
-        devs = await get_full_devices()
-        q = query.lower()
-        results = [d for d in devs if q in d["name"].lower() or q in d["ip"].lower()
-                   or q in d["os"].lower() or q in d["cpu"].lower()
-                   or q in d["board_sn"].lower() or q in d["os_sn"].lower()]
-        results.sort(key=lambda x: x["name"])
-        kb = paginated_buttons(results, page, "dev",
-                               icon_fn=lambda d: "🟢" if d["online"] else "⚪")
-        try:
-            await cb.message.edit_reply_markup(reply_markup=kb)
-        except Exception:
-            pass
-
-    await cb.answer()
-
-
-@router.callback_query(F.data == "noop")
-async def cb_noop(cb: CallbackQuery):
-    await cb.answer()
-
-
-# ─── Device detail ───────────────────────────────────────────────────
-
-@router.callback_query(F.data.startswith("dev:"))
-async def cb_device(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    name = cb.data.split(":", 1)[1]
-    devs = await get_full_devices()
-    d = next((x for x in devs if x["name"] == name), None)
-    if not d:
-        await cb.answer("Устройство не найдено", show_alert=True)
-        return
-
-    card = build_device_card(d)
-    buttons_list = [
-        [InlineKeyboardButton(text="📦 CSV", callback_data=f"csv1:{name[:40]}"),
-         InlineKeyboardButton(text="📊 Аптайм", callback_data=f"upt:{name[:40]}")],
-        [InlineKeyboardButton(text="💿 ПО", callback_data=f"soft:{name[:40]}"),
-         InlineKeyboardButton(text="📡 WoL", callback_data=f"wol:{name[:40]}")],
-        [InlineKeyboardButton(text="🖥 Команды", callback_data=f"rcmd:{name[:40]}"),
-         InlineKeyboardButton(text="📄 PDF", callback_data=f"pdf1:{name[:40]}")],
-    ]
-    kb = InlineKeyboardMarkup(inline_keyboard=buttons_list)
-
-    if len(card) > 4000:
-        parts = [card[i:i + 4000] for i in range(0, len(card), 4000)]
-        for i, part in enumerate(parts):
-            if i == len(parts) - 1:
-                await cb.message.answer(part, parse_mode="HTML", reply_markup=kb)
-            else:
-                await cb.message.answer(part, parse_mode="HTML")
-    else:
-        await cb.message.answer(card, parse_mode="HTML", reply_markup=kb)
-    await cb.answer()
-
-
-# ─── Group detail ────────────────────────────────────────────────────
-
-@router.callback_query(F.data.startswith("grp:"))
-async def cb_group(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    group = cb.data.split(":", 1)[1]
-    devs = [d for d in await get_full_devices() if d["group"] == group]
-    if not devs:
-        await cb.answer("Группа пуста", show_alert=True)
-        return
-
-    # Group summary with WoL button for offline devices
-    offline_with_mac = []
-    for d in devs:
-        if not d["online"]:
-            for nic in d.get("nic_details", []):
-                mac = nic.get("mac", "")
-                if mac and mac != "00:00:00:00:00:00":
-                    offline_with_mac.append(d["name"])
-                    break
-
-    online_c  = sum(1 for d in devs if d["online"])
-    offline_c = len(devs) - online_c
-    summary = (f"📁 <b>Группа: {group}</b>\n"
-               f"🟢 {online_c} онлайн  🔴 {offline_c} офлайн  |  Всего: {len(devs)}")
-    wol_kb = None
-    if offline_with_mac:
-        wol_kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text=f"💤 Разбудить всех офлайн ({len(offline_with_mac)})",
-                                 callback_data=f"wol_grp:{group[:50]}")
-        ]])
-    await cb.message.answer(summary, parse_mode="HTML", reply_markup=wol_kb)
-
-    for d in sorted(devs, key=lambda x: x["name"]):
-        card = build_device_card(d)
-        if len(card) > 4000:
-            card = card[:4000] + "\n..."
-        await cb.message.answer(card, parse_mode="HTML")
-        await asyncio.sleep(0.3)
-
-    csv_data = build_inventory_csv(devs)
-    await cb.message.answer_document(
-        BufferedInputFile(csv_data, filename=f"inventory_{group}.csv"),
-        caption=f"📦 <b>Инвентарь группы {group}</b> — {len(devs)} устройств",
-        parse_mode="HTML",
-    )
-    await cb.answer()
-
-
-# ─── Single device CSV ───────────────────────────────────────────────
-
-@router.callback_query(F.data.startswith("csv1:"))
-async def cb_csv_single(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    name = cb.data.split(":", 1)[1]
-    devs = await get_full_devices()
-    d = next((x for x in devs if x["name"] == name), None)
-    if not d:
-        await cb.answer("Не найдено", show_alert=True)
-        return
-    csv_data = build_inventory_csv([d])
-    await cb.message.answer_document(
-        BufferedInputFile(csv_data, filename=f"inventory_{name}.csv"),
-        caption=f"📦 <b>Инвентарь: {name}</b>", parse_mode="HTML",
-    )
-    await cb.answer()
-
-
-# ─── Single device PDF ────────────────────────────────────────────────
-
-@router.callback_query(F.data.startswith("pdf1:"))
-async def cb_pdf_single(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    name = cb.data.split(":", 1)[1]
-    devs = await get_full_devices()
-    d = next((x for x in devs if x["name"] == name), None)
-    if not d:
-        await cb.answer("Не найдено", show_alert=True)
-        return
-    pdf_data = build_single_device_pdf(d)
-    await cb.message.answer_document(
-        BufferedInputFile(pdf_data, filename=f"report_{name}.pdf"),
-        caption=f"📄 <b>PDF-отчёт: {name}</b>", parse_mode="HTML",
-    )
-    await cb.answer()
-
-
-# ─── Uptime graph ───────────────────────────────────────────────────
-
-@router.callback_query(F.data.startswith("upt:"))
-async def cb_uptime(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    name = cb.data.split(":", 1)[1]
-    img = build_uptime_graph(name)
-    if not img:
-        await cb.answer("Недостаточно данных для графика", show_alert=True)
-        return
-    await cb.message.answer_photo(
-        BufferedInputFile(img, filename=f"uptime_{name}.png"),
-        caption=f"📊 <b>Аптайм: {name}</b>", parse_mode="HTML",
-    )
-    await cb.answer()
-
-
-# ─── Software inventory ─────────────────────────────────────────────
-
-@router.callback_query(F.data.startswith("soft:"))
-async def cb_software(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    name = cb.data.split(":", 1)[1]
-    devs = await get_full_devices()
-    d = next((x for x in devs if x["name"] == name), None)
-    if not d:
-        await cb.answer("Не найдено", show_alert=True)
-        return
-
-    sw = d.get("software", [])
-    if not sw:
-        await cb.answer("Список ПО недоступен для этого устройства", show_alert=True)
-        return
-
-    sw.sort(key=lambda s: s["name"].lower())
-    total_pages = max(1, (len(sw) + 20 - 1) // 20)
-    lines = [f"📦 <b>ПО: {name}</b> ({len(sw)} программ, стр 1/{total_pages})\n"]
-    for s in sw[:20]:
-        lines.append(f"  • {s['name']} {s['version']}")
-
-    nav = []
-    nav.append(InlineKeyboardButton(text=f"1/{total_pages}", callback_data="noop"))
-    if total_pages > 1:
-        nav.append(InlineKeyboardButton(text="▶️", callback_data=f"page:sw:1:{name[:30]}"))
-
-    await cb.message.answer("\n".join(lines), parse_mode="HTML",
-                            reply_markup=InlineKeyboardMarkup(inline_keyboard=[nav]))
-    await cb.answer()
-
-
-# ─── Wake-on-LAN ────────────────────────────────────────────────────
-
-@router.callback_query(F.data.startswith("wol:"))
-async def cb_wol(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    name = cb.data.split(":", 1)[1]
-    devs = await get_full_devices()
-    d = next((x for x in devs if x["name"] == name), None)
-    if not d:
-        await cb.answer("Не найдено", show_alert=True)
-        return
-
-    macs = []
-    for nic in d.get("nic_details", []):
-        mac = nic.get("mac", "")
-        if mac and mac != "00:00:00:00:00:00":
-            macs.append(mac)
-
-    if not macs:
-        await cb.answer("MAC-адрес не найден", show_alert=True)
-        return
-
-    results = []
-    for mac in macs[:2]:
-        ok = send_wol(mac)
-        results.append(f"{'✅' if ok else '❌'} {mac}")
-
-    await cb.message.answer(
-        f"📡 <b>Wake-on-LAN: {name}</b>\n\n" + "\n".join(results) +
-        "\n\n<i>Magic-пакет отправлен. Устройство должно быть в одной сети.</i>",
-        parse_mode="HTML",
-    )
-    await cb.answer()
-
-
-# ─── Remote Commands ─────────────────────────────────────────────────
-
-@router.callback_query(F.data.startswith("rcmd:"))
-async def cb_remote_cmd_menu(cb: CallbackQuery):
-    """Show quick-command menu for a device."""
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    name = cb.data.split(":", 1)[1]
-    devs = await get_full_devices()
-    d = next((x for x in devs if x["name"] == name), None)
-    if not d:
-        await cb.answer("Не найдено", show_alert=True)
-        return
-    if not d["online"]:
-        await cb.answer("Устройство офлайн", show_alert=True)
-        return
-
-    buttons = []
-    row = []
-    for i, (key, (_, _)) in enumerate(QUICK_COMMANDS.items()):
-        labels = {
-            "info": "ℹ️ Sys Info", "ipconfig": "🌐 IP Config",
-            "disk": "💿 Диски", "uptime": "⏱ Аптайм",
-            "users": "👤 Юзеры", "procs": "📊 Процессы",
-            "services": "⚙️ Службы", "netstat": "🔌 Порты",
-        }
-        label = labels.get(key, key)
-        row.append(InlineKeyboardButton(text=label, callback_data=f"qcmd:{key}:{name[:30]}"))
-        if len(row) == 2:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
-
-    buttons.append([InlineKeyboardButton(text="⌨️ Своя команда", callback_data=f"ccmd:{name[:30]}")])
-    buttons.append([
-        InlineKeyboardButton(text="🔄 Перезагрузка", callback_data=f"pwr:reset:{name[:30]}"),
-        InlineKeyboardButton(text="⏻ Выключение", callback_data=f"pwr:off:{name[:30]}"),
-    ])
-
-    await cb.message.answer(
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🖥 <b>Команды: {name}</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Выберите быструю команду или введите свою:",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-    )
-    await cb.answer()
-
-
-@router.callback_query(F.data.startswith("qcmd:"))
-async def cb_quick_cmd(cb: CallbackQuery):
-    """Execute a quick command preset."""
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    parts = cb.data.split(":", 2)
-    cmd_key = parts[1]
-    dev_name = parts[2]
-
-    if cmd_key not in QUICK_COMMANDS:
-        await cb.answer("Неизвестная команда", show_alert=True)
-        return
-
-    command, is_ps = QUICK_COMMANDS[cmd_key]
-    devs = await get_full_devices()
-    d = next((x for x in devs if x["name"] == dev_name), None)
-    if not d:
-        await cb.answer("Не найдено", show_alert=True)
-        return
-    if not d["online"]:
-        await cb.answer("Устройство офлайн", show_alert=True)
-        return
-
-    wait_msg = await cb.message.answer(f"⏳ Выполняю на <b>{dev_name}</b>...", parse_mode="HTML")
-    result = await mc_run_command(d["id"], command, powershell=is_ps)
-
-    # Clean up meshctrl output noise
-    lines = result.split("\n")
-    clean = []
-    skip_prefixes = ("Microsoft Windows", "(c) ", "C:\\Program Files\\Mesh Agent>")
-    for line in lines:
-        stripped = line.strip()
-        if stripped and not any(stripped.startswith(p) for p in skip_prefixes):
-            if stripped != command and stripped != "exit":
-                clean.append(line)
-    output = "\n".join(clean).strip() or "(пустой ответ)"
-    if len(output) > 3800:
-        output = output[:3800] + "\n..."
-
-    labels = {"info": "System Info", "ipconfig": "IP Config", "disk": "Диски",
-              "uptime": "Аптайм", "users": "Пользователи", "procs": "Процессы",
-              "services": "Службы", "netstat": "Порты"}
-
-    await wait_msg.edit_text(
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🖥 <b>{dev_name}</b> → {labels.get(cmd_key, cmd_key)}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"<pre>{output}</pre>",
-        parse_mode="HTML",
-    )
-    await cb.answer()
-
-
-@router.callback_query(F.data.startswith("ccmd:"))
-async def cb_custom_cmd_prompt(cb: CallbackQuery):
-    """Prompt user to send a custom command."""
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    dev_name = cb.data.split(":", 1)[1]
-    await cb.message.answer(
-        f"⌨️ Отправьте команду для <b>{dev_name}</b>:\n\n"
-        f"<code>/run {dev_name} hostname</code>\n"
-        f"<code>/run {dev_name} -ps Get-Process | Select -First 10</code>\n\n"
-        f"Флаги: <code>-ps</code> (PowerShell), <code>-u</code> (от имени пользователя)",
-        parse_mode="HTML",
-    )
-    await cb.answer()
-
-
-@router.callback_query(F.data.startswith("pwr:"))
-async def cb_power_action(cb: CallbackQuery):
-    """Send power action to a device."""
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    parts = cb.data.split(":", 2)
-    action = parts[1]  # reset or off
-    dev_name = parts[2]
-
-    if action not in ("reset", "off"):
-        await cb.answer("Неизвестное действие", show_alert=True)
-        return
-
-    devs = await get_full_devices()
-    d = next((x for x in devs if x["name"] == dev_name), None)
-    if not d:
-        await cb.answer("Не найдено", show_alert=True)
-        return
-
-    # Confirm action
-    action_label = "🔄 Перезагрузка" if action == "reset" else "⏻ Выключение"
-    buttons = [[
-        InlineKeyboardButton(text=f"✅ Да, {action_label.lower()}", callback_data=f"pwrdo:{action}:{dev_name[:30]}"),
-        InlineKeyboardButton(text="❌ Отмена", callback_data="noop"),
-    ]]
-    await cb.message.answer(
-        f"⚠️ <b>{action_label}: {dev_name}</b>\n\nВы уверены?",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-    )
-    await cb.answer()
-
-
-@router.callback_query(F.data.startswith("pwrdo:"))
-async def cb_power_confirm(cb: CallbackQuery):
-    """Execute confirmed power action."""
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    parts = cb.data.split(":", 2)
-    action = parts[1]
-    dev_name = parts[2]
-
-    devs = await get_full_devices()
-    d = next((x for x in devs if x["name"] == dev_name), None)
-    if not d:
-        await cb.answer("Не найдено", show_alert=True)
-        return
-
-    result = await mc_device_power(d["id"], action)
-    action_label = "Перезагрузка" if action == "reset" else "Выключение"
-    await cb.message.edit_text(
-        f"⚡ <b>{action_label}: {dev_name}</b>\n\n{result}",
-        parse_mode="HTML",
-    )
-    await cb.answer()
-
-
-@router.message(Command("run"))
-async def cmd_run(msg: Message):
-    """Execute a command on a remote device: /run <device> [-ps] [-u] <command>"""
-    if not is_admin(msg.from_user.id):
-        return
-    text = msg.text.split(maxsplit=1)
-    if len(text) < 2:
-        await msg.answer(
-            "Использование:\n"
-            "<code>/run ИмяПК hostname</code>\n"
-            "<code>/run ИмяПК -ps Get-Process</code>\n"
-            "<code>/run ИмяПК -u whoami</code>\n\n"
-            "Флаги: <code>-ps</code> PowerShell, <code>-u</code> от пользователя",
-            parse_mode="HTML", reply_markup=MAIN_KB,
-        )
-        return
-
-    rest = text[1].strip()
-    # Parse device name (first word) and flags
-    tokens = rest.split()
-    dev_name = tokens[0]
-    powershell = False
-    run_as_user = False
-    cmd_start_idx = 1
-
-    for i in range(1, len(tokens)):
-        if tokens[i] == "-ps":
-            powershell = True
-            cmd_start_idx = i + 1
-        elif tokens[i] == "-u":
-            run_as_user = True
-            cmd_start_idx = i + 1
-        else:
-            cmd_start_idx = i
-            break
-
-    command = " ".join(tokens[cmd_start_idx:])
-    if not command:
-        await msg.answer("❌ Не указана команда.", reply_markup=MAIN_KB)
-        return
-
-    devs = await get_full_devices()
-    d = next((x for x in devs if x["name"].lower() == dev_name.lower()), None)
-    if not d:
-        await msg.answer(f"❌ Устройство «{dev_name}» не найдено.", reply_markup=MAIN_KB)
-        return
-    if not d["online"]:
-        await msg.answer(f"⚪ <b>{d['name']}</b> офлайн.", parse_mode="HTML", reply_markup=MAIN_KB)
-        return
-
-    wait_msg = await msg.answer(f"⏳ Выполняю на <b>{d['name']}</b>:\n<code>{command}</code>", parse_mode="HTML")
-    result = await mc_run_command(d["id"], command, powershell=powershell, run_as_user=run_as_user)
-
-    # Clean output
-    lines = result.split("\n")
-    clean = []
-    skip_prefixes = ("Microsoft Windows", "(c) ", "C:\\Program Files\\Mesh Agent>")
-    for line in lines:
-        stripped = line.strip()
-        if stripped and not any(stripped.startswith(p) for p in skip_prefixes):
-            if stripped != command and stripped != "exit":
-                clean.append(line)
-    output = "\n".join(clean).strip() or "(пустой ответ)"
-    if len(output) > 3800:
-        output = output[:3800] + "\n..."
-
-    flags = []
-    if powershell:
-        flags.append("PowerShell")
-    if run_as_user:
-        flags.append("as user")
-    flags_str = f" ({', '.join(flags)})" if flags else ""
-
-    await wait_msg.edit_text(
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🖥 <b>{d['name']}</b>{flags_str}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"<code>$ {command}</code>\n\n"
-        f"<pre>{output}</pre>",
-        parse_mode="HTML", reply_markup=MAIN_KB,
-    )
-
-
-# ─── Agent Installer ──────────────────────────────────────────────────
-
-@router.message(Command("install"))
-async def cmd_install(msg: Message):
-    """Show device group selection for installer generation."""
-    if not is_admin(msg.from_user.id):
-        return
-    groups = await _get_mesh_groups()
-    if not groups:
-        await msg.answer("❌ Не удалось получить список групп.", reply_markup=MAIN_KB)
-        return
-
-    buttons = []
-    for name in sorted(groups.keys()):
-        buttons.append([InlineKeyboardButton(text=f"📁 {name}", callback_data=f"inst:{name[:40]}")])
-    buttons.append([InlineKeyboardButton(text="📁 Все группы", callback_data="inst:__all__")])
-
-    await msg.answer(
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📥 <b>Установщик агента</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Выберите группу для установки агента.\n"
-        "Бот скачает готовый <b>MeshAgent.exe</b>\n"
-        "с сервера (MeshID/ServerID встроены).\n\n"
-        "Поддержка: Windows 10 / 11 (включая 24H2/25H2)\n"
-        "Обходит SmartScreen, Defender, Smart App Control.\n\n"
-        "⚠️ <b>Win 11 25H2:</b> не запускайте EXE двойным кликом!\n"
-        "Используйте install.bat или CMD от администратора:\n"
-        "<code>MeshAgent.exe -fullinstall</code>",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-    )
-
-
-@router.callback_query(F.data.startswith("inst:"))
-async def cb_install_group(cb: CallbackQuery):
-    """Download pre-configured agent EXE from MC and send directly via Telegram."""
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-
-    group_name = cb.data.split(":", 1)[1]
-    groups = await _get_mesh_groups()
-
-    if group_name == "__all__":
-        target_groups = list(groups.keys())
-    else:
-        if group_name not in groups:
-            await cb.answer("Группа не найдена", show_alert=True)
-            return
-        target_groups = [group_name]
-
-    wait_msg = await cb.message.answer("⏳ Скачиваю агент с сервера MeshCentral...")
-
-    for gname in target_groups:
-        mesh_id = groups[gname]
-        safe_name = re.sub(r'[^\w\-]', '_', gname)
-
-        # Download the actual 3.4MB agent binary with config embedded
-        agent_data = await _download_configured_agent(mesh_id, agent_type=4)
-        if not agent_data:
-            await cb.message.answer(f"❌ Не удалось скачать агент для {gname}.")
-            continue
-
-        size_mb = len(agent_data) / 1024 / 1024
-
-        # Send the EXE directly
-        await cb.message.answer_document(
-            BufferedInputFile(agent_data, filename=f"MeshAgent.exe"),
-            caption=(
-                f"📥 <b>Агент MeshCentral: {gname}</b> ({size_mb:.1f} MB)\n\n"
-                f"⚠️ <b>НЕ запускайте EXE двойным кликом!</b>\n"
-                f"Windows 11 25H2 (KB5074105/KB5077181)\n"
-                f"ломает авто-элевацию агента.\n\n"
-                f"<b>Установка через CMD (администратор):</b>\n"
-                f"1. Скачайте файл в папку, например <code>C:\\Temp</code>\n"
-                f"2. Откройте <b>CMD от имени администратора</b>\n"
-                f"3. Выполните:\n"
-                f"<code>cd C:\\Temp\n"
-                f"MeshAgent.exe -fullinstall</code>\n\n"
-                f"Или используйте <b>install.bat</b> (файл ниже) —\n"
-                f"он сделает всё автоматически."
-            ),
-            parse_mode="HTML",
-        )
-
-        # Send install BAT (the recommended way)
-        bat_content = generate_local_installer_bat(gname)
-        await cb.message.answer_document(
-            BufferedInputFile(bat_content.encode("utf-8"), filename=f"install.bat"),
-            caption=(
-                f"📋 <b>Установщик — install.bat</b>\n\n"
-                f"1. Скачайте оба файла в одну папку\n"
-                f"2. Запустите <code>install.bat</code>\n"
-                f"3. Подтвердите UAC (права админа)\n\n"
-                f"Обходит баг KB5074105, добавляет\n"
-                f"исключения Defender, ставит службу.\n"
-                f"Работает на Win 10/11 включая 24H2/25H2."
-            ),
-            parse_mode="HTML",
-        )
-        await asyncio.sleep(0.5)
-
-    await wait_msg.delete()
-    await cb.answer()
-
-
-# ─── Search ──────────────────────────────────────────────────────────
-
-@router.message(Command("search"))
-async def cmd_search(msg: Message):
-    if not is_admin(msg.from_user.id):
-        return
-    parts = msg.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await msg.answer("Использование: /search <запрос>\nПоиск по имени, IP, ОС, CPU, серийникам", reply_markup=MAIN_KB)
-        return
-    query = parts[1].strip()
-    q = query.lower()
-    devs = await get_full_devices()
-    results = [d for d in devs if q in d["name"].lower() or q in d["ip"].lower()
-               or q in d["os"].lower() or q in d["cpu"].lower()
-               or q in d["board_sn"].lower() or q in d["os_sn"].lower()
-               or q in d["group"].lower()
-               or any(q in nic.lower() for nic in d["nics"])]
-
-    if not results:
-        await msg.answer(f"🔍 По запросу «{query}» ничего не найдено.", reply_markup=MAIN_KB)
-        return
-
-    results.sort(key=lambda x: x["name"])
-    t = f"🔍 <b>Результаты: «{query}»</b> — {len(results)} устройств\n\n"
-    kb = paginated_buttons(results, 0, "dev",
-                           icon_fn=lambda d: "🟢" if d["online"] else "⚪")
-    await msg.answer(t, parse_mode="HTML", reply_markup=kb)
-
-
-# ─── Compare devices ────────────────────────────────────────────────
-
-@router.message(Command("compare"))
-async def cmd_compare(msg: Message):
-    if not is_admin(msg.from_user.id):
-        return
-    parts = msg.text.split(maxsplit=2)
-    if len(parts) < 3:
-        await msg.answer("Использование: /compare <устройство1> <устройство2>", reply_markup=MAIN_KB)
-        return
-
-    name1 = parts[1].strip()
-    name2 = parts[2].strip()
-    devs = await get_full_devices()
-    d1 = next((d for d in devs if d["name"].lower() == name1.lower()), None)
-    d2 = next((d for d in devs if d["name"].lower() == name2.lower()), None)
-
-    if not d1:
-        await msg.answer(f"❌ Устройство «{name1}» не найдено.", reply_markup=MAIN_KB)
-        return
-    if not d2:
-        await msg.answer(f"❌ Устройство «{name2}» не найдено.", reply_markup=MAIN_KB)
-        return
-
-    fields = [
-        ("ОС", "os"), ("Архитектура", "os_arch"), ("Build", "os_build"),
-        ("CPU", "cpu"), ("RAM", "ram_total"), ("GPU", "gpu"),
-        ("Плата", "board"), ("BIOS", "bios"), ("TPM", "tpm"),
-        ("Антивирус", "antivirus"), ("Firewall", "firewall"),
-        ("IP", "ip"), ("Разрешение", "resolution"),
-        ("Загрузка", "last_boot"), ("Агент", "agent_ver"),
-    ]
-
-    lines = [
-        f"━━━━━━━━━━━━━━━━━━━━━━",
-        f"⚖️ <b>Сравнение</b>",
-        f"━━━━━━━━━━━━━━━━━━━━━━",
-        f"",
-        f"{'':20s} │ <b>{d1['name'][:18]}</b> │ <b>{d2['name'][:18]}</b>",
-        f"{'─' * 20}┼{'─' * 20}┼{'─' * 20}",
-    ]
-    for label, key in fields:
-        v1 = str(d1.get(key, "-"))[:18]
-        v2 = str(d2.get(key, "-"))[:18]
-        diff = " ≠" if v1 != v2 else ""
-        lines.append(f"{label:20s} │ {v1:20s} │ {v2}{diff}")
-
-    await msg.answer("<pre>" + "\n".join(lines) + "</pre>", parse_mode="HTML", reply_markup=MAIN_KB)
-
-
-# ─── Quick Scripts ──────────────────────────────────────────────────
-
-@router.message(Command("save_script"))
-async def cmd_save_script(msg: Message):
-    """Save a quick script: /save_script <name> [-ps] <command>"""
-    if not is_admin(msg.from_user.id):
-        return
-    parts = msg.text.split(maxsplit=2)
-    if len(parts) < 3:
-        await msg.answer(
-            "Использование:\n"
-            "<code>/save_script flush_dns ipconfig /flushdns</code>\n"
-            "<code>/save_script check_disk -ps Get-PSDrive C</code>\n\n"
-            "Флаг <code>-ps</code> = PowerShell",
-            parse_mode="HTML", reply_markup=MAIN_KB,
-        )
-        return
-
-    name = parts[1].strip().lower()
-    rest = parts[2].strip()
-    ps = False
-    if rest.startswith("-ps "):
-        ps = True
-        rest = rest[4:].strip()
-
-    if not rest:
-        await msg.answer("❌ Не указана команда.", reply_markup=MAIN_KB)
-        return
-
-    scripts = load_scripts()
-    scripts[name] = {"cmd": rest, "ps": ps, "desc": f"Custom: {rest[:40]}"}
-    save_scripts(scripts)
-    await msg.answer(
-        f"✅ Скрипт <b>{name}</b> сохранён\n"
-        f"{'⚡ PowerShell' if ps else '🖥 CMD'}: <code>{rest[:100]}</code>",
-        parse_mode="HTML", reply_markup=MAIN_KB,
-    )
-
-
-@router.message(Command("scripts"))
-async def cmd_scripts(msg: Message):
-    """List all saved scripts."""
-    if not is_admin(msg.from_user.id):
-        return
-    scripts = load_scripts()
-    if not scripts:
-        await msg.answer("📝 Нет сохранённых скриптов.", reply_markup=MAIN_KB)
-        return
-    text, buttons = _scripts_message(scripts)
-    await msg.answer(text, parse_mode="HTML",
-                     reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
-
-
-@router.message(Command("script"))
-async def cmd_script(msg: Message):
-    """Run a saved script on a device: /script <name> <device>"""
-    if not is_admin(msg.from_user.id):
-        return
-    parts = msg.text.split(maxsplit=2)
-    if len(parts) < 3:
-        await msg.answer(
-            "Использование: <code>/script имя_скрипта имя_устройства</code>",
-            parse_mode="HTML", reply_markup=MAIN_KB,
-        )
-        return
-
-    script_name = parts[1].strip().lower()
-    dev_name = parts[2].strip()
-
-    scripts = load_scripts()
-    if script_name not in scripts:
-        await msg.answer(f"❌ Скрипт «{script_name}» не найден.\n/scripts — список", reply_markup=MAIN_KB)
-        return
-
-    devs = await get_full_devices()
-    d = next((x for x in devs if x["name"].lower() == dev_name.lower()), None)
-    if not d:
-        await msg.answer(f"❌ Устройство «{dev_name}» не найдено.", reply_markup=MAIN_KB)
-        return
-    if not d["online"]:
-        await msg.answer(f"⚪ <b>{d['name']}</b> офлайн.", parse_mode="HTML", reply_markup=MAIN_KB)
-        return
-
-    s = scripts[script_name]
-    wait_msg = await msg.answer(
-        f"⏳ Запускаю <b>{script_name}</b> на <b>{d['name']}</b>...", parse_mode="HTML",
-    )
-    result = await mc_run_command(d["id"], s["cmd"], powershell=s.get("ps", False))
-
-    lines = result.split("\n")
-    clean = []
-    skip_prefixes = ("Microsoft Windows", "(c) ", "C:\\Program Files\\Mesh Agent>")
-    for line in lines:
-        stripped = line.strip()
-        if stripped and not any(stripped.startswith(p) for p in skip_prefixes):
-            if stripped != s["cmd"] and stripped != "exit":
-                clean.append(line)
-    output = "\n".join(clean).strip() or "(пустой ответ)"
-    if len(output) > 3800:
-        output = output[:3800] + "\n..."
-
-    await wait_msg.edit_text(
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📝 <b>{script_name}</b> → {d['name']}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"<pre>{output}</pre>",
-        parse_mode="HTML",
-    )
-
-
-@router.callback_query(F.data.startswith("sdel:"))
-async def cb_script_delete(cb: CallbackQuery):
-    """Delete a saved script."""
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    name = cb.data.split(":", 1)[1]
-    scripts = load_scripts()
-    if name in scripts:
-        del scripts[name]
-        save_scripts(scripts)
-        await cb.answer(f"Скрипт {name} удалён")
-        await cb.message.delete()
-    else:
-        await cb.answer("Не найден", show_alert=True)
-
-
-@router.callback_query(F.data.startswith("srun:"))
-async def cb_script_run_select(cb: CallbackQuery):
-    """Prompt to select device for script."""
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    name = cb.data.split(":", 1)[1]
-    scripts = load_scripts()
-    if name not in scripts:
-        await cb.answer("Скрипт не найден", show_alert=True)
-        return
-    devs = await get_full_devices()
-    online_devs = [d for d in devs if d["online"]]
-    if not online_devs:
-        await cb.answer("Нет онлайн устройств", show_alert=True)
-        return
-    buttons = []
-    for d in sorted(online_devs, key=lambda x: x["name"]):
-        buttons.append([InlineKeyboardButton(
-            text=f"🟢 {d['name']}",
-            callback_data=f"sexec:{name[:15]}:{d['name'][:25]}",
-        )])
-    await cb.message.answer(
-        f"📝 Выберите устройство для <b>{name}</b>:",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-    )
-    await cb.answer()
-
-
-@router.callback_query(F.data.startswith("sexec:"))
-async def cb_script_execute(cb: CallbackQuery):
-    """Execute script on selected device."""
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    parts = cb.data.split(":", 2)
-    script_name = parts[1]
-    dev_name = parts[2]
-
-    scripts = load_scripts()
-    if script_name not in scripts:
-        await cb.answer("Скрипт не найден", show_alert=True)
-        return
-
-    devs = await get_full_devices()
-    d = next((x for x in devs if x["name"] == dev_name), None)
-    if not d or not d["online"]:
-        await cb.answer("Устройство недоступно", show_alert=True)
-        return
-
-    s = scripts[script_name]
-    wait_msg = await cb.message.answer(
-        f"⏳ Запускаю <b>{script_name}</b> на <b>{d['name']}</b>...", parse_mode="HTML",
-    )
-    result = await mc_run_command(d["id"], s["cmd"], powershell=s.get("ps", False))
-
-    lines = result.split("\n")
-    clean = []
-    skip_prefixes = ("Microsoft Windows", "(c) ", "C:\\Program Files\\Mesh Agent>")
-    for line in lines:
-        stripped = line.strip()
-        if stripped and not any(stripped.startswith(p) for p in skip_prefixes):
-            if stripped != s["cmd"] and stripped != "exit":
-                clean.append(line)
-    output = "\n".join(clean).strip() or "(пустой ответ)"
-    if len(output) > 3800:
-        output = output[:3800] + "\n..."
-
-    await wait_msg.edit_text(
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📝 <b>{script_name}</b> → {d['name']}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"<pre>{output}</pre>",
-        parse_mode="HTML",
-    )
-    await cb.answer()
-
-
-# ─── Maintenance Mode Commands ──────────────────────────────────────
-
-@router.message(Command("mute"))
-async def cmd_mute(msg: Message):
-    """/mute <target> <duration> [reason] — mute alerts for device/group."""
-    if not is_admin(msg.from_user.id):
-        return
-    parts = msg.text.split(maxsplit=3)
-    if len(parts) < 3:
-        await msg.answer(
-            "Использование:\n"
-            "<code>/mute ИмяПК 2h Обслуживание</code>\n"
-            "<code>/mute ГруппаОфис 30m</code>\n"
-            "<code>/mute __all__ 1d Плановые работы</code>\n\n"
-            "Длительность: 30m, 2h, 1d",
-            parse_mode="HTML", reply_markup=MAIN_KB,
-        )
-        return
-
-    target = parts[1].strip()
-    dur_str = parts[2].strip()
-    reason = parts[3].strip() if len(parts) > 3 else ""
-
-    seconds = parse_duration(dur_str)
-    if seconds is None:
-        await msg.answer("❌ Неверный формат длительности. Примеры: 30m, 2h, 1d", reply_markup=MAIN_KB)
-        return
-
-    mutes = load_mutes()
-    until = time.time() + seconds
-    mutes[target] = {
-        "until": until,
-        "reason": reason,
-        "muted_at": datetime.now(timezone.utc).isoformat(),
-    }
-    save_mutes(mutes)
-
-    until_str = datetime.fromtimestamp(until, tz=timezone.utc).strftime("%d.%m %H:%M UTC")
-    await msg.answer(
-        f"🔇 <b>Алерты отключены:</b> {target}\n"
-        f"⏰ До: {until_str}\n"
-        f"{'💬 ' + reason if reason else ''}",
-        parse_mode="HTML", reply_markup=MAIN_KB,
-    )
-
-
-@router.message(Command("unmute"))
-async def cmd_unmute(msg: Message):
-    """/unmute <target> — remove mute."""
-    if not is_admin(msg.from_user.id):
-        return
-    parts = msg.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await msg.answer("Использование: <code>/unmute ИмяПК</code>", parse_mode="HTML", reply_markup=MAIN_KB)
-        return
-
-    target = parts[1].strip()
-    mutes = load_mutes()
-    if target in mutes:
-        del mutes[target]
-        save_mutes(mutes)
-        await msg.answer(f"🔊 <b>{target}</b> — алерты включены.", parse_mode="HTML", reply_markup=MAIN_KB)
-    else:
-        await msg.answer(f"❌ {target} не найден в списке мутов.", reply_markup=MAIN_KB)
-
-
-# ─── Keenetic WiFi clients command ──────────────────────────────────
-
-@router.message(Command("wifi"))
-async def cmd_wifi(msg: Message):
-    """/wifi — show current WiFi clients from all Keenetic probes."""
-    if not is_admin(msg.from_user.id):
-        return
-    _load_wifi_clients()
-    probes = _load_keenetic_probes()
-    if not probes:
-        await msg.answer("⚙️ Нет настроенных зондов Keenetic.\nФайл: keenetic_probes.json", reply_markup=MAIN_KB)
-        return
-    if not _wifi_clients:
-        await msg.answer(
-            "📡 <b>WiFi клиенты</b>\n\nДанных ещё нет — зонд опрашивается каждые 5 минут.\n"
-            "Убедитесь, что агент <b>RootkinG</b> онлайн.",
-            parse_mode="HTML", reply_markup=MAIN_KB,
-        )
-        return
-
-    lines = ["━━━━━━━━━━━━━━━━━━━━━━\n📡 <b>WiFi клиенты (Keenetic)</b>\n━━━━━━━━━━━━━━━━━━━━━━\n"]
-    for agent_name, data in _wifi_clients.items():
-        if not data.get("ok"):
-            lines.append(f"❌ <b>{agent_name}</b>: {data.get('error', 'ошибка')}\n")
-            continue
-        updated = data.get("updated", "?")
-        router  = data.get("router", "?")
-        clients = data.get("clients") or []
-        lines.append(f"🖥 <b>{agent_name}</b> → роутер {router}  <i>({updated})</i>")
-        lines.append(f"Всего клиентов: <b>{len(clients)}</b>\n")
-        for c in clients:
-            ctype_val = c.get("type", "lan")
-            if ctype_val == "wifi":    ctype = "📶"
-            elif ctype_val == "printer": ctype = "🖨"
-            else:                       ctype = "🔌"
-            name   = c.get("name") or c.get("mac", "?")
-            ip     = c.get("ip", "")
-            rssi   = c.get("rssi")
-            rssi_s = f" {rssi}dBm" if rssi else ""
-            up     = c.get("online_sec")
-            up_s   = f" ⏱{up//3600}h{(up%3600)//60}m" if up else ""
-            lines.append(f"{ctype} <code>{name}</code>  {ip}{rssi_s}{up_s}")
-        lines.append("")
-
-    text = "\n".join(lines)
-    # send in chunks if too long
-    for i in range(0, len(text), 4000):
-        await msg.answer(text[i:i+4000], parse_mode="HTML", reply_markup=MAIN_KB)
-
-
-@router.message(Command("wifi_poll"))
-async def cmd_wifi_poll(msg: Message):
-    """/wifi_poll — force immediate Keenetic probe run."""
-    if not is_admin(msg.from_user.id):
-        return
-    probes = _load_keenetic_probes()
-    if not probes:
-        await msg.answer("⚙️ keenetic_probes.json пуст.", reply_markup=MAIN_KB)
-        return
-    wait = await msg.answer("🔄 Запускаю зонд на агенте...", reply_markup=MAIN_KB)
-    devs = await get_full_devices()
-    name_to_id = {d["name"]: d["id"] for d in devs}
-    results = []
-    for probe in probes:
-        aname  = probe.get("agent_name", "")
-        dev_id = name_to_id.get(aname)
-        if not dev_id:
-            results.append(f"❌ Агент <b>{aname}</b> не найден")
-            continue
-        dev = next((d for d in devs if d["id"] == dev_id), None)
-        if not dev or not dev.get("online"):
-            results.append(f"⏸ Агент <b>{aname}</b> офлайн")
-            continue
-        result = await run_keenetic_probe(dev_id, probe)
-        global _wifi_clients
-        if result:
-            _wifi_clients[aname] = result
-            _save_wifi_clients()
-            ok = result.get("ok", False)
-            if ok:
-                cnt = result.get("count", 0)
-                results.append(f"✅ <b>{aname}</b>: {cnt} клиентов")
-            else:
-                results.append(f"❌ <b>{aname}</b>: {result.get('error', 'ошибка')}")
-        else:
-            results.append(f"❌ <b>{aname}</b>: нет ответа от зонда")
-    await wait.delete()
-    await msg.answer("\n".join(results) or "Нет результатов", parse_mode="HTML", reply_markup=MAIN_KB)
-
-
-# ─── Remote Command FSM ─────────────────────────────────────────────
-
-class RemoteCmdState(StatesGroup):
-    entering_cmd  = State()   # device stored in state, waiting for command text
-    entering_gcmd = State()   # group stored in state, waiting for command text
-
-
-class MuteSetup(StatesGroup):
-    picking_target   = State()   # picked device or group (buttons)
-    picking_duration = State()   # duration buttons shown, or free text
-
-
-# ─── WiFi FSM States ────────────────────────────────────────────────
-
-class WifiOfficeSetup(StatesGroup):
-    picking_group    = State()   # select MC group as office
-    router_login     = State()
-    router_password  = State()
-    picking_agent    = State()
-    editing_password = State()   # change password for existing probe
-
-
-class PingState(StatesGroup):
-    waiting_ip = State()   # user is typing a custom IP/hostname
-
-
-class NotesState(StatesGroup):
-    picking_device = State()   # user picks device from list
-    writing_note   = State()   # user types note text
-
-
-class SchedulerFSM(StatesGroup):
-    picking_group   = State()  # step 1: pick group
-    picking_devices = State()  # step 2: pick devices (stored in state["selected"])
-    entering_cmd    = State()  # step 3: type command
-    entering_time   = State()  # step 4: type time ("через 30" or "14:30")
-
-
-# ─── WiFi UI helpers ────────────────────────────────────────────────
-
-def _wifi_main_kb(probes: list[dict]) -> InlineKeyboardMarkup:
-    """Keyboard for main WiFi view: one button per office + controls."""
-    rows = []
-    for p in probes:
-        loc = p.get("location", p.get("agent_name", "?"))
-        data = _wifi_clients.get(p.get("agent_name", ""))
-        cnt  = data.get("count", 0) if data and data.get("ok") else "—"
-        rows.append([InlineKeyboardButton(
-            text=f"🏢 {loc}  ({cnt} устр.)",
-            callback_data=f"wifi:office:{loc[:40]}",
-        )])
-    rows.append([
-        InlineKeyboardButton(text="🔄 Обновить всё", callback_data="wifi:refresh_all"),
-        InlineKeyboardButton(text="⚙️ Зонды",        callback_data="wifi:probes"),
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def _wifi_office_text(location: str, probe: dict) -> str:
-    """Build formatted text for one office's clients."""
-    aname   = probe.get("agent_name", "")
-    data    = _wifi_clients.get(aname)
-    if not data:
-        return f"📡 <b>{location}</b>\n\nДанных нет — нажми 🔄 Обновить."
-    if not data.get("ok"):
-        return f"📡 <b>{location}</b>\n\n❌ Ошибка: {data.get('error', '?')}"
-
-    clients  = data.get("clients") or []
-    updated  = data.get("updated", "?")
-    router   = data.get("router", "?")
-    method   = data.get("method", "")
-    wifi_c     = [c for c in clients if c.get("type") == "wifi"]
-    printer_c  = [c for c in clients if c.get("type") == "printer"]
-    lan_c      = [c for c in clients if c.get("type") not in ("wifi", "printer")]
-
-    method_icon = {"keenetic-api": "🔑", "keenetic-api-basic": "🔑", "keenetic-api-noauth": "🔓",
-                   "keenetic-api-md5": "🔑", "neighbor+nbtstat": "🔍"}.get(method, "")
-    lines = [f"━━━━━━━━━━━━━━━━━━━━━━",
-             f"📡 <b>{location}</b>  —  🌐 {router}",
-             f"🕐 {updated}  ·  {method_icon} {method}",
-             f"Всего устройств: <b>{len(clients)}</b>",
-             "━━━━━━━━━━━━━━━━━━━━━━"]
-
-    if wifi_c:
-        lines.append(f"\n📶 <b>WiFi ({len(wifi_c)})</b>")
-        for c in wifi_c:
-            name = c.get("name") or c.get("ip", "?")
-            ip   = c.get("ip", "")
-            mac  = c.get("mac", "")
-            rssi = c.get("rssi")
-            link = c.get("link_mbps")
-            rssi_s = f"  {rssi}dBm" if rssi is not None else ""
-            link_s = f"  {link}Мбит/с" if link is not None else ""
-            lines.append(f"  📶 <b>{name}</b>{rssi_s}{link_s}")
-            if ip or mac:
-                lines.append(f"     <code>{ip}</code>" + (f"  <code>{mac}</code>" if mac else ""))
-
-    if printer_c:
-        lines.append(f"\n🖨 <b>Принтеры ({len(printer_c)})</b>")
-        for c in printer_c:
-            name = c.get("name") or c.get("ip", "?")
-            ip   = c.get("ip", "")
-            mac  = c.get("mac", "")
-            port = c.get("printer_port", "")
-            port_s = f"  порт {port}" if port else ""
-            lines.append(f"  🖨 <b>{name}</b>{port_s}")
-            if ip or mac:
-                lines.append(f"     <code>{ip}</code>" + (f"  <code>{mac}</code>" if mac else ""))
-
-    if lan_c:
-        lines.append(f"\n🔌 <b>LAN ({len(lan_c)})</b>")
-        for c in lan_c:
-            name = c.get("name") or c.get("ip", "?")
-            ip   = c.get("ip", "")
-            mac  = c.get("mac", "")
-            link = c.get("link_mbps")
-            link_s = f"  {link}Мбит/с" if link is not None else ""
-            lines.append(f"  🔌 <b>{name}</b>{link_s}")
-            if ip or mac:
-                lines.append(f"     <code>{ip}</code>" + (f"  <code>{mac}</code>" if mac else ""))
-
-    return "\n".join(lines)
-
-
-async def _run_probe_for(probe: dict, devs: list[dict]) -> str:
-    """Run probe and update cache. Returns status string."""
-    global _wifi_clients
-    aname  = probe.get("agent_name", "")
-    loc    = probe.get("location", aname)
-    dev    = next((d for d in devs if d["name"] == aname), None)
-    if not dev:
-        return f"❌ <b>{loc}</b>: агент не найден"
-    if not dev.get("online"):
-        return f"⏸ <b>{loc}</b>: агент офлайн"
-    result = await run_keenetic_probe(dev["id"], probe)
-    if result:
-        _wifi_clients[aname] = result
-        _save_wifi_clients()
-        return f"✅ <b>{loc}</b>: {result.get('count', 0)} устр."
-    return f"❌ <b>{loc}</b>: нет ответа"
-
-
-# ─── WiFi button handler ─────────────────────────────────────────────
-
-@router.message(F.text == BTN_WIFI)
-async def btn_wifi_main(msg: Message):
-    if not is_admin(msg.from_user.id):
-        return
-    _load_wifi_clients()
-    probes = _load_keenetic_probes()
-    if not probes:
-        await msg.answer(
-            "📡 <b>WiFi сети</b>\n\nЗонды не настроены.\n"
-            "Нажми ⚙️ Зонды чтобы назначить агента для офиса.",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="⚙️ Зонды", callback_data="wifi:probes"),
-            ]]),
-        )
-        return
-    await msg.answer(
-        "📡 <b>WiFi сети по офисам</b>\n\nВыбери офис:",
-        parse_mode="HTML",
-        reply_markup=_wifi_main_kb(probes),
-    )
-
-
-# ─── WiFi callback: main view ────────────────────────────────────────
-
-@router.callback_query(F.data == "wifi:main")
-async def cb_wifi_main(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        return
-    _load_wifi_clients()
-    probes = _load_keenetic_probes()
-    await cb.message.edit_text(
-        "📡 <b>WiFi сети по офисам</b>\n\nВыбери офис:",
-        parse_mode="HTML",
-        reply_markup=_wifi_main_kb(probes),
-    )
-    await cb.answer()
-
-
-# ─── WiFi callback: office view ──────────────────────────────────────
-
-@router.callback_query(F.data.startswith("wifi:office:"))
-async def cb_wifi_office(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        return
-    location = cb.data[len("wifi:office:"):]
-    probes   = _load_keenetic_probes()
-    probe    = next((p for p in probes if p.get("location", p.get("agent_name")) == location), None)
-    if not probe:
-        await cb.answer("Офис не найден", show_alert=True)
-        return
-    text = _wifi_office_text(location, probe)
-    kb   = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🔄 Обновить", callback_data=f"wifi:refresh_one:{location[:40]}"),
-        InlineKeyboardButton(text="◀️ Офисы",   callback_data="wifi:main"),
-    ]])
-    try:
-        await cb.message.edit_text(text[:4096], parse_mode="HTML", reply_markup=kb)
-    except Exception:
-        await cb.message.answer(text[:4096], parse_mode="HTML", reply_markup=kb)
-    await cb.answer()
-
-
-# ─── WiFi callback: refresh all ──────────────────────────────────────
-
-@router.callback_query(F.data == "wifi:refresh_all")
-async def cb_wifi_refresh_all(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        return
-    await cb.answer("🔄 Обновляю все офисы...", show_alert=False)
-    probes = _load_keenetic_probes()
-    devs   = await get_full_devices()
-    for probe in probes:
-        await _run_probe_for(probe, devs)
-    probes = _load_keenetic_probes()
-    await cb.message.edit_text(
-        "📡 <b>WiFi сети по офисам</b>\n\nВыбери офис:",
-        parse_mode="HTML",
-        reply_markup=_wifi_main_kb(probes),
-    )
-
-
-# ─── WiFi callback: refresh one office ───────────────────────────────
-
-@router.callback_query(F.data.startswith("wifi:refresh_one:"))
-async def cb_wifi_refresh_one(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        return
-    location = cb.data[len("wifi:refresh_one:"):]
-    probes   = _load_keenetic_probes()
-    probe    = next((p for p in probes if p.get("location", p.get("agent_name")) == location), None)
-    if not probe:
-        await cb.answer("Офис не найден", show_alert=True)
-        return
-    await cb.answer("🔄 Обновляю...")
-    devs = await get_full_devices()
-    await _run_probe_for(probe, devs)
-    text = _wifi_office_text(location, probe)
-    kb   = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🔄 Обновить", callback_data=f"wifi:refresh_one:{location[:40]}"),
-        InlineKeyboardButton(text="◀️ Офисы",   callback_data="wifi:main"),
-    ]])
-    try:
-        await cb.message.edit_text(text[:4096], parse_mode="HTML", reply_markup=kb)
-    except Exception:
-        pass
-
-
-# ─── WiFi callback: probe management ─────────────────────────────────
-
-@router.callback_query(F.data == "wifi:probes")
-async def cb_wifi_probes(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        return
-    probes = _load_keenetic_probes()
-    lines  = ["⚙️ <b>Зонды по офисам</b>\n"]
-    if probes:
-        for p in probes:
-            loc   = p.get("location", p.get("agent_name", "?"))
-            agent = p.get("agent_name", "?")
-            data  = _wifi_clients.get(agent)
-            status = f"✅ {data.get('count',0)} устр." if data and data.get("ok") else "⏳ нет данных"
-            lines.append(f"🏢 <b>{loc}</b> — агент: {agent}  {status}")
-    else:
-        lines.append("Нет назначенных зондов")
-
-    rows = []
-    for idx, p in enumerate(probes):
-        loc = p.get("location", p.get("agent_name", "?"))[:30]
-        rows.append([
-            InlineKeyboardButton(text=f"✏️ {loc}", callback_data=f"wifi:edit:{idx}"),
-            InlineKeyboardButton(text="❌",          callback_data=f"wifi:del:{loc[:40]}"),
-        ])
-    rows.append([InlineKeyboardButton(text="➕ Новый офис", callback_data="wifi:new_office")])
-    rows.append([InlineKeyboardButton(text="◀️ Офисы", callback_data="wifi:main")])
-
-    await cb.message.edit_text(
-        "\n".join(lines), parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-    )
-    await cb.answer()
-
-
-# ─── WiFi FSM: new office setup ──────────────────────────────────────
-
-_CANCEL_KB = InlineKeyboardMarkup(inline_keyboard=[[
-    InlineKeyboardButton(text="❌ Отмена", callback_data="wifi:cancel_setup"),
-]])
-
-
-@router.callback_query(F.data == "wifi:new_office")
-async def cb_wifi_new_office(cb: CallbackQuery, state: FSMContext):
-    if not is_admin(cb.from_user.id):
-        return
-    await cb.answer()
-    wait = await cb.message.answer("⏳ Загружаю группы...")
-    devs = await _list_agents_quick()
-    groups = sorted(set(d.get("group", "") for d in devs if d.get("group")))
-    await wait.delete()
-    if not groups:
-        await cb.message.answer(
-            "⚠️ Не удалось загрузить группы MeshCentral.\nПопробуй позже.",
-            reply_markup=_CANCEL_KB,
-        )
-        return
-    await state.set_state(WifiOfficeSetup.picking_group)
-    rows = [[InlineKeyboardButton(
-        text=f"🏢 {g}",
-        callback_data=f"wifi:group:{g[:40]}",
-    )] for g in groups]
-    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="wifi:cancel_setup")])
-    await cb.message.answer(
-        "🏢 <b>Новый офис — шаг 1/4</b>\n\n"
-        "Выбери группу MeshCentral (= офис):",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-    )
-
-
-@router.callback_query(F.data.startswith("wifi:group:"), WifiOfficeSetup.picking_group)
-async def cb_wifi_pick_group(cb: CallbackQuery, state: FSMContext):
-    if not is_admin(cb.from_user.id):
-        return
-    group = cb.data[len("wifi:group:"):]
-    await state.update_data(office_name=group, selected_group=group)
-    await state.set_state(WifiOfficeSetup.router_login)
-    await cb.message.answer(
-        f"✅ Офис: <b>{group}</b>\n\n"
-        "🔑 <b>Шаг 2/4</b> — Логин роутера\n"
-        "Введи логин или нажми кнопку:",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="admin (по умолчанию)", callback_data="wifi:fsm_login:admin")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="wifi:cancel_setup")],
-        ]),
-    )
-    await cb.answer()
-
-
-@router.callback_query(F.data.startswith("wifi:fsm_login:"))
-async def cb_wifi_fsm_login(cb: CallbackQuery, state: FSMContext):
-    login = cb.data[len("wifi:fsm_login:"):]
-    await state.update_data(router_login=login)
-    await state.set_state(WifiOfficeSetup.router_password)
-    data = await state.get_data()
-    await cb.message.answer(
-        f"✅ Офис: <b>{data['office_name']}</b>  Логин: <b>{login}</b>\n\n"
-        "🔒 <b>Шаг 3/4</b> — Пароль роутера\n"
-        "Введи пароль (или <code>-</code> если без пароля):",
-        parse_mode="HTML", reply_markup=_CANCEL_KB,
-    )
-    await cb.answer()
-
-
-@router.message(WifiOfficeSetup.router_login)
-async def wifi_fsm_router_login(msg: Message, state: FSMContext):
-    if not is_admin(msg.from_user.id):
-        return
-    login = "" if msg.text.strip() == "-" else msg.text.strip()
-    await state.update_data(router_login=login)
-    await state.set_state(WifiOfficeSetup.router_password)
-    data = await state.get_data()
-    await msg.answer(
-        f"✅ Офис: <b>{data['office_name']}</b>  Логин: <b>{login or '—'}</b>\n\n"
-        "🔒 <b>Шаг 3/4</b> — Пароль роутера\n"
-        "Введи пароль (или <code>-</code> если без пароля):",
-        parse_mode="HTML", reply_markup=_CANCEL_KB,
-    )
-
-
-@router.message(WifiOfficeSetup.router_password)
-async def wifi_fsm_router_password(msg: Message, state: FSMContext):
-    if not is_admin(msg.from_user.id):
-        return
-    pwd = "" if msg.text.strip() == "-" else msg.text.strip()
-    await state.update_data(router_password=pwd)
-    await state.set_state(WifiOfficeSetup.picking_agent)
-    # Delete password message for security
-    try:
-        await msg.delete()
-    except Exception:
-        pass
-    data  = await state.get_data()
-    selected_group = data.get("selected_group", "")
-    wait = await msg.answer("⏳ Загружаю список агентов...")
-    try:
-        devs = await _list_agents_quick()
-    except Exception:
-        devs = []
-    try:
-        await wait.delete()
-    except Exception:
-        pass
-    current = {p["agent_name"] for p in _load_keenetic_probes()}
-    # Filter by selected group if set
-    if selected_group:
-        group_devs = [d for d in devs if d.get("group", "") == selected_group]
-        if not group_devs:  # fallback if group is empty in MC
-            group_devs = devs
-    else:
-        group_devs = devs
-    group_devs = sorted(group_devs, key=lambda x: (not x.get("online"), x.get("name", "")))
-    # Store agent list in state (to look up by index — avoids 64-byte callback_data limit)
-    await state.update_data(agent_list=[d["name"] for d in group_devs])
-    rows = []
-    for idx, d in enumerate(group_devs):
-        agent  = d["name"]
-        online = "🟢" if d.get("online") else "🔴"
-        mark   = " ✓" if agent in current else ""
-        # Use index as callback_data — safe, always short
-        rows.append([InlineKeyboardButton(
-            text=f"{online} {agent}{mark}",
-            callback_data=f"wifi:finalize:{idx}",
-        )])
-    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="wifi:cancel_setup")])
-    group_label = f" <b>{selected_group}</b>" if selected_group else f" <b>{data.get('office_name', '?')}</b>"
-    if not group_devs:
-        text = (f"⚠️ <b>Шаг 4/4</b> — Нет агентов в группе{group_label}\n\n"
-                "MeshCentral не вернул устройства. Попробуй позже.")
-    else:
-        text = (f"🖥 <b>Шаг 4/4</b> — Выбери агента для офиса{group_label}\n\n"
-                "Это ПК который всегда включён в этом офисе.\n"
-                "🟢 онлайн  🔴 офлайн")
-    await msg.answer(text, parse_mode="HTML",
-                     reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
-
-
-@router.callback_query(F.data.startswith("wifi:finalize:"))
-async def cb_wifi_finalize(cb: CallbackQuery, state: FSMContext):
-    if not is_admin(cb.from_user.id):
-        return
-    idx_str = cb.data[len("wifi:finalize:"):]
-    data = await state.get_data()
-    # Resolve agent name from stored list (index-based)
-    agent_list = data.get("agent_list", [])
-    try:
-        agent_name = agent_list[int(idx_str)]
-    except (ValueError, IndexError):
-        await cb.answer("Ошибка: список агентов устарел. Начни заново.", show_alert=True)
-        await state.clear()
-        return
-    office_name     = data.get("office_name", agent_name)
-    router_login    = data.get("router_login", "admin")
-    router_password = data.get("router_password", "")
-    await state.clear()
-
-    probes = [p for p in _load_keenetic_probes() if p.get("agent_name") != agent_name]
-    probes.append({
-        "agent_name":     agent_name,
-        "location":       office_name,
-        "router_login":   router_login,
-        "router_password": router_password,
-    })
-    KEENETIC_PROBES_FILE.write_text(json.dumps(probes, ensure_ascii=False, indent=2))
-
-    await cb.answer(f"✅ Сохранено!")
-    await cb.message.edit_text(
-        f"✅ <b>Офис настроен</b>\n\n"
-        f"🏢 Название: <b>{office_name}</b>\n"
-        f"🖥 Агент: <b>{agent_name}</b>\n"
-        f"🔑 Логин: <code>{router_login or '—'}</code>\n\n"
-        "Данные соберутся в течение 5 минут автоматически,\n"
-        "или нажми 🔄 Обновить в меню офисов.",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="◀️ К офисам", callback_data="wifi:main"),
-        ]]),
-    )
-
-
-@router.callback_query(F.data == "wifi:cancel_setup")
-async def cb_wifi_cancel_setup(cb: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await cb.answer("Отменено")
-    try:
-        await cb.message.edit_text("❌ Настройка отменена.",
-                                   reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                                       InlineKeyboardButton(text="◀️ Зонды", callback_data="wifi:probes"),
-                                   ]]))
-    except Exception:
-        pass
-
-
-# ─── WiFi callback: edit probe ───────────────────────────────────────
-
-@router.callback_query(F.data.startswith("wifi:edit:"))
-async def cb_wifi_edit(cb: CallbackQuery, state: FSMContext):
-    if not is_admin(cb.from_user.id):
-        return
-    try:
-        idx = int(cb.data[len("wifi:edit:"):])
-    except ValueError:
-        await cb.answer("Ошибка", show_alert=True)
-        return
-    probes = _load_keenetic_probes()
-    if idx >= len(probes):
-        await cb.answer("Офис не найден", show_alert=True)
-        return
-    p   = probes[idx]
-    loc = p.get("location", p.get("agent_name", "?"))
-    agt = p.get("agent_name", "?")
-    login = p.get("router_login", "admin")
-    has_pwd = bool(p.get("router_password"))
-    await cb.message.answer(
-        f"✏️ <b>Редактирование: {loc}</b>\n\n"
-        f"🖥 Агент: <b>{agt}</b>\n"
-        f"🔑 Логин: <code>{login or '—'}</code>\n"
-        f"🔒 Пароль: {'***' if has_pwd else '—'}\n\n"
-        "Что изменить?",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔒 Изменить пароль",
-                                  callback_data=f"wifi:chpwd:{idx}")],
-            [InlineKeyboardButton(text="🔑 Изменить логин",
-                                  callback_data=f"wifi:chlogin:{idx}")],
-            [InlineKeyboardButton(text="◀️ Зонды", callback_data="wifi:probes")],
-        ]),
-    )
-    await cb.answer()
-
-
-@router.callback_query(F.data.startswith("wifi:chpwd:"))
-async def cb_wifi_chpwd(cb: CallbackQuery, state: FSMContext):
-    if not is_admin(cb.from_user.id):
-        return
-    idx_str = cb.data[len("wifi:chpwd:"):]
-    probes  = _load_keenetic_probes()
-    try:
-        idx = int(idx_str)
-        p   = probes[idx]
-    except (ValueError, IndexError):
-        await cb.answer("Офис не найден", show_alert=True)
-        return
-    loc = p.get("location", p.get("agent_name", "?"))
-    await state.update_data(edit_probe_idx=idx)
-    await state.set_state(WifiOfficeSetup.editing_password)
-    await cb.message.answer(
-        f"🔒 Новый пароль для <b>{loc}</b>\n\n"
-        "Введи новый пароль роутера\n"
-        "(или <code>-</code> если без пароля):",
-        parse_mode="HTML", reply_markup=_CANCEL_KB,
-    )
-    await cb.answer()
-
-
-@router.callback_query(F.data.startswith("wifi:chlogin:"))
-async def cb_wifi_chlogin(cb: CallbackQuery, state: FSMContext):
-    if not is_admin(cb.from_user.id):
-        return
-    idx_str = cb.data[len("wifi:chlogin:"):]
-    probes  = _load_keenetic_probes()
-    try:
-        idx = int(idx_str)
-        p   = probes[idx]
-    except (ValueError, IndexError):
-        await cb.answer("Офис не найден", show_alert=True)
-        return
-    loc   = p.get("location", p.get("agent_name", "?"))
-    login = p.get("router_login", "admin")
-    await state.update_data(edit_probe_idx=idx, edit_field="login")
-    await state.set_state(WifiOfficeSetup.editing_password)
-    await cb.message.answer(
-        f"🔑 Новый логин для <b>{loc}</b>\n\n"
-        f"Текущий: <code>{login or '—'}</code>\n\n"
-        "Введи новый логин роутера\n"
-        "(или <code>-</code> если пустой):",
-        parse_mode="HTML", reply_markup=_CANCEL_KB,
-    )
-    await cb.answer()
-
-
-@router.message(WifiOfficeSetup.editing_password)
-async def wifi_fsm_edit_field(msg: Message, state: FSMContext):
-    if not is_admin(msg.from_user.id):
-        return
-    value = "" if msg.text.strip() == "-" else msg.text.strip()
-    data  = await state.get_data()
-    idx   = data.get("edit_probe_idx")
-    field = data.get("edit_field", "password")  # "password" or "login"
-    await state.clear()
-    # Delete message if it was a password
-    if field == "password":
-        try:
-            await msg.delete()
-        except Exception:
-            pass
-    probes = _load_keenetic_probes()
-    if idx is None or idx >= len(probes):
-        await msg.answer("❌ Офис не найден.")
-        return
-    p   = probes[idx]
-    loc = p.get("location", p.get("agent_name", "?"))
-    if field == "login":
-        p["router_login"] = value
-        field_name = "Логин"
-    else:
-        p["router_password"] = value
-        field_name = "Пароль"
-    probes[idx] = p
-    KEENETIC_PROBES_FILE.write_text(json.dumps(probes, ensure_ascii=False, indent=2))
-    display = value if field == "login" else ("***" if value else "—")
-    await msg.answer(
-        f"✅ {field_name} для <b>{loc}</b> обновлён: <code>{display}</code>\n\n"
-        "Данные обновятся при следующем опросе.",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="◀️ Зонды", callback_data="wifi:probes"),
-        ]]),
-    )
-
-
-# ─── WiFi callback: delete probe ─────────────────────────────────────
-
-@router.callback_query(F.data.startswith("wifi:del:"))
-async def cb_wifi_del(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        return
-    location = cb.data[len("wifi:del:"):]
-    probes   = _load_keenetic_probes()
-    to_del   = next((p for p in probes if p.get("location", p.get("agent_name")) == location), None)
-    if to_del:
-        aname = to_del.get("agent_name", "")
-        probes = [p for p in probes if p.get("agent_name") != aname]
-        KEENETIC_PROBES_FILE.write_text(json.dumps(probes, ensure_ascii=False, indent=2))
-        global _wifi_clients
-        _wifi_clients.pop(aname, None)
-        _save_wifi_clients()
-        await cb.answer(f"Удалён: {location}")
-    else:
-        await cb.answer("Не найден", show_alert=True)
-    await cb_wifi_probes(cb)
-
-
-# ─── Top Resources ──────────────────────────────────────────────────
-
-@router.message(Command("top"))
-async def cmd_top(msg: Message):
-    """Show top resource usage across devices."""
-    if not is_admin(msg.from_user.id):
-        return
-    devs = await get_full_devices()
-    if not devs:
-        await msg.answer("📭 Нет устройств.", reply_markup=MAIN_KB)
-        return
-
-    lines = ["━━━━━━━━━━━━━━━━━━━━━━\n📊 <b>Top Resources</b>\n━━━━━━━━━━━━━━━━━━━━━━\n"]
-
-    # Top disk usage
-    disk_devs = []
-    for d in devs:
-        for va in d.get("vol_alerts", []):
-            disk_devs.append((d["name"], va))
-    if disk_devs:
-        lines.append("<b>💿 Диски заполнены:</b>")
-        for name, alert in disk_devs[:5]:
-            lines.append(f"  • {name}: {alert}")
-        lines.append("")
-
-    # Longest offline
-    offline_devs = sorted(
-        [d for d in devs if not d["online"] and d.get("offline_hours", 0) > 0],
-        key=lambda x: x["offline_hours"], reverse=True,
-    )
-    if offline_devs:
-        lines.append("<b>⏰ Долго офлайн:</b>")
-        for d in offline_devs[:5]:
-            lines.append(f"  • {d['name']}: {fmt_offline(d['offline_hours'])}")
-        lines.append("")
-
-    # Smallest RAM
-    def parse_ram_gb(ram_str: str) -> float:
-        ram_str = ram_str.strip()
-        if "TB" in ram_str:
-            return float(ram_str.replace("TB", "").strip()) * 1024
-        if "GB" in ram_str:
-            return float(ram_str.replace("GB", "").strip())
-        if "MB" in ram_str:
-            return float(ram_str.replace("MB", "").strip()) / 1024
-        return 0
-
-    ram_devs = sorted(
-        [d for d in devs if parse_ram_gb(d["ram_total"]) > 0],
-        key=lambda x: parse_ram_gb(x["ram_total"]),
-    )
-    if ram_devs:
-        lines.append("<b>💾 Наименьшая RAM:</b>")
-        for d in ram_devs[:5]:
-            lines.append(f"  • {d['name']}: {d['ram_total']}")
-        lines.append("")
-
-    # Outdated agents
-    agent_versions = {}
-    for d in devs:
-        v = d.get("agent_ver", "")
-        if v:
-            agent_versions.setdefault(v, []).append(d["name"])
-    if len(agent_versions) > 1:
-        latest_ver = max(agent_versions.keys())
-        outdated = [(v, names) for v, names in agent_versions.items() if v != latest_ver]
-        if outdated:
-            lines.append("<b>🤖 Устаревшие агенты:</b>")
-            for v, names in sorted(outdated):
-                lines.append(f"  • v{v}: {', '.join(names[:5])}")
-            lines.append("")
-
-    await msg.answer("\n".join(lines), parse_mode="HTML", reply_markup=MAIN_KB)
-
-
-# ─── Group Commands ─────────────────────────────────────────────────
-
-@router.message(Command("run_group"))
-async def cmd_run_group(msg: Message):
-    """Run command on all online devices in a group: /run_group <group> [-ps] <cmd>"""
-    if not is_admin(msg.from_user.id):
-        return
-    parts = msg.text.split(maxsplit=2)
-    if len(parts) < 3:
-        await msg.answer(
-            "Использование:\n"
-            "<code>/run_group Офис hostname</code>\n"
-            "<code>/run_group Серверы -ps Get-Service</code>",
-            parse_mode="HTML", reply_markup=MAIN_KB,
-        )
-        return
-
-    group_name = parts[1].strip()
-    rest = parts[2].strip()
-    ps = False
-    if rest.startswith("-ps "):
-        ps = True
-        rest = rest[4:].strip()
-
-    if not rest:
-        await msg.answer("❌ Не указана команда.", reply_markup=MAIN_KB)
-        return
-
-    devs = await get_full_devices()
-    group_devs = [d for d in devs if d["group"].lower() == group_name.lower() and d["online"]]
-    if not group_devs:
-        await msg.answer(f"❌ Нет онлайн устройств в группе «{group_name}».", reply_markup=MAIN_KB)
-        return
-
-    wait_msg = await msg.answer(
-        f"⏳ Выполняю на <b>{len(group_devs)}</b> устройствах в <b>{group_name}</b>...",
-        parse_mode="HTML",
-    )
-
-    sem = asyncio.Semaphore(5)
-    results = {}
-
-    async def run_one(d):
-        async with sem:
-            result = await mc_run_command(d["id"], rest, powershell=ps)
-            results[d["name"]] = result
-
-    await asyncio.gather(*[run_one(d) for d in group_devs])
-
-    lines = [
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📁 <b>Группа: {group_name}</b> ({len(results)} устройств)\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"<code>$ {rest}</code>\n"
-    ]
-
-    success = 0
-    fail = 0
-    for name, output in sorted(results.items()):
-        first_line = ""
-        for line in output.split("\n"):
-            stripped = line.strip()
-            skip_prefixes = ("Microsoft Windows", "(c) ", "C:\\Program Files\\Mesh Agent>")
-            if stripped and not any(stripped.startswith(p) for p in skip_prefixes):
-                if stripped != rest and stripped != "exit":
-                    first_line = stripped[:60]
-                    break
-        if "Error" in output:
-            fail += 1
-            lines.append(f"❌ <b>{name}</b>: {first_line}")
-        else:
-            success += 1
-            lines.append(f"✅ <b>{name}</b>: {first_line}")
-
-    lines.insert(4, f"\n✅ {success} успешно, ❌ {fail} ошибок\n")
-
-    text = "\n".join(lines)
-    if len(text) > 4000:
-        text = text[:4000] + "\n..."
-
-    await wait_msg.edit_text(text, parse_mode="HTML")
-
-
-# ─── Full inventory ─────────────────────────────────────────────────
-
-@router.message(F.text == BTN_INVENTORY)
-async def msg_inventory(msg: Message):
-    if not is_admin(msg.from_user.id):
-        return
-    wait = await msg.answer("📦 Выгружаю полный инвентарь...")
-    devs = await get_full_devices()
-    if not devs:
-        await wait.edit_text("📭 Нет устройств.")
-        return
-    csv_data = build_inventory_csv(devs)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
-    await msg.answer_document(
-        BufferedInputFile(csv_data, filename=f"inventory_all_{ts}.csv"),
-        caption=f"📦 <b>Полный инвентарь</b> — {len(devs)} устройств\n27 колонок • CSV (;) UTF-8 BOM для Excel",
-        parse_mode="HTML",
-    )
-    json_data = json.dumps(devs, indent=2, ensure_ascii=False, default=str).encode()
-    await msg.answer_document(
-        BufferedInputFile(json_data, filename=f"inventory_all_{ts}.json"),
-        caption="📋 JSON (полные данные)",
-    )
-    if HAS_OPENPYXL:
-        xlsx_data = build_inventory_xlsx(devs)
-        if xlsx_data:
-            await msg.answer_document(
-                BufferedInputFile(xlsx_data, filename=f"inventory_all_{ts}.xlsx"),
-                caption=f"📊 <b>Excel-отчёт</b> — {len(devs)} устройств",
-                parse_mode="HTML",
-            )
-    await wait.delete()
-
-
-# ─── Health ──────────────────────────────────────────────────────────
-
-@router.message(F.text == BTN_HEALTH)
-async def msg_health(msg: Message):
-    if not is_admin(msg.from_user.id):
-        return
-    alive = await mc_is_alive()
-    svc = await mc_service_status()
-    cpu = psutil.cpu_percent(interval=1)
-    mem = psutil.virtual_memory()
-    disk = shutil.disk_usage("/")
-    l1, l5, l15 = os.getloadavg()
-    net = psutil.net_io_counters()
-    t = (
-        "━━━━━━━━━━━━━━━━━━━━━━\n❤️  <b>Здоровье</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{'🟢' if alive else '🔴'} MC: <b>{'ALIVE' if alive else 'DOWN'}</b> ({svc})\n"
-        f"🔄 Load: {l1:.1f}/{l5:.1f}/{l15:.1f}\n"
-        f"🧠 CPU: {pbar(cpu)} {cpu:.0f}%\n"
-        f"💾 RAM: {pbar(mem.percent)} {mem.percent:.0f}% ({fmt_bytes(mem.used)}/{fmt_bytes(mem.total)})\n"
-        f"💿 Disk: {pbar(disk.used / disk.total * 100)} {disk.used / disk.total * 100:.0f}%\n\n"
-        f"🌐 Net: ↓{fmt_bytes(net.bytes_recv)} ↑{fmt_bytes(net.bytes_sent)}\n\n"
-        f"🛡 Автоперезапуск: Вкл  •  📦 Инвентарь: {INVENTORY_HOUR}:00 UTC  •  📋 Отчёт: {DAILY_REPORT_HOUR}:00 UTC"
-    )
-    await msg.answer(t, parse_mode="HTML", reply_markup=MAIN_KB)
-
-
-# ─── Tools menu ──────────────────────────────────────────────────────
-
-@router.message(F.text == BTN_TOOLS)
-async def msg_tools(msg: Message):
-    if not is_admin(msg.from_user.id):
-        return
-    buttons = [
-        [InlineKeyboardButton(text="🔍 Поиск", callback_data="tool:search"),
-         InlineKeyboardButton(text="⚖️ Сравнение", callback_data="tool:compare")],
-        [InlineKeyboardButton(text="🔔 Алерты", callback_data="tool:alerts"),
-         InlineKeyboardButton(text="📜 Изменения", callback_data="tool:changes")],
-        [InlineKeyboardButton(text="🖥 Команда", callback_data="tool:run"),
-         InlineKeyboardButton(text="📁 Группа CMD", callback_data="tool:run_group")],
-        [InlineKeyboardButton(text="📥 Установщик", callback_data="tool:install"),
-         InlineKeyboardButton(text="📝 Скрипты", callback_data="tool:scripts")],
-        [InlineKeyboardButton(text="📄 PDF отчёт", callback_data="tool:pdf"),
-         InlineKeyboardButton(text="📊 Excel", callback_data="tool:xlsx")],
-        [InlineKeyboardButton(text="🛡 Безопасность", callback_data="tool:security"),
-         InlineKeyboardButton(text="📈 Top", callback_data="tool:top")],
-        [InlineKeyboardButton(text="🗺 Карта сети", callback_data="tool:netmap"),
-         InlineKeyboardButton(text="🔇 Мьюты", callback_data="tool:mutes")],
-        [InlineKeyboardButton(text="🏓 Пинг / Трейс", callback_data="tool:ping"),
-         InlineKeyboardButton(text="📝 Заметки",    callback_data="tool:notes")],
-        [InlineKeyboardButton(text="📈 Тренд дисков", callback_data="tool:disk_trend"),
-         InlineKeyboardButton(text="📊 Сравнить 7д",   callback_data="tool:snap_compare")],
-        [InlineKeyboardButton(text="⏰ Планировщик",    callback_data="tool:scheduler"),
-         InlineKeyboardButton(text="📡 SNMP роутеры",  callback_data="tool:snmp")],
-        [InlineKeyboardButton(text="🖨 Принтеры", callback_data="tool:printers"),
-         InlineKeyboardButton(text="🔄 Рестарт MC", callback_data="tool:restart")],
-        [InlineKeyboardButton(text="💻 Инвентарь HW",   callback_data="tool:hw_inventory"),
-         InlineKeyboardButton(text="🌡 Температуры",    callback_data="tool:temperature")],
-        [InlineKeyboardButton(text="📊 Доступность",    callback_data="tool:availability"),
-         InlineKeyboardButton(text="🌐 Статус-страница",callback_data="tool:status_page")],
-        [InlineKeyboardButton(text="💾 Бэкап MC", callback_data="tool:backup")],
-        [InlineKeyboardButton(text="🗄 Полный бэкап сервера", callback_data="tool:fullbackup")],
-        [InlineKeyboardButton(text="🆕 Обновления MC", callback_data="tool:update_check"),
-         InlineKeyboardButton(text="🔐 SSL сертификаты", callback_data="tool:certs")],
-        [InlineKeyboardButton(text="🚀 Развернуть копию", callback_data="tool:deploy")],
-    ]
-    await msg.answer(
-        "━━━━━━━━━━━━━━━━━━━━━━\n🔧 <b>Инструменты</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🔍 /search &lt;запрос&gt; — поиск устройств\n"
-        "⚖️ /compare &lt;PC1&gt; &lt;PC2&gt; — сравнение\n"
-        "🖥 /run &lt;PC&gt; &lt;cmd&gt; — удалённая команда\n"
-        "📁 /run_group &lt;группа&gt; &lt;cmd&gt; — команда группе\n"
-        "📝 /scripts — быстрые скрипты\n"
-        "📥 /install — установщик агента\n"
-        "🔔 Алерты — настройка уведомлений\n"
-        "🛡 Безопасность — сводка безопасности\n"
-        "📈 /top — топ ресурсов\n"
-        "📊 Excel — полный отчёт XLSX\n"
-        "🗺 Карта сети — устройства по подсетям\n"
-        "🔇 /mute &lt;цель&gt; &lt;время&gt; — тех. обслуживание\n"
-        "📄 PDF — PDF-отчёт\n"
-        "💾 Бэкап — конфиг MC в Telegram\n"
-        "🆕 Обновления — проверка + обновление MC\n",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-    )
-
-
-@router.callback_query(F.data == "tool:search")
-async def cb_tool_search(cb: CallbackQuery):
-    await cb.message.answer("🔍 Отправьте команду:\n<code>/search запрос</code>", parse_mode="HTML")
-    await cb.answer()
-
-
-@router.callback_query(F.data == "tool:compare")
-async def cb_tool_compare(cb: CallbackQuery):
-    await cb.message.answer("⚖️ Отправьте команду:\n<code>/compare PC1 PC2</code>", parse_mode="HTML")
-    await cb.answer()
-
-
-@router.callback_query(F.data == "tool:run")
-async def cb_tool_run(cb: CallbackQuery, state: FSMContext):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    devs = await get_full_devices()
-    online = sorted([d for d in devs if d["online"]], key=lambda x: (x.get("group",""), x["name"]))
-    if not online:
-        await cb.message.answer("⚠️ Нет онлайн-устройств.")
-        return
-    rows = []
-    cur_group = None
-    for d in online:
-        grp = d.get("group", "")
-        if grp != cur_group:
-            cur_group = grp
-            rows.append([InlineKeyboardButton(text=f"── {grp} ──", callback_data="noop")])
-        rows.append([InlineKeyboardButton(
-            text=f"🟢 {d['name']}",
-            callback_data=f"rcmd_pick:{d['name'][:55]}",
-        )])
-    await cb.message.answer(
-        "🖥 <b>Выбери устройство для команды:</b>",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-    )
-
-
-@router.callback_query(F.data == "tool:install")
-async def cb_tool_install(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    groups = await _get_mesh_groups()
-    if not groups:
-        await cb.answer("Нет групп", show_alert=True)
-        return
-    buttons = []
-    for name in sorted(groups.keys()):
-        buttons.append([InlineKeyboardButton(text=f"📁 {name}", callback_data=f"inst:{name[:40]}")])
-    buttons.append([InlineKeyboardButton(text="📁 Все группы", callback_data="inst:__all__")])
-    await cb.message.answer(
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📥 <b>Установщик агента</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Выберите группу.\n"
-        "BAT для Windows 10/11 (включая 25H2).\n"
-        "Обходит SmartScreen, Defender и баг KB5074105.",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-    )
-    await cb.answer()
-
-
-@router.callback_query(F.data == "tool:pdf")
-async def cb_tool_pdf(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    wait_msg = await cb.message.answer("📄 Генерирую PDF-отчёт...")
-    devs = await get_full_devices()
-    if not devs:
-        await wait_msg.edit_text("📭 Нет устройств.")
-        await cb.answer()
-        return
-    pdf_data = build_inventory_pdf(devs)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
-    await cb.message.answer_document(
-        BufferedInputFile(pdf_data, filename=f"inventory_{ts}.pdf"),
-        caption=f"📄 <b>PDF-отчёт</b> — {len(devs)} устройств",
-        parse_mode="HTML",
-    )
-    await wait_msg.delete()
-    await cb.answer()
-
-
-@router.callback_query(F.data == "tool:restart")
-async def cb_tool_restart(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.message.answer("🔄 Перезапускаю MeshCentral...")
-    await mc_restart()
-    await asyncio.sleep(8)
-    alive = await mc_is_alive()
-    await cb.message.answer(f"{'🟢 OK' if alive else '🔴 Не отвечает (подождите 30с)'}", reply_markup=MAIN_KB)
-    await cb.answer()
-
-
-# ─── Update check ────────────────────────────────────────────────────
-
-@router.callback_query(F.data == "tool:update_check")
-async def cb_tool_update_check(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("\U0001f512", show_alert=True)
-        return
-    await cb.answer()
-    wait_msg = await cb.message.answer("\u23f3 Проверяю обновления MeshCentral...")
-    info = await check_mc_update()
-    if info["current"] == "unknown":
-        text = "\u274c Не удалось определить текущую версию MeshCentral."
-    elif info["latest"] == "unknown":
-        text = "\u274c Не удалось проверить npm-реестр."
-    elif info["has_update"]:
-        text = (
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
-            "\U0001f195 <b>Доступно обновление!</b>\n"
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
-            f"\U0001f4e6 Текущая: <b>{info['current']}</b>\n"
-            f"\U0001f680 Новая: <b>{info['latest']}</b>"
-        )
-        await wait_msg.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Обновить сейчас", callback_data="mc:update")],
-        ]))
-        return
-    else:
-        text = (
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
-            "\u2705 <b>MeshCentral актуален</b>\n"
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
-            f"\U0001f4e6 Версия: <b>{info['current']}</b>\n"
-            "Обновлений нет."
-        )
-    await wait_msg.edit_text(text, parse_mode="HTML")
-
-
-# ─── Alerts config ───────────────────────────────────────────────────
-
-@router.callback_query(F.data == "tool:alerts")
-async def cb_tool_alerts(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    cfg = load_alerts_cfg()
-    t = (
-        "━━━━━━━━━━━━━━━━━━━━━━\n🔔 <b>Алерты</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"💿 Диск заполнен ≥ <b>{cfg['disk_pct']}%</b>\n"
-        f"🛡 AV выключен: <b>{'Да' if cfg['av_off'] else 'Нет'}</b>\n"
-        f"⏰ Офлайн > <b>{cfg['offline_hours']}ч</b>\n"
-        f"🆕 Новое устройство: <b>{'Да' if cfg['new_device'] else 'Нет'}</b>\n"
-    )
-    buttons = [
-        [InlineKeyboardButton(text=f"💿 Порог: {cfg['disk_pct']}%", callback_data="alert:disk_cycle"),
-         InlineKeyboardButton(text="❓", callback_data="help:disk")],
-        [InlineKeyboardButton(text=f"🛡 AV: {'ON' if cfg['av_off'] else 'OFF'}", callback_data="alert:av_toggle"),
-         InlineKeyboardButton(text="❓", callback_data="help:av")],
-        [InlineKeyboardButton(text=f"⏰ Офлайн: {cfg['offline_hours']}ч", callback_data="alert:offline_cycle"),
-         InlineKeyboardButton(text="❓", callback_data="help:offline")],
-        [InlineKeyboardButton(text=f"🆕 Новое: {'ON' if cfg['new_device'] else 'OFF'}", callback_data="alert:new_toggle"),
-         InlineKeyboardButton(text="❓", callback_data="help:new_device")],
-    ]
-    await cb.message.answer(t, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
-    await cb.answer()
-
-
-@router.callback_query(F.data == "alert:disk_cycle")
-async def cb_alert_disk(cb: CallbackQuery):
-    cfg = load_alerts_cfg()
-    cycle = [80, 85, 90, 95]
-    idx = cycle.index(cfg["disk_pct"]) if cfg["disk_pct"] in cycle else 0
-    cfg["disk_pct"] = cycle[(idx + 1) % len(cycle)]
-    save_alerts_cfg(cfg)
-    await cb.answer(f"Порог диска: {cfg['disk_pct']}%")
-    # refresh
-    await cb_tool_alerts(cb)
-
-
-@router.callback_query(F.data == "alert:av_toggle")
-async def cb_alert_av(cb: CallbackQuery):
-    cfg = load_alerts_cfg()
-    cfg["av_off"] = not cfg["av_off"]
-    save_alerts_cfg(cfg)
-    await cb.answer(f"AV алерт: {'ON' if cfg['av_off'] else 'OFF'}")
-    await cb_tool_alerts(cb)
-
-
-@router.callback_query(F.data == "alert:offline_cycle")
-async def cb_alert_offline(cb: CallbackQuery):
-    cfg = load_alerts_cfg()
-    cycle = [6, 12, 24, 48, 72]
-    idx = cycle.index(cfg["offline_hours"]) if cfg["offline_hours"] in cycle else 0
-    cfg["offline_hours"] = cycle[(idx + 1) % len(cycle)]
-    save_alerts_cfg(cfg)
-    await cb.answer(f"Офлайн порог: {cfg['offline_hours']}ч")
-    await cb_tool_alerts(cb)
-
-
-@router.callback_query(F.data == "alert:new_toggle")
-async def cb_alert_new(cb: CallbackQuery):
-    cfg = load_alerts_cfg()
-    cfg["new_device"] = not cfg["new_device"]
-    save_alerts_cfg(cfg)
-    await cb.answer(f"Новое устройство: {'ON' if cfg['new_device'] else 'OFF'}")
-    await cb_tool_alerts(cb)
-
-
-# ─── Changes ─────────────────────────────────────────────────────────
-
-@router.callback_query(F.data == "tool:changes")
-async def cb_tool_changes(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    devs = await get_full_devices()
-    changes = detect_changes(devs)
-    if not changes:
-        await cb.message.answer("📜 Изменений не обнаружено с последнего снимка.", reply_markup=MAIN_KB)
-    else:
-        t = "━━━━━━━━━━━━━━━━━━━━━━\n📜 <b>Изменения</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        t += "\n".join(changes[:30])
-        await cb.message.answer(t, parse_mode="HTML", reply_markup=MAIN_KB)
-    # update snapshot after showing
-    save_snapshot(devs)
-    save_snap_history(devs)
-    await cb.answer()
-
-
-# ─── Backups ─────────────────────────────────────────────────────────
-
-@router.callback_query(F.data == "tool:backup")
-async def cb_tool_backup(cb: CallbackQuery):
-    """Send latest MeshCentral auto-backup ZIP."""
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    backup_dir = Path("/opt/meshcentral/meshcentral-backups")
-    zips = sorted(backup_dir.glob("*.zip"), key=lambda p: p.stat().st_mtime, reverse=True)
-    if not zips:
-        await cb.message.answer("❌ Бэкапов MeshCentral не найдено.")
-        return
-    latest = zips[0]
-    size_mb = latest.stat().st_size / 1_048_576
-    wait_msg = await cb.message.answer(f"📦 Отправляю бэкап MC ({size_mb:.1f} MB)...")
-    try:
-        with open(latest, "rb") as f:
-            data = f.read()
-        await cb.message.answer_document(
-            BufferedInputFile(data, filename=latest.name),
-            caption=(
-                f"💾 <b>Бэкап MeshCentral</b>\n"
-                f"📁 {latest.name}\n"
-                f"📦 {size_mb:.1f} MB\n"
-                f"🔒 Пароль: в config.json → zipPassword\n\n"
-                f"<i>Всего бэкапов: {len(zips)}</i>"
-            ),
-            parse_mode="HTML",
-        )
-    except Exception as e:
-        await cb.message.answer(f"❌ Ошибка: {e}")
-    await wait_msg.delete()
-
-
-@router.callback_query(F.data == "tool:fullbackup")
-async def cb_tool_fullbackup(cb: CallbackQuery):
-    """Create and send full server backup: bots + WG configs + services + nginx."""
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    wait_msg = await cb.message.answer("🗄 Создаю полный бэкап сервера...")
-
-    ts = datetime.now().strftime("%Y%m%d_%H%M")
-    zip_buf = io.BytesIO()
-
-    # Files to include: (archive_path, real_path)
-    entries: list[tuple[str, str]] = []
-
-    # MeshCentral data (DB + config, skip signedagents and temp files)
-    mc_data_dir = Path(MC_DATA)
-    for p in mc_data_dir.iterdir():
-        if p.is_file() and not p.name.endswith(".db~") and p.name != "mesherrors.txt":
-            entries.append((f"meshcentral-data/{p.name}", str(p)))
-
-    # meshcentral-bot
-    mc_bot_dir = Path("/opt/meshcentral-bot")
-    for fname in ["bot.py", ".env", "admin.json", "alerts_cfg.json",
-                  "scripts.json", "snapshots.json", "mute.json",
-                  "vis-network.min.js"]:
-        p = mc_bot_dir / fname
-        if p.exists():
-            entries.append((f"meshcentral-bot/{fname}", str(p)))
-
-    # awg-bot
-    awg_bot_dir = Path("/opt/awg-bot")
-    for fname in ["bot.py", ".env", "admin.json", "clients.json",
-                  "history.json", "traffic_daily.json"]:
-        p = awg_bot_dir / fname
-        if p.exists():
-            entries.append((f"awg-bot/{fname}", str(p)))
-    # awg-bot backups (WG configs only)
-    for p in (awg_bot_dir / "backups").glob("*.conf"):
-        entries.append((f"awg-bot/backups/{p.name}", str(p)))
-
-    # WireGuard / AmneziaWG configs
-    for conf in ["/etc/amnezia/amneziawg/awg0.conf",
-                 "/etc/amnezia/amneziawg/wg0.conf"]:
-        if Path(conf).exists():
-            entries.append((f"wireguard/{Path(conf).name}", conf))
-
-    # systemd services
-    for svc in ["meshcentral.service", "meshcentral-bot.service", "awg-bot.service",
-                "awg-quick@awg0.service", "wg-quick@wg0.service"]:
-        p = Path(f"/etc/systemd/system/{svc}")
-        if p.exists():
-            entries.append((f"services/{svc}", str(p)))
-
-    # nginx
-    p = Path("/etc/nginx/sites-enabled/meshcentral")
-    if p.exists():
-        entries.append(("nginx/meshcentral.conf", str(p)))
-    entries.append(("nginx/nginx.conf", "/etc/nginx/nginx.conf"))
-
-    # RESTORE.md
-    restore_md = f"""# Инструкция восстановления сервера
-Создан: {datetime.now().strftime('%d.%m.%Y %H:%M')}
-
-## 1. Зависимости
-```bash
-apt update && apt install -y nodejs npm nginx python3 python3-venv python3-pip certbot python3-certbot-nginx
-npm install -g meshcentral
-# AmneziaWG: https://github.com/amnezia-vpn/amneziawg-linux-kernel-module
-```
-
-## 2. MeshCentral
-```bash
-mkdir -p /opt/meshcentral
-cp -r meshcentral-data/ /opt/meshcentral/meshcentral-data/
-cp services/meshcentral.service /etc/systemd/system/
-systemctl daemon-reload && systemctl enable --now meshcentral
-```
-
-## 3. Боты
-```bash
-# meshcentral-bot
-mkdir -p /opt/meshcentral-bot
-cp meshcentral-bot/* /opt/meshcentral-bot/
-cd /opt/meshcentral-bot && python3 -m venv venv
-venv/bin/pip install aiogram aiohttp python-dotenv fpdf2 matplotlib psutil pyzipper openpyxl
-cp services/meshcentral-bot.service /etc/systemd/system/
-systemctl daemon-reload && systemctl enable --now meshcentral-bot
-
-# awg-bot
-mkdir -p /opt/awg-bot
-cp awg-bot/* /opt/awg-bot/
-cd /opt/awg-bot && python3 -m venv venv
-venv/bin/pip install aiogram python-dotenv
-cp services/awg-bot.service /etc/systemd/system/
-systemctl daemon-reload && systemctl enable --now awg-bot
-```
-
-## 4. WireGuard / AmneziaWG
-```bash
-mkdir -p /etc/amnezia/amneziawg
-cp wireguard/awg0.conf /etc/amnezia/amneziawg/
-cp wireguard/wg0.conf /etc/amnezia/amneziawg/
-systemctl enable --now awg-quick@awg0 wg-quick@wg0
-```
-
-## 5. Nginx
-```bash
-cp nginx/meshcentral.conf /etc/nginx/sites-enabled/meshcentral
-cp nginx/nginx.conf /etc/nginx/nginx.conf
-certbot --nginx -d hub.office.mooo.com
-nginx -t && systemctl reload nginx
-```
-
-## 6. Firewall
-```bash
-ufw allow 22/tcp && ufw allow 80/tcp && ufw allow 443/tcp
-ufw allow 443/udp && ufw allow 9443/udp && ufw allow 51820/udp
-ufw route allow in on wg0 out on ens3
-ufw route allow in on ens3 out on wg0
-ufw route allow in on awg0 out on ens3
-ufw route allow in on ens3 out on awg0
-ufw enable
-```
-
-## Важно
-- Обновите IP в WG конфигах если он изменился
-- Обновите DNS запись hub.office.mooo.com на новый IP
-- Пароль бэкапов MeshCentral: см config.json → zipPassword
-"""
-    entries.append(("RESTORE.md", None))  # special — write from string
-
-    try:
-        with pyzipper.AESZipFile(zip_buf, "w",
-                                  compression=pyzipper.ZIP_DEFLATED,
-                                  encryption=pyzipper.WZ_AES) as zf:
-            zf.setpassword(b"Kh@mzat88712Pass")
-            for arc_path, real_path in entries:
-                if real_path is None:
-                    zf.writestr(arc_path, restore_md)
-                elif Path(real_path).exists():
-                    zf.write(real_path, arc_path)
-        zip_buf.seek(0)
-        size_mb = zip_buf.getbuffer().nbytes / 1_048_576
-        await cb.message.answer_document(
-            BufferedInputFile(zip_buf.read(), filename=f"server_backup_{ts}.zip"),
-            caption=(
-                f"🗄 <b>Полный бэкап сервера</b>\n"
-                f"📅 {ts}\n"
-                f"📦 {size_mb:.1f} MB\n"
-                f"🔒 Пароль: <code>Kh@mzat88712Pass</code>\n\n"
-                f"<b>Содержимое:</b>\n"
-                f"• meshcentral-data/ — БД и конфиги MC\n"
-                f"• meshcentral-bot/ — бот + данные\n"
-                f"• awg-bot/ — AWG бот + клиенты\n"
-                f"• wireguard/ — конфиги WG/AWG\n"
-                f"• services/ — systemd сервисы\n"
-                f"• nginx/ — конфиг nginx\n"
-                f"• RESTORE.md — инструкция восстановления"
-            ),
-            parse_mode="HTML",
-        )
-    except Exception as e:
-        await cb.message.answer(f"❌ Ошибка создания бэкапа: {e}")
-    await wait_msg.delete()
-
-
-# ─── Tool callbacks: Security, Top, RunGroup, Excel, NetMap, Scripts, Mutes ──
-
-@router.callback_query(F.data == "tool:security")
-async def cb_tool_security(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    wait_msg = await cb.message.answer("🛡 Анализирую безопасность...")
-    devs = await get_full_devices()
-    if not devs:
-        await wait_msg.edit_text("📭 Нет устройств.")
-        return
-
-    lines = ["━━━━━━━━━━━━━━━━━━━━━━\n🛡 <b>Сводка безопасности</b>\n━━━━━━━━━━━━━━━━━━━━━━\n"]
-
-    # AV disabled
-    av_off = [d for d in devs if d.get("av_disabled")]
-    if av_off:
-        lines.append(f"<b>🛡 Антивирус выключен ({len(av_off)}):</b>")
-        for d in av_off[:10]:
-            lines.append(f"  • {d['name']}: {d['antivirus']}")
-        lines.append("")
-
-    # Firewall issues
-    fw_issues = [d for d in devs if d.get("firewall", "").lower() not in ("", "on", "enabled", "включён")]
-    fw_off = [d for d in fw_issues if "off" in d.get("firewall", "").lower() or "выкл" in d.get("firewall", "").lower()]
-    if fw_off:
-        lines.append(f"<b>🔥 Firewall выключен ({len(fw_off)}):</b>")
-        for d in fw_off[:10]:
-            lines.append(f"  • {d['name']}: {d['firewall']}")
-        lines.append("")
-
-    # No TPM 2.0
-    no_tpm = [d for d in devs if d.get("tpm", "") and "2.0" not in d.get("tpm", "")]
-    if no_tpm:
-        lines.append(f"<b>🔐 Нет TPM 2.0 ({len(no_tpm)}):</b>")
-        for d in no_tpm[:10]:
-            lines.append(f"  • {d['name']}: {d['tpm'] or 'не обнаружен'}")
-        lines.append("")
-
-    # Outdated agents
-    agent_versions = {}
-    for d in devs:
-        v = d.get("agent_ver", "")
-        if v:
-            agent_versions.setdefault(v, []).append(d["name"])
-    if len(agent_versions) > 1:
-        latest_ver = max(agent_versions.keys())
-        outdated = {v: names for v, names in agent_versions.items() if v != latest_ver}
-        if outdated:
-            total_outdated = sum(len(n) for n in outdated.values())
-            lines.append(f"<b>🤖 Устаревшие агенты ({total_outdated}):</b>")
-            for v, names in sorted(outdated.items()):
-                lines.append(f"  • v{v}: {', '.join(names[:5])}")
-            lines.append("")
-
-    # Disk alerts
-    disk_alerts = [d for d in devs if d.get("vol_alerts")]
-    if disk_alerts:
-        lines.append(f"<b>💿 Диск заполнен ({len(disk_alerts)}):</b>")
-        for d in disk_alerts[:10]:
-            lines.append(f"  • {d['name']}: {', '.join(d['vol_alerts'])}")
-        lines.append("")
-
-    if len(lines) == 1:
-        lines.append("✅ Проблем безопасности не обнаружено!")
-
-    await wait_msg.edit_text("\n".join(lines), parse_mode="HTML")
-
-
-@router.callback_query(F.data == "tool:top")
-async def cb_tool_top(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    # Reuse cmd_top logic by creating a fake message-like call
-    devs = await get_full_devices()
-    if not devs:
-        await cb.message.answer("📭 Нет устройств.", reply_markup=MAIN_KB)
-        return
-
-    lines = ["━━━━━━━━━━━━━━━━━━━━━━\n📊 <b>Top Resources</b>\n━━━━━━━━━━━━━━━━━━━━━━\n"]
-
-    disk_devs = []
-    for d in devs:
-        for va in d.get("vol_alerts", []):
-            disk_devs.append((d["name"], va))
-    if disk_devs:
-        lines.append("<b>💿 Диски заполнены:</b>")
-        for name, alert in disk_devs[:5]:
-            lines.append(f"  • {name}: {alert}")
-        lines.append("")
-
-    offline_devs = sorted(
-        [d for d in devs if not d["online"] and d.get("offline_hours", 0) > 0],
-        key=lambda x: x["offline_hours"], reverse=True,
-    )
-    if offline_devs:
-        lines.append("<b>⏰ Долго офлайн:</b>")
-        for d in offline_devs[:5]:
-            lines.append(f"  • {d['name']}: {fmt_offline(d['offline_hours'])}")
-        lines.append("")
-
-    def _parse_ram(ram_str: str) -> float:
-        ram_str = ram_str.strip()
-        if "TB" in ram_str:
-            return float(ram_str.replace("TB", "").strip()) * 1024
-        if "GB" in ram_str:
-            return float(ram_str.replace("GB", "").strip())
-        if "MB" in ram_str:
-            return float(ram_str.replace("MB", "").strip()) / 1024
-        return 0
-
-    ram_devs = sorted(
-        [d for d in devs if _parse_ram(d["ram_total"]) > 0],
-        key=lambda x: _parse_ram(x["ram_total"]),
-    )
-    if ram_devs:
-        lines.append("<b>💾 Наименьшая RAM:</b>")
-        for d in ram_devs[:5]:
-            lines.append(f"  • {d['name']}: {d['ram_total']}")
-        lines.append("")
-
-    agent_versions = {}
-    for d in devs:
-        v = d.get("agent_ver", "")
-        if v:
-            agent_versions.setdefault(v, []).append(d["name"])
-    if len(agent_versions) > 1:
-        latest_ver = max(agent_versions.keys())
-        outdated = [(v, names) for v, names in agent_versions.items() if v != latest_ver]
-        if outdated:
-            lines.append("<b>🤖 Устаревшие агенты:</b>")
-            for v, names in sorted(outdated):
-                lines.append(f"  • v{v}: {', '.join(names[:5])}")
-            lines.append("")
-
-    await cb.message.answer("\n".join(lines), parse_mode="HTML", reply_markup=MAIN_KB)
-
-
-@router.callback_query(F.data == "tool:run_group")
-async def cb_tool_run_group(cb: CallbackQuery, state: FSMContext):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    devs = await get_full_devices()
-    groups = sorted(set(d.get("group", "") for d in devs if d.get("group")))
-    if not groups:
-        await cb.message.answer("⚠️ Нет групп.")
-        return
-    rows = [[InlineKeyboardButton(text=f"📁 {g}", callback_data=f"rgrp_pick:{g[:55]}")] for g in groups]
-    await cb.message.answer(
-        "📁 <b>Выбери группу для команды:</b>",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-    )
-
-
-@router.callback_query(F.data.startswith("rcmd_pick:"))
-async def cb_rcmd_pick(cb: CallbackQuery, state: FSMContext):
-    """User selected a device — show preset commands."""
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    dev_name = cb.data[len("rcmd_pick:"):]
-    await state.update_data(rcmd_device=dev_name)
-    preset_text, preset_btns = _rcmd_preset_keyboard("rcmd_ps", "rcmd_cancel")
-    await cb.message.answer(
-        f"🖥 <b>{dev_name}</b> — выбери команду:{preset_text}",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=preset_btns),
-    )
-
-
-@router.callback_query(F.data.startswith("rgrp_pick:"))
-async def cb_rgrp_pick(cb: CallbackQuery, state: FSMContext):
-    """User selected a group — show preset commands."""
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    group_name = cb.data[len("rgrp_pick:"):]
-    await state.update_data(rcmd_group=group_name)
-    preset_text, preset_btns = _rcmd_preset_keyboard("rgrp_ps", "rcmd_cancel")
-    await cb.message.answer(
-        f"📁 <b>Группа: {group_name}</b> — выбери команду:{preset_text}",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=preset_btns),
-    )
-
-
-@router.callback_query(F.data.startswith("rcmd_ps:"))
-async def cb_rcmd_ps(cb: CallbackQuery, state: FSMContext):
-    """Run a preset script on the previously selected device."""
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    script_name = cb.data[len("rcmd_ps:"):]
-    data = await state.get_data()
-    dev_name = data.get("rcmd_device", "")
-    if not dev_name:
-        await cb.answer("Устройство не выбрано. Начни заново.", show_alert=True)
-        return
-    scripts = load_scripts()
-    if script_name not in scripts:
-        await cb.answer("Скрипт не найден", show_alert=True)
-        return
-    await cb.answer()
-    devs = await get_full_devices()
-    d = next((x for x in devs if x["name"] == dev_name), None)
-    if not d or not d["online"]:
-        await cb.message.answer(f"⚪ <b>{dev_name}</b> офлайн.", parse_mode="HTML")
-        return
-    s = scripts[script_name]
-    wait_msg = await cb.message.answer(
-        f"⏳ <b>{script_name}</b> на <b>{d['name']}</b>...", parse_mode="HTML",
-    )
-    result = await mc_run_command(d["id"], s["cmd"], powershell=s.get("ps", False))
-    lines = result.split("\n")
-    clean = []
-    skip_prefixes = ("Microsoft Windows", "(c) ", "C:\\Program Files\\Mesh Agent>")
-    for line in lines:
-        stripped = line.strip()
-        if stripped and not any(stripped.startswith(p) for p in skip_prefixes):
-            if stripped != s["cmd"] and stripped != "exit":
-                clean.append(line)
-    output = "\n".join(clean).strip() or "(пустой ответ)"
-    if len(output) > 3800:
-        output = output[:3800] + "\n..."
-    lang = "PS" if s.get("ps") else "CMD"
-    await wait_msg.edit_text(
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🖥 <b>{d['name']}</b>  📝 <b>{script_name}</b> [{lang}]\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"<pre>{output}</pre>",
-        parse_mode="HTML",
-    )
-
-
-@router.callback_query(F.data.startswith("rgrp_ps:"))
-async def cb_rgrp_ps(cb: CallbackQuery, state: FSMContext):
-    """Run a preset script on all online devices in the previously selected group."""
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    script_name = cb.data[len("rgrp_ps:"):]
-    data = await state.get_data()
-    group_name = data.get("rcmd_group", "")
-    if not group_name:
-        await cb.answer("Группа не выбрана. Начни заново.", show_alert=True)
-        return
-    scripts = load_scripts()
-    if script_name not in scripts:
-        await cb.answer("Скрипт не найден", show_alert=True)
-        return
-    await cb.answer()
-    devs = await get_full_devices()
-    group_devs = [d for d in devs if d.get("group", "").lower() == group_name.lower() and d["online"]]
-    if not group_devs:
-        await cb.message.answer(f"❌ Нет онлайн устройств в группе «{group_name}».")
-        return
-    s = scripts[script_name]
-    wait_msg = await cb.message.answer(
-        f"⏳ <b>{script_name}</b> на <b>{len(group_devs)}</b> уст. в <b>{group_name}</b>...",
-        parse_mode="HTML",
-    )
-    sem = asyncio.Semaphore(5)
-    results = {}
-    async def run_one(d):
-        async with sem:
-            results[d["name"]] = await mc_run_command(d["id"], s["cmd"], powershell=s.get("ps", False))
-    await asyncio.gather(*[run_one(d) for d in group_devs])
-
-    skip_prefixes = ("Microsoft Windows", "(c) ", "C:\\Program Files\\Mesh Agent>")
-    lang = "PS" if s.get("ps") else "CMD"
-    lines = [
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📁 <b>{group_name}</b>  📝 <b>{script_name}</b> [{lang}]  ({len(results)} уст.)\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-    ]
-    success = fail = 0
-    for name, output in sorted(results.items()):
-        first_line = ""
-        for line in output.split("\n"):
-            stripped = line.strip()
-            if stripped and not any(stripped.startswith(p) for p in skip_prefixes):
-                if stripped != s["cmd"] and stripped != "exit":
-                    first_line = stripped[:60]
-                    break
-        if "Error" in output:
-            fail += 1
-            lines.append(f"❌ <b>{name}</b>: {first_line}")
-        else:
-            success += 1
-            lines.append(f"✅ <b>{name}</b>: {first_line}")
-    lines.append(f"\n✅ {success}  ❌ {fail}")
-    text = "\n".join(lines)
-    if len(text) > 4000:
-        text = text[:4000] + "\n..."
-    await wait_msg.edit_text(text, parse_mode="HTML")
-
-
-@router.callback_query(F.data == "rcmd_custom")
-async def cb_rcmd_custom(cb: CallbackQuery, state: FSMContext):
-    """Switch to manual command input for device."""
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    data = await state.get_data()
-    dev_name = data.get("rcmd_device", "")
-    await state.set_state(RemoteCmdState.entering_cmd)
-    await cb.answer()
-    await cb.message.answer(
-        f"🖥 <b>{dev_name}</b>\n\n"
-        "Введи команду (добавь <code>-ps</code> в начале для PowerShell):\n"
-        "<i>Пример: ipconfig /all\n"
-        "Пример PS: -ps Get-Process | Sort CPU -Desc | Select -First 5</i>",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="rcmd_cancel")],
-        ]),
-    )
-
-
-@router.callback_query(F.data == "rgrp_custom")
-async def cb_rgrp_custom(cb: CallbackQuery, state: FSMContext):
-    """Switch to manual command input for group."""
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    data = await state.get_data()
-    group_name = data.get("rcmd_group", "")
-    await state.set_state(RemoteCmdState.entering_gcmd)
-    await cb.answer()
-    await cb.message.answer(
-        f"📁 <b>Группа: {group_name}</b>\n\n"
-        "Введи команду для всех онлайн-устройств группы\n"
-        "(<code>-ps</code> в начале — PowerShell):\n"
-        "<i>Пример: hostname\nПример PS: -ps (Get-Date).ToString()</i>",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="rcmd_cancel")],
-        ]),
-    )
-
-
-@router.callback_query(F.data == "rcmd_cancel")
-async def cb_rcmd_cancel(cb: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await cb.answer("Отменено")
-    await cb.message.delete()
-
-
-@router.message(RemoteCmdState.entering_cmd)
-async def fsm_rcmd_entering_cmd(msg: Message, state: FSMContext):
-    """User typed a command for a specific device."""
-    if not is_admin(msg.from_user.id):
-        return
-    data = await state.get_data()
-    dev_name = data.get("rcmd_device", "")
-    await state.clear()
-
-    command = msg.text.strip()
-    powershell = False
-    if command.lower().startswith("-ps "):
-        powershell = True
-        command = command[4:].strip()
-    if not command:
-        await msg.answer("❌ Пустая команда.", reply_markup=MAIN_KB)
-        return
-
-    devs = await get_full_devices()
-    d = next((x for x in devs if x["name"] == dev_name), None)
-    if not d:
-        await msg.answer(f"❌ Устройство «{dev_name}» не найдено.", reply_markup=MAIN_KB)
-        return
-    if not d["online"]:
-        await msg.answer(f"⚪ <b>{d['name']}</b> офлайн.", parse_mode="HTML", reply_markup=MAIN_KB)
-        return
-
-    wait_msg = await msg.answer(
-        f"⏳ Выполняю на <b>{d['name']}</b>:\n<code>{command}</code>",
-        parse_mode="HTML",
-    )
-    result = await mc_run_command(d["id"], command, powershell=powershell)
-
-    lines = result.split("\n")
-    clean = []
-    skip_prefixes = ("Microsoft Windows", "(c) ", "C:\\Program Files\\Mesh Agent>")
-    for line in lines:
-        stripped = line.strip()
-        if stripped and not any(stripped.startswith(p) for p in skip_prefixes):
-            if stripped != command and stripped != "exit":
-                clean.append(line)
-    output = "\n".join(clean).strip() or "(пустой ответ)"
-    if len(output) > 3800:
-        output = output[:3800] + "\n..."
-
-    lang = "PS" if powershell else "CMD"
-    await wait_msg.edit_text(
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🖥 <b>{d['name']}</b> [{lang}]\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"<code>$ {command}</code>\n\n"
-        f"<code>{output}</code>",
-        parse_mode="HTML",
-    )
-
-
-@router.message(RemoteCmdState.entering_gcmd)
-async def fsm_rcmd_entering_gcmd(msg: Message, state: FSMContext):
-    """User typed a command for an entire group."""
-    if not is_admin(msg.from_user.id):
-        return
-    data = await state.get_data()
-    group_name = data.get("rcmd_group", "")
-    await state.clear()
-
-    command = msg.text.strip()
-    powershell = False
-    if command.lower().startswith("-ps "):
-        powershell = True
-        command = command[4:].strip()
-    if not command:
-        await msg.answer("❌ Пустая команда.", reply_markup=MAIN_KB)
-        return
-
-    devs = await get_full_devices()
-    group_devs = [d for d in devs if d.get("group", "").lower() == group_name.lower() and d["online"]]
-    if not group_devs:
-        await msg.answer(f"❌ Нет онлайн устройств в группе «{group_name}».", reply_markup=MAIN_KB)
-        return
-
-    wait_msg = await msg.answer(
-        f"⏳ Выполняю на <b>{len(group_devs)}</b> устройствах в <b>{group_name}</b>...",
-        parse_mode="HTML",
-    )
-
-    sem = asyncio.Semaphore(5)
-    results = {}
-
-    async def run_one(d):
-        async with sem:
-            result = await mc_run_command(d["id"], command, powershell=powershell)
-            results[d["name"]] = result
-
-    await asyncio.gather(*[run_one(d) for d in group_devs])
-
-    lang = "PS" if powershell else "CMD"
-    lines = [
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📁 <b>Группа: {group_name}</b> ({len(results)} уст.) [{lang}]\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"<code>$ {command}</code>\n"
-    ]
-
-    skip_prefixes = ("Microsoft Windows", "(c) ", "C:\\Program Files\\Mesh Agent>")
-    success = 0
-    fail = 0
-    for name, output in sorted(results.items()):
-        first_line = ""
-        for line in output.split("\n"):
-            stripped = line.strip()
-            if stripped and not any(stripped.startswith(p) for p in skip_prefixes):
-                if stripped != command and stripped != "exit":
-                    first_line = stripped[:60]
-                    break
-        if "Error" in output:
-            fail += 1
-            lines.append(f"❌ <b>{name}</b>: {first_line}")
-        else:
-            success += 1
-            lines.append(f"✅ <b>{name}</b>: {first_line}")
-
-    lines.append(f"\n✅ {success}  ❌ {fail}")
-    text = "\n".join(lines)
-    if len(text) > 4000:
-        text = text[:4000] + "\n..."
-    await wait_msg.edit_text(text, parse_mode="HTML")
-
-
-@router.callback_query(F.data == "tool:xlsx")
-async def cb_tool_xlsx(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    if not HAS_OPENPYXL:
-        await cb.answer("openpyxl не установлен", show_alert=True)
-        return
-    await cb.answer()
-    wait_msg = await cb.message.answer("📊 Генерирую Excel-отчёт...")
-    devs = await get_full_devices()
-    if not devs:
-        await wait_msg.edit_text("📭 Нет устройств.")
-        return
-    xlsx_data = build_inventory_xlsx(devs)
-    if not xlsx_data:
-        await wait_msg.edit_text("❌ Ошибка генерации XLSX.")
-        return
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
-    await cb.message.answer_document(
-        BufferedInputFile(xlsx_data, filename=f"inventory_{ts}.xlsx"),
-        caption=f"📊 <b>Excel-отчёт</b> — {len(devs)} устройств",
-        parse_mode="HTML",
-    )
-    await wait_msg.delete()
-
-
-@router.callback_query(F.data == "tool:netmap")
-async def cb_tool_netmap(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    wait_msg = await cb.message.answer("🗺 Строю интерактивную карту сети...")
-    devs = await get_full_devices()
-    if not devs:
-        await wait_msg.edit_text("📭 Нет устройств.")
-        return
-    # Send interactive HTML map
-    html = build_network_map_html(devs)
-    if html:
-        await cb.message.answer_document(
-            BufferedInputFile(html.encode("utf-8"), filename="network_map.html"),
-            caption="🗺 <b>Интерактивная карта сети</b>\n\n"
-                    "Откройте файл в браузере:\n"
-                    "• Scroll — масштаб\n"
-                    "• Перетаскивание — перемещение\n"
-                    "• Клик на устройство — подробности",
-            parse_mode="HTML",
-        )
-    # Also send PNG as preview
-    png = build_network_map(devs)
-    if png:
-        await cb.message.answer_photo(
-            BufferedInputFile(png, filename="network_map.png"),
-            caption="🗺 <b>Превью карты сети</b> (PNG)",
-            parse_mode="HTML",
-        )
-    await wait_msg.delete()
-
-
-SCRIPT_CATEGORIES = {
-    "system":      "🖥 Система",
-    "network":     "🌐 Сеть",
-    "maintenance": "🔧 Обслуживание",
-    "printers":    "🖨 Принтеры",
-    "security":    "🛡 Безопасность",
-    "custom":      "⚙️ Пользовательские",
-}
-
-
-def _scripts_message(scripts: dict) -> tuple[str, list]:
-    """Build text + buttons for scripts list, grouped by category."""
-    cat_scripts: dict[str, list] = {}
-    for name, s in sorted(scripts.items()):
-        cat = s.get("cat", "custom")
-        cat_scripts.setdefault(cat, []).append((name, s))
-    lines = ["━━━━━━━━━━━━━━━━━━━━━━\n📝 <b>Скрипты</b>\n━━━━━━━━━━━━━━━━━━━━━━"]
-    buttons = []
-    for cat_key in ["system", "network", "maintenance", "printers", "security", "custom"]:
-        entries = cat_scripts.get(cat_key)
-        if not entries:
-            continue
-        cat_label = SCRIPT_CATEGORIES.get(cat_key, cat_key)
-        lines.append(f"\n{cat_label}")
-        for name, s in entries:
-            lang = "⚡PS" if s.get("ps") else "🖥CMD"
-            desc = s.get("desc", "")
-            lines.append(f"  <b>{name}</b> [{lang}]  <i>{desc}</i>")
-            buttons.append([
-                InlineKeyboardButton(text=f"▶️ {name}", callback_data=f"srun:{name[:55]}"),
-                InlineKeyboardButton(text="🗑",          callback_data=f"sdel:{name[:55]}"),
-            ])
-    return "\n".join(lines), buttons
-
-
-def _rcmd_preset_keyboard(prefix: str, cancel_cb: str) -> tuple[str, list]:
-    """Build text + buttons for preset command picker (rcmd_ps / rgrp_ps).
-
-    prefix: 'rcmd_ps' or 'rgrp_ps'
-    cancel_cb: callback_data for cancel button
-    """
-    scripts = load_scripts()
-    cat_scripts: dict[str, list] = {}
-    for name, s in sorted(scripts.items()):
-        cat = s.get("cat", "custom")
-        cat_scripts.setdefault(cat, []).append((name, s))
-
-    lines = []
-    buttons = []
-    for cat_key in ["system", "network", "maintenance", "printers", "security", "custom"]:
-        entries = cat_scripts.get(cat_key)
-        if not entries:
-            continue
-        cat_label = SCRIPT_CATEGORIES.get(cat_key, cat_key)
-        lines.append(f"\n{cat_label}")
-        # Two scripts per row for compact display
-        row = []
-        for name, s in entries:
-            desc = s.get("desc", "")
-            lang = "⚡" if s.get("ps") else "🖥"
-            row.append(InlineKeyboardButton(
-                text=f"{lang} {name}",
-                callback_data=f"{prefix}:{name[:50]}",
-            ))
-            if len(row) == 2:
-                buttons.append(row)
-                row = []
-            lines.append(f"  <b>{name}</b>  <i>{desc}</i>")
-        if row:
-            buttons.append(row)
-
-    buttons.append([
-        InlineKeyboardButton(text="✏️ Своя команда", callback_data=cancel_cb.replace("cancel", "custom")),
-        InlineKeyboardButton(text="❌ Отмена",        callback_data=cancel_cb),
-    ])
-    return "\n".join(lines), buttons
-
-
-@router.callback_query(F.data == "tool:scripts")
-async def cb_tool_scripts(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    scripts = load_scripts()
-    if not scripts:
-        await cb.message.answer("📝 Нет скриптов.", parse_mode="HTML")
-        return
-    text, buttons = _scripts_message(scripts)
-    await cb.message.answer(text, parse_mode="HTML",
-                             reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
-
-
-@router.callback_query(F.data == "tool:mutes")
-async def cb_tool_mutes(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    cleanup_expired_mutes()
-    mutes = load_mutes()
-    add_btn = [InlineKeyboardButton(text="➕ Добавить мьют", callback_data="mute:add")]
-    header = (
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🔇 <b>Мьюты алертов</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "<b>Что такое мьют?</b>\n"
-        "Бот следит за устройствами и присылает алерты когда ПК уходит в офлайн, "
-        "заканчивается место на диске или происходят другие события.\n\n"
-        "Мьют — это временное отключение алертов для конкретного устройства, "
-        "группы или всех устройств сразу.\n\n"
-        "<b>Когда нужен мьют?</b>\n"
-        "• Плановое обслуживание (апдейты, перезагрузка)\n"
-        "• ПК временно выключен (выходные, праздники)\n"
-        "• Тест оборудования\n\n"
-    )
-    if not mutes:
-        await cb.message.answer(
-            header + "Активных мьютов нет.",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[add_btn]),
-        )
-        return
-    lines = [header + "<b>Активные мьюты:</b>\n"]
-    buttons = []
-    for target, info in sorted(mutes.items()):
-        until = datetime.fromtimestamp(info["until"], tz=timezone.utc).strftime("%d.%m %H:%M UTC")
-        reason = info.get("reason", "")
-        disp = "🌐 Все устройства" if target == "__all__" else target
-        lines.append(f"• <b>{disp}</b> до {until}{' — ' + reason if reason else ''}")
-        buttons.append([InlineKeyboardButton(text=f"🔊 Включить алерты: {disp[:30]}", callback_data=f"unmute:{target[:40]}")])
-    buttons.append(add_btn)
-    await cb.message.answer(
-        "\n".join(lines),
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-    )
-
-
-@router.callback_query(F.data.startswith("unmute:"))
-async def cb_unmute(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    target = cb.data.split(":", 1)[1]
-    mutes = load_mutes()
-    if target in mutes:
-        del mutes[target]
-        save_mutes(mutes)
-        await cb.answer(f"{target} — алерты включены")
-        await cb.message.delete()
-    else:
-        await cb.answer("Не найден", show_alert=True)
-
-
-# ─── Printer discovery ───────────────────────────────────────────────
-
-# PowerShell command: get all installed printers with details
-_PRINTER_SCAN_CMD = (
-    "Get-Printer | Select-Object Name, DriverName, PortName, PrinterStatus, Shared, "
-    "@{N='Default';E={$_.Attributes -band 4 -gt 0}} | ConvertTo-Json -Compress"
-)
-
-
-def _load_printers() -> dict:
-    return _load_json(PRINTERS_FILE, {})
-
-
-def _save_printers(data: dict):
-    _save_json(PRINTERS_FILE, data)
-
-
-def _printer_status_str(status) -> str:
-    statuses = {0: "✅ Готов", 1: "⚠️ Пауза", 2: "❌ Ошибка", 3: "⏳ Удаление",
-                4: "🔌 Нет бумаги", 5: "⚠️ Занят", 6: "🖨 Печать", 7: "⏸ Офлайн"}
-    try:
-        return statuses.get(int(status), f"❓ {status}")
-    except Exception:
-        return str(status)
-
-
-def _supply_emoji(desc: str) -> str:
-    d = desc.lower()
-    if any(w in d for w in ("black", "noir", "schwarz", "negro", "nero", "чёрн", "черн", "bk", " k")):
-        return "🖤"
-    if "cyan" in d or " c" == d[-2:]:
-        return "🔵"
-    if any(w in d for w in ("magenta", "пурпур", " m")):
-        return "🔴"
-    if any(w in d for w in ("yellow", "jaune", "gelb", "жёлт", "желт", " y")):
-        return "🟡"
-    if "drum" in d or "барабан" in d or "imaging" in d:
-        return "🥁"
-    if "fuser" in d or "фьюзер" in d:
-        return "🔥"
-    if "waste" in d or "отход" in d:
-        return "🗑"
-    return "🖨"
-
-
-def _ink_bar(pct: int) -> str:
-    """Return visual progress bar for ink level."""
-    if pct < 0:
-        return "❓ N/A"
-    filled = round(pct / 10)
-    bar = "█" * filled + "░" * (10 - filled)
-    if pct >= 40:
-        lvl = "🟢"
-    elif pct >= INK_WARN_PCT:
-        lvl = "🟡"
-    else:
-        lvl = "🔴"
-    return f"{lvl} {bar} {pct}%"
-
-
-def _load_ink_alerts() -> dict:
-    return _load_json(INK_ALERTS_FILE, {})
-
-
-def _save_ink_alerts(data: dict):
-    _save_json(INK_ALERTS_FILE, data)
-
-
-def _get_printer_scan_cmd() -> str:
-    """Return PowerShell command: use printer_ink.ps1 if available, else basic fallback."""
-    if PRINTER_INK_PS1.exists():
-        return PRINTER_INK_PS1.read_text(encoding="utf-8")
-    return (
-        "Get-Printer | Select-Object Name, DriverName, PortName, PrinterStatus, Shared, "
-        "@{N='Default';E={$_.Attributes -band 4 -gt 0}} | ConvertTo-Json -Compress"
-    )
-
-
-def _format_printer_card(p: dict, detailed: bool = False) -> str:
-    """Format one printer entry with ink bars."""
-    default_mark = " ⭐" if p.get("default") else ""
-    shared_mark  = " 🔗" if p.get("shared") else ""
-    status       = _printer_status_str(p.get("status", 0))
-    ip_str       = f" | IP: <code>{p['printer_ip']}</code>" if p.get("printer_ip") else ""
-    lines        = [f"  🖨 <b>{p['name']}</b>{default_mark}{shared_mark}"]
-    if detailed:
-        lines.append(f"     {status}{ip_str}")
-        lines.append(f"     Драйвер: <i>{p.get('driver', '—')}</i>")
-    else:
-        lines.append(f"     {status}{ip_str}")
-    supplies = p.get("supplies", [])
-    if supplies:
-        for s in supplies:
-            pct  = s.get("pct", -1)
-            desc = s.get("desc", "")
-            icon = _supply_emoji(desc)
-            bar  = _ink_bar(pct)
-            lines.append(f"     {icon} <b>{desc}:</b>  {bar}")
-    else:
-        lines.append("     <i>Уровень чернил: нет данных</i>")
-    return "\n".join(lines)
-
-
-async def _send_ink_alerts(printers_db: dict):
-    """Send Telegram alert for low ink supplies (< INK_WARN_PCT). Deduplicates by 24h."""
-    aid = get_admin_id()
-    if not aid:
-        return
-    now_ts = datetime.now(timezone.utc).timestamp()
-    alerts  = _load_ink_alerts()
-    changed = False
-    msgs    = []
-    for dev_name, info in printers_db.items():
-        for p in info.get("printers", []):
-            if p.get("is_virtual"):
-                continue
-            for s in p.get("supplies", []):
-                pct = s.get("pct", -1)
-                if not (0 <= pct < INK_WARN_PCT):
-                    continue
-                key      = f"{dev_name}::{p['name']}::{s['desc']}"
-                last_sent = alerts.get(key, 0)
-                if now_ts - last_sent < 86400:   # 24 h cooldown
-                    continue
-                alerts[key] = now_ts
-                changed = True
-                bar = _ink_bar(pct)
-                msgs.append(
-                    f"🖥 <b>{dev_name}</b> — {p['name']}\n"
-                    f"   {_supply_emoji(s['desc'])} <b>{s['desc']}:</b> {bar}"
-                )
-    if changed:
-        _save_ink_alerts(alerts)
-    if msgs:
-        header = f"🔴 <b>Мало чернил!</b> (менее {INK_WARN_PCT}%)\n\n"
-        await bot.send_message(aid, header + "\n\n".join(msgs), parse_mode="HTML")
-
-
-@router.callback_query(F.data == "tool:printers")
-async def cb_tool_printers(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    # Show saved results + option to scan
-    printers_db = _load_printers()
-    devs = await get_full_devices()
-    groups = sorted(set(d.get("group", "") for d in devs if d.get("group")))
-
-    lines = ["━━━━━━━━━━━━━━━━━━━━━━\n🖨 <b>Принтеры</b>\n━━━━━━━━━━━━━━━━━━━━━━\n"]
-    if printers_db:
-        lines.append("<b>Последнее сканирование:</b>")
-        for dev_name, info in sorted(printers_db.items()):
-            scanned = info.get("scanned_at", "")[:16].replace("T", " ")
-            prlist = info.get("printers", [])
-            real    = [p for p in prlist if not p.get("is_virtual")]
-            virtual = [p for p in prlist if p.get("is_virtual")]
-            if not real:
-                vnames = ", ".join(p.get("name", "?")[:28] for p in virtual[:4])
-                more   = f" +{len(virtual)-4}" if len(virtual) > 4 else ""
-                lines.append(f"\n🖥 <b>{dev_name}</b>  <i>({scanned})</i>")
-                lines.append(f"  ⚪ только виртуальные: <i>{vnames}{more}</i>")
-            else:
-                lines.append(f"\n🖥 <b>{dev_name}</b>  <i>({scanned})</i>")
-                for p in real:
-                    lines.append(_format_printer_card(p, detailed=False))
-                if virtual:
-                    vnames = ", ".join(p.get("name", "?")[:22] for p in virtual[:3])
-                    more   = f" +{len(virtual)-3}" if len(virtual) > 3 else ""
-                    lines.append(f"     <i>⚪ скрыто: {vnames}{more}</i>")
-    else:
-        lines.append("Сканирований ещё не было.\n\nНажми <b>Сканировать офис</b> — "
-                     "бот запустит <code>Get-Printer</code> на всех онлайн-ПК группы.")
-
-    rows = []
-    for g in groups:
-        rows.append([InlineKeyboardButton(text=f"🔍 Сканировать: {g}", callback_data=f"prn:scan:{g[:45]}")])
-    if printers_db:
-        rows.append([InlineKeyboardButton(text="🗑 Очистить результаты", callback_data="prn:clear")])
-    await cb.message.answer(
-        "\n".join(lines),
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows) if rows else None,
-    )
-
-
-@router.callback_query(F.data.startswith("prn:scan:"))
-async def cb_prn_scan(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    group_name = cb.data[len("prn:scan:"):]
-
-    devs = await get_full_devices()
-    group_devs = [d for d in devs if d.get("group", "").lower() == group_name.lower() and d["online"]]
-    if not group_devs:
-        await cb.message.answer(f"❌ Нет онлайн устройств в группе «{group_name}».")
-        return
-
-    wait_msg = await cb.message.answer(
-        f"⏳ Сканирую принтеры на <b>{len(group_devs)}</b> ПК в <b>{group_name}</b>...\n"
-        f"<i>(Get-Printer на каждом устройстве)</i>",
-        parse_mode="HTML",
-    )
-
-    sem = asyncio.Semaphore(5)
-    results: dict[str, list] = {}
-
-    async def scan_one(d):
-        async with sem:
-            raw = await mc_run_command(d["id"], _get_printer_scan_cmd(), powershell=True)
-            printers = []
-            try:
-                data = json.loads(raw)
-                if isinstance(data, dict):
-                    # PS5 wraps arrays as {"value": [...], "Count": N} — unwrap it
-                    if "value" in data and isinstance(data.get("value"), list):
-                        data = data["value"]
-                    else:
-                        data = [data]
-                if not isinstance(data, list):
-                    data = []
-                for p in data:
-                    pname = (p.get("Name") or "").strip()
-                    # Skip empty names and garbled names (OEM CP437 artifacts U+0080–U+00FF)
-                    if not pname or any('\u0080' <= c <= '\u00FF' for c in pname):
-                        continue
-
-                    # Python-side virtual detection (fallback when PS1 couldn't detect)
-                    _VIRT_KW = ("anydesk", "pdf", "xps", "microsoft", "onenote",
-                                "fax", "cutepdf", "adobe", "bullzip", "nitro",
-                                "biztalk", "generic / text only", "send to onenote",
-                                "pdfcreator", "doro", "docuworks")
-                    drv_low = p.get("DriverName", "").lower()
-                    is_virtual = bool(p.get("IsVirtual", False)) or any(kw in drv_low for kw in _VIRT_KW)
-
-                    # Parse supplies from SNMP result
-                    raw_supplies = p.get("Supplies") or []
-                    supplies = []
-                    for s in raw_supplies:
-                        if not isinstance(s, dict):
-                            continue
-                        pct = s.get("pct", -1)
-                        if pct is None:
-                            pct = -1
-                        supplies.append({
-                            "desc": str(s.get("desc", "")),
-                            "cur":  int(s.get("cur", 0)),
-                            "max":  int(s.get("max", 0)),
-                            "pct":  int(pct),
-                        })
-                    printers.append({
-                        "name":       pname,
-                        "driver":     p.get("DriverName", ""),
-                        "port":       p.get("PortName", ""),
-                        "status":     p.get("PrinterStatus", 0),
-                        "shared":     bool(p.get("Shared")),
-                        "default":    bool(p.get("Default")),
-                        "is_virtual": is_virtual,
-                        "printer_ip": p.get("PrinterIP", ""),
-                        "supplies":   supplies,
-                    })
-            except Exception:
-                pass  # device returned error / no printers
-            results[d["name"]] = printers
-
-    await asyncio.gather(*[scan_one(d) for d in group_devs])
-
-    # Save to db
-    printers_db = _load_printers()
-    now = datetime.now(timezone.utc).isoformat()
-    for dev_name, prlist in results.items():
-        printers_db[dev_name] = {
-            "group": group_name,
-            "scanned_at": now,
-            "printers": prlist,
-        }
-    _save_printers(printers_db)
-
-    # Send low-ink alerts
-    asyncio.create_task(_send_ink_alerts(printers_db))
-
-    # Build report
-    real_total = sum(1 for prlist in results.values() for p in prlist if not p.get("is_virtual"))
-    lines = [
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🖨 <b>Принтеры — {group_name}</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Устройств проверено: {len(results)}  |  Принтеров найдено: <b>{real_total}</b>\n"
-    ]
-    for dev_name, prlist in sorted(results.items()):
-        real = [p for p in prlist if not p.get("is_virtual")]
-        virtual = [p for p in prlist if p.get("is_virtual")]
-        if not prlist:
-            lines.append(f"\n🖥 <b>{dev_name}</b>  — нет принтеров")
-        elif not real:
-            vnames = ", ".join(p.get("name", "?")[:28] for p in virtual[:4])
-            more   = f" +{len(virtual)-4}" if len(virtual) > 4 else ""
-            lines.append(f"\n🖥 <b>{dev_name}</b>  ⚪ только виртуальные:")
-            lines.append(f"     <i>{vnames}{more}</i>")
-        else:
-            lines.append(f"\n🖥 <b>{dev_name}</b>")
-            for p in real:
-                lines.append(_format_printer_card(p, detailed=True))
-            if virtual:
-                vnames = ", ".join(p.get("name", "?")[:22] for p in virtual[:3])
-                more   = f" +{len(virtual)-3}" if len(virtual) > 3 else ""
-                lines.append(f"     <i>⚪ скрыто: {vnames}{more}</i>")
-
-    text = "\n".join(lines)
-    if len(text) > 4000:
-        text = text[:4000] + "\n..."
-    await wait_msg.edit_text(text, parse_mode="HTML")
-
-
-@router.callback_query(F.data == "prn:clear")
-async def cb_prn_clear(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    _save_printers({})
-    await cb.answer("Результаты очищены")
-    await cb.message.delete()
-
-
-# ─── Mute Add FSM ────────────────────────────────────────────────────
-
-@router.callback_query(F.data == "mute:add")
-async def cb_mute_add(cb: CallbackQuery, state: FSMContext):
-    """Start adding a mute: show device/group picker."""
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    wait = await cb.message.answer("⏳ Загружаю список...")
-    devs = await get_full_devices()
-    await wait.delete()
-    await state.set_state(MuteSetup.picking_target)
-
-    groups = sorted(set(d.get("group", "") for d in devs if d.get("group")))
-    online = sorted([d for d in devs if d["online"]], key=lambda x: (x.get("group", ""), x["name"]))
-
-    rows = []
-    # All devices button
-    rows.append([InlineKeyboardButton(text="🌐 Все устройства", callback_data="mute:tgt:__all__")])
-    # Group buttons
-    for g in groups:
-        rows.append([InlineKeyboardButton(text=f"📁 {g}", callback_data=f"mute:tgt:{g[:50]}")])
-    # Separator + online devices
-    if online:
-        rows.append([InlineKeyboardButton(text="── Устройства ──", callback_data="noop")])
-        for d in online:
-            rows.append([InlineKeyboardButton(
-                text=f"🟢 {d['name']}",
-                callback_data=f"mute:tgt:{d['name'][:50]}",
-            )])
-    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="mute:cancel")])
-    await cb.message.answer(
-        "🔇 <b>Новый мьют — шаг 1/2</b>\n\nВыбери устройство или группу:",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-    )
-
-
-@router.callback_query(F.data.startswith("mute:tgt:"), MuteSetup.picking_target)
-async def cb_mute_pick_target(cb: CallbackQuery, state: FSMContext):
-    target = cb.data[len("mute:tgt:"):]
-    await state.update_data(mute_target=target)
-    await state.set_state(MuteSetup.picking_duration)
-    await cb.answer()
-
-    label = {"__all__": "🌐 Все устройства"}.get(target, f"<b>{target}</b>")
-    durations = [
-        ("30 мин", "30m"), ("1 час", "1h"), ("2 часа", "2h"),
-        ("4 часа", "4h"), ("8 часов", "8h"), ("24 часа", "24h"),
-        ("3 дня", "3d"), ("7 дней", "7d"),
-    ]
-    rows = []
-    for label_d, val in durations:
-        rows.append([InlineKeyboardButton(text=label_d, callback_data=f"mute:dur:{val}")])
-    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="mute:cancel")])
-
-    await cb.message.answer(
-        f"🔇 <b>Новый мьют — шаг 2/2</b>\n\n"
-        f"Цель: {label}\n\n"
-        "Выбери длительность (или напиши вручную, например <code>3h</code>, <code>2d</code>):",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-    )
-
-
-@router.callback_query(F.data.startswith("mute:dur:"), MuteSetup.picking_duration)
-async def cb_mute_pick_dur(cb: CallbackQuery, state: FSMContext):
-    dur_str = cb.data[len("mute:dur:"):]
-    data = await state.get_data()
-    target = data.get("mute_target", "")
-    await state.clear()
-    await cb.answer()
-
-    seconds = parse_duration(dur_str)
-    if not seconds:
-        await cb.message.answer("❌ Ошибка длительности.", reply_markup=MAIN_KB)
-        return
-
-    mutes = load_mutes()
-    until = time.time() + seconds
-    mutes[target] = {"until": until, "reason": "", "muted_at": datetime.now(timezone.utc).isoformat()}
-    save_mutes(mutes)
-
-    until_str = datetime.fromtimestamp(until, tz=timezone.utc).strftime("%d.%m %H:%M UTC")
-    disp = "Все устройства" if target == "__all__" else target
-    await cb.message.answer(
-        f"🔇 <b>Мьют добавлен</b>\n\n"
-        f"• <b>{disp}</b> до {until_str}",
-        parse_mode="HTML",
-    )
-
-
-@router.message(MuteSetup.picking_duration)
-async def fsm_mute_duration_text(msg: Message, state: FSMContext):
-    """User typed a custom duration like 3h."""
-    if not is_admin(msg.from_user.id):
-        return
-    data = await state.get_data()
-    target = data.get("mute_target", "")
-    dur_str = msg.text.strip()
-    seconds = parse_duration(dur_str)
-    if not seconds:
-        await msg.answer("❌ Неверный формат. Примеры: 30m, 2h, 3d")
-        return
-    await state.clear()
-
-    mutes = load_mutes()
-    until = time.time() + seconds
-    mutes[target] = {"until": until, "reason": "", "muted_at": datetime.now(timezone.utc).isoformat()}
-    save_mutes(mutes)
-
-    until_str = datetime.fromtimestamp(until, tz=timezone.utc).strftime("%d.%m %H:%M UTC")
-    disp = "Все устройства" if target == "__all__" else target
-    await msg.answer(
-        f"🔇 <b>Мьют добавлен</b>\n\n"
-        f"• <b>{disp}</b> до {until_str}",
-        parse_mode="HTML",
-        reply_markup=MAIN_KB,
-    )
-
-
-@router.callback_query(F.data == "mute:cancel")
-async def cb_mute_cancel(cb: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await cb.answer("Отменено")
-    await cb.message.delete()
-
-
-# ─── Help system for alerts ─────────────────────────────────────────
-
-@router.callback_query(F.data.startswith("help:"))
-async def cb_help(cb: CallbackQuery):
-    alert_type = cb.data.split(":", 1)[1]
-    info = ALERT_HELP.get(alert_type)
-    if not info:
-        await cb.answer("Нет справки", show_alert=True)
-        return
-    await cb.answer()
-    cfg = load_alerts_cfg()
-    text = (
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"{info['title']}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"<b>Что это:</b>\n{info['what']}\n\n"
-        f"<b>Когда срабатывает:</b>\n{info['when'].format(interval=DEVICE_CHECK_INTERVAL, threshold=cfg.get('disk_pct', 90), offline_hours=cfg.get('offline_hours', 24))}\n\n"
-        f"<b>Настройка:</b>\n{info['config'].format(threshold=cfg.get('disk_pct', 90), offline_hours=cfg.get('offline_hours', 24))}\n\n"
-        f"<b>Что делать:</b>\n{info['action']}\n\n"
-        f"<b>Пример:</b>\n<i>{info['example']}</i>"
-    )
-    await cb.message.answer(text, parse_mode="HTML")
-
-
-# ─── MC Auto-Update callbacks ───────────────────────────────────────
-
-@router.callback_query(F.data == "mc:update")
-async def cb_mc_update(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    await cb.message.answer(
-        "⚠️ <b>Обновление MeshCentral</b>\n\n"
-        "Будет выполнено:\n"
-        "1. Бэкап config.json\n"
-        "2. npm update meshcentral\n"
-        "3. Перезапуск MeshCentral\n"
-        "4. Проверка работоспособности\n\n"
-        "⏱ Время: ~2-3 минуты. MC будет недоступен.",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Обновить сейчас", callback_data="mc:update_go")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="noop")],
-        ]),
-    )
-
-
-@router.callback_query(F.data == "mc:update_go")
-async def cb_mc_update_go(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer("Запускаю обновление...")
-    aid = cb.from_user.id
-    asyncio.create_task(perform_mc_update(aid))
-
-
-# ─── Background tasks ───────────────────────────────────────────────
-
-async def health_loop():
-    global _mc_was_down, _http_down
-    await asyncio.sleep(15)
-    while not _shutdown_event.is_set():
-        try:
-            aid = get_admin_id()
-            alive = await mc_is_alive()
-            if not alive and not _mc_was_down:
-                _mc_was_down = True
-                await mc_restart()
-                if aid:
-                    try:
-                        await bot.send_message(aid, "🔴 <b>MeshCentral упал!</b> Перезапуск...", parse_mode="HTML")
-                    except Exception:
-                        pass
-                await asyncio.sleep(20)
-                if await mc_is_alive():
-                    _mc_was_down = False
-                    if aid:
-                        try:
-                            await bot.send_message(aid, "🟢 MeshCentral восстановлен.", parse_mode="HTML")
-                        except Exception:
-                            pass
-            elif alive and _mc_was_down:
-                _mc_was_down = False
-                if aid:
-                    try:
-                        await bot.send_message(aid, "🟢 MeshCentral работает.", parse_mode="HTML")
-                    except Exception:
-                        pass
-
-            # ── HTTP services healthcheck ──
-            if aid:
-                http_results = await check_all_http_services()
-                for r in http_results:
-                    name = r["name"]
-                    ok   = r["ok"]
-                    was_down = _http_down.get(name, False)
-                    if not ok and not was_down:
-                        _http_down[name] = True
-                        status_str = f" (HTTP {r['status']})" if r["status"] else " (недоступен)"
-                        try:
-                            await bot.send_message(
-                                aid,
-                                f"🔴 <b>{name}</b> недоступен!{status_str}\n"
-                                f"<code>{r['url']}</code>",
-                                parse_mode="HTML",
-                            )
-                        except Exception:
-                            pass
-                    elif ok and was_down:
-                        _http_down[name] = False
-                        try:
-                            await bot.send_message(
-                                aid,
-                                f"🟢 <b>{name}</b> восстановлен.",
-                                parse_mode="HTML",
-                            )
-                        except Exception:
-                            pass
-                    else:
-                        _http_down[name] = not ok
-        except Exception as e:
-            log.error(f"Health: {e}")
-        try:
-            await asyncio.wait_for(_shutdown_event.wait(), timeout=HEALTH_CHECK_INTERVAL)
-            break
-        except asyncio.TimeoutError:
-            pass
-
-
-async def device_loop():
-    global _known_devices
-    await asyncio.sleep(25)
-    try:
-        for d in await get_full_devices():
-            _known_devices[d["id"]] = {"name": d["name"], "online": d["online"]}
-    except Exception:
-        pass
-
-    while not _shutdown_event.is_set():
-        try:
-            aid = get_admin_id()
-            if not aid:
-                await asyncio.sleep(DEVICE_CHECK_INTERVAL)
-                continue
-
-            devs = await get_full_devices()
-            cfg = load_alerts_cfg()
-            cur = {d["id"]: d for d in devs}
-
-            for did, d in cur.items():
-                prev = _known_devices.get(did)
-                if is_muted(d["name"], d.get("group", "")):
-                    continue
-                if prev is None:
-                    if cfg.get("new_device", True):
-                        try:
-                            await bot.send_message(
-                                aid,
-                                f"🆕 <b>Новое устройство:</b> {d['name']}\n💻 {d['os']}\n🌐 {d['ip']}",
-                                parse_mode="HTML",
-                                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                                    [InlineKeyboardButton(text="❓ Что делать?", callback_data="help:new_device")],
-                                ]),
-                            )
-                        except Exception:
-                            pass
-                elif d["online"] and not prev["online"]:
-                    try:
-                        await bot.send_message(
-                            aid,
-                            f"🟢 <b>{d['name']}</b> подключился\n   <code>{d['ip']}</code>",
-                            parse_mode="HTML",
-                        )
-                    except Exception:
-                        pass
-                elif not d["online"] and prev["online"]:
-                    try:
-                        await bot.send_message(
-                            aid, f"⚪ <b>{d['name']}</b> отключился", parse_mode="HTML",
-                        )
-                    except Exception:
-                        pass
-
-            # ─ Condition alerts ─
-            alerts_sent = _load_json(DATA_DIR / "alerts_sent.json", {})
-            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-            for d in devs:
-                if is_muted(d["name"], d.get("group", "")):
-                    continue
-                alert_key = f"{d['name']}_{today}"
-
-                # Disk alert
-                if d.get("vol_alerts") and cfg.get("disk_pct"):
-                    dk = f"disk_{alert_key}"
-                    if dk not in alerts_sent:
-                        alerts_sent[dk] = True
-                        try:
-                            await bot.send_message(
-                                aid,
-                                f"💿 <b>Диск заполнен:</b> {d['name']}\n{', '.join(d['vol_alerts'])}",
-                                parse_mode="HTML",
-                                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                                    [InlineKeyboardButton(text="❓ Что делать?", callback_data="help:disk")],
-                                ]),
-                            )
-                        except Exception:
-                            pass
-
-                # AV disabled alert
-                if d.get("av_disabled") and cfg.get("av_off"):
-                    ak = f"av_{alert_key}"
-                    if ak not in alerts_sent:
-                        alerts_sent[ak] = True
-                        try:
-                            await bot.send_message(
-                                aid,
-                                f"🛡 <b>Антивирус выключен:</b> {d['name']}\n{d['antivirus']}",
-                                parse_mode="HTML",
-                                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                                    [InlineKeyboardButton(text="❓ Что делать?", callback_data="help:av")],
-                                ]),
-                            )
-                        except Exception:
-                            pass
-
-                # Long offline alert
-                if d.get("offline_hours", 0) >= cfg.get("offline_hours", 24):
-                    ok = f"offline_{alert_key}"
-                    if ok not in alerts_sent:
-                        alerts_sent[ok] = True
-                        try:
-                            await bot.send_message(
-                                aid,
-                                f"⏰ <b>Долго офлайн:</b> {d['name']} ({fmt_offline(d['offline_hours'])})",
-                                parse_mode="HTML",
-                                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                                    [InlineKeyboardButton(text="❓ Что делать?", callback_data="help:offline")],
-                                ]),
-                            )
-                        except Exception:
-                            pass
-
-            # cleanup old alerts (keep only today)
-            alerts_sent = {k: v for k, v in alerts_sent.items() if today in k}
-            _save_json(DATA_DIR / "alerts_sent.json", alerts_sent)
-
-            # record uptime
-            record_uptime(devs)
-
-            _known_devices = {did: {"name": d["name"], "online": d["online"]} for did, d in cur.items()}
-        except Exception as e:
-            log.error(f"DevMon: {e}")
-        try:
-            await asyncio.wait_for(_shutdown_event.wait(), timeout=DEVICE_CHECK_INTERVAL)
-            break
-        except asyncio.TimeoutError:
-            pass
-
-
-async def scheduled_loop():
-    global _last_inventory_date, _last_daily_report, _last_weekly_digest, _last_update_check
-    await asyncio.sleep(30)
-    while not _shutdown_event.is_set():
-        try:
-            aid = get_admin_id()
-            now = datetime.now(timezone.utc)
-            today = now.strftime("%Y-%m-%d")
-
-            if now.hour == INVENTORY_HOUR and _last_inventory_date != today and aid:
-                _last_inventory_date = today
-                devs = await get_full_devices()
-                if devs:
-                    # save snapshot for change tracking
-                    save_snapshot(devs)
-                    save_snap_history(devs)
-                    save_disk_snapshot(devs)
-                    try:
-                        await bot.send_document(
-                            aid,
-                            BufferedInputFile(build_inventory_csv(devs), filename=f"inventory_{today}.csv"),
-                            caption=f"📦 <b>Авто-инвентарь</b> {today} • {len(devs)} устройств",
-                            parse_mode="HTML",
-                        )
-                    except Exception:
-                        pass
-
-            if now.hour == DAILY_REPORT_HOUR and _last_daily_report != today and aid:
-                _last_daily_report = today
-                devs = await get_full_devices()
-                online = sum(1 for d in devs if d["online"])
-                cpu = psutil.cpu_percent(interval=0.5)
-                mem = psutil.virtual_memory()
-
-                # detect changes
-                changes = detect_changes(devs)
-                changes_str = ""
-                if changes:
-                    changes_str = "\n\n📜 <b>Изменения:</b>\n" + "\n".join(changes[:10])
-
-                # device alerts summary
-                alert_lines = []
-                cfg = load_alerts_cfg()
-                for d in devs:
-                    if d.get("vol_alerts"):
-                        alert_lines.append(f"  💿 {d['name']}: {', '.join(d['vol_alerts'])}")
-                    if d.get("av_disabled"):
-                        alert_lines.append(f"  🛡 {d['name']}: AV выключен")
-                    if d.get("offline_hours", 0) >= cfg.get("offline_hours", 24):
-                        alert_lines.append(f"  ⏰ {d['name']}: офлайн {fmt_offline(d['offline_hours'])}")
-                alerts_str = ""
-                if alert_lines:
-                    alerts_str = "\n\n⚠️ <b>Проблемы:</b>\n" + "\n".join(alert_lines[:10])
-
-                # SSL cert status in daily report
-                ssl_str = ""
-                if _ssl_cache:
-                    ssl_warn = [r for r in _ssl_cache if not r["ok"] or r["days_left"] <= SSL_WARN_DAYS]
-                    if ssl_warn:
-                        ssl_str = "\n\n🔐 <b>SSL:</b>\n" + ssl_status_text(ssl_warn)
-
-                try:
-                    await bot.send_message(
-                        aid,
-                        f"━━━━━━━━━━━━━━━━━━━━━━\n📋 <b>Отчёт {today}</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                        f"📱 Устройств: {len(devs)} (🟢 {online})\n"
-                        f"🧠 CPU: {cpu:.0f}% 💾 RAM: {mem.percent:.0f}%\n"
-                        f"🛡 MC: {'🟢' if await mc_is_alive() else '🔴'}"
-                        f"{changes_str}{alerts_str}{ssl_str}",
-                        parse_mode="HTML",
-                    )
-                except Exception:
-                    pass
-                # save snapshot after report
-                save_snapshot(devs)
-                save_snap_history(devs)
-
-            # ── Weekly digest (Sunday) ──
-            if now.weekday() == 6 and now.hour == WEEKLY_DIGEST_HOUR and _last_weekly_digest != today and aid:
-                _last_weekly_digest = today
-                devs = await get_full_devices()
-                if devs:
-                    await _send_weekly_digest(aid, devs)
-
-            # ── Daily update check ──
-            if now.hour == UPDATE_CHECK_HOUR and _last_update_check != today and aid:
-                _last_update_check = today
-                info = await check_mc_update()
-                if info["has_update"]:
-                    try:
-                        await bot.send_message(
-                            aid,
-                            f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
-                            f"\U0001f195 <b>Обновление MeshCentral!</b>\n"
-                            f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
-                            f"\U0001f4e6 Текущая: <b>{info['current']}</b>\n"
-                            f"\U0001f680 Новая: <b>{info['latest']}</b>",
-                            parse_mode="HTML",
-                            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                                [InlineKeyboardButton(text="🔄 Обновить сейчас", callback_data="mc:update")],
-                            ]),
-                        )
-                    except Exception:
-                        pass
-        except Exception as e:
-            log.error(f"Sched: {e}")
-        try:
-            await asyncio.wait_for(_shutdown_event.wait(), timeout=60)
-            break
-        except asyncio.TimeoutError:
-            pass
-
-
-async def ssl_check_loop():
-    global _last_ssl_check, _ssl_cache
-    await asyncio.sleep(60)  # дать боту запустится
-    while not _shutdown_event.is_set():
-        try:
-            aid = get_admin_id()
-            now = datetime.now(timezone.utc)
-            today = now.strftime("%Y-%m-%d")
-            if (now.hour == SSL_CHECK_HOUR and _last_ssl_check != today) or not _ssl_cache:
-                _last_ssl_check = today
-                results = await check_all_ssl()
-                _ssl_cache = results
-                # отправить алерт только если есть проблемы
-                problems = [r for r in results if not r["ok"] or r["days_left"] <= SSL_WARN_DAYS]
-                if problems and aid:
-                    lines = ssl_status_text(problems)
-                    crit = any(not r["ok"] or r["days_left"] <= SSL_CRIT_DAYS for r in problems)
-                    header = "🔴 <b>SSL КРИТИЧНО</b>" if crit else "🟡 <b>SSL предупреждение</b>"
-                    try:
-                        await bot.send_message(
-                            aid,
-                            f"━━━━━━━━━━━━━━━━━━━━━━\n{header}\n━━━━━━━━━━━━━━━━━━━━━━\n\n{lines}\n\n"
-                            f"🔐 /certs — проверить все сертификаты",
-                            parse_mode="HTML",
-                        )
-                    except Exception:
-                        pass
-        except Exception as e:
-            log.error(f"ssl_check_loop: {e}")
-        try:
-            await asyncio.wait_for(_shutdown_event.wait(), timeout=3600)
-            break
-        except asyncio.TimeoutError:
-            pass
-
-
-async def on_startup():
-    _background_tasks.append(asyncio.create_task(health_loop()))
-    _background_tasks.append(asyncio.create_task(device_loop()))
-    _background_tasks.append(asyncio.create_task(scheduled_loop()))
-    _background_tasks.append(asyncio.create_task(wifi_poll_loop()))
-    _background_tasks.append(asyncio.create_task(netmap_loop()))
-    _background_tasks.append(asyncio.create_task(ssl_check_loop()))
-    _background_tasks.append(asyncio.create_task(cmd_scheduler_loop()))
-    _background_tasks.append(asyncio.create_task(snmp_poll_loop()))
-    _background_tasks.append(asyncio.create_task(hw_inventory_loop()))
-    _background_tasks.append(asyncio.create_task(temp_loop()))
-    log.info("Background tasks started")
-
-
-async def shutdown():
-    log.info("Shutting down gracefully...")
-    _shutdown_event.set()
-    for t in _background_tasks:
-        t.cancel()
-    await asyncio.gather(*_background_tasks, return_exceptions=True)
-    await bot.session.close()
-    log.info("Shutdown complete.")
-
-
-# ─── Deploy guide ────────────────────────────────────────────────────
-
-GITHUB_REPO = "https://github.com/mr-khamzat/mc-stack"
-
-@router.callback_query(F.data == "tool:deploy")
-async def cb_tool_deploy(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-
-    text = (
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🚀 <b>Развернуть копию стека</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Стек включает:\n"
-        "• 🤖 Telegram бот (этот)\n"
-        "• 🗄 RackViz — визуализатор стойки\n"
-        "• 🗺 NetMap — карта сети\n"
-        "• 📡 WiFi зонды (Keenetic)\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📋 <b>Что нужно для установки:</b>\n\n"
-        "1. 🖥 Сервер с Ubuntu 22/24 LTS\n"
-        "   (2 CPU, 2 GB RAM, 20 GB disk)\n\n"
-        "2. 🤖 Telegram Bot Token\n"
-        "   → @BotFather → /newbot\n\n"
-        "3. 👤 Твой Telegram Chat ID\n"
-        "   → написать @userinfobot\n\n"
-        "4. 🔐 Данные MeshCentral сервера\n"
-        "   URL, логин, пароль\n\n"
-        "5. 🔑 MC Login Token Key\n"
-        "   (с MC сервера: <code>node meshcentral.js --logintokenkey</code>)\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "⚡ <b>Установка (3 команды):</b>\n\n"
-        f"<code>git clone {GITHUB_REPO}</code>\n"
-        "<code>cd mc-stack</code>\n"
-        "<code>sudo bash deploy.sh</code>\n\n"
-        "Скрипт задаст вопросы и всё настроит сам.\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📂 <b>GitHub репозиторий:</b>\n"
-        f"{GITHUB_REPO}\n\n"
-        "📖 <b>Подробная инструкция:</b>\n"
-        f"{GITHUB_REPO}/blob/main/README.md"
-    )
-
-    buttons = [
-        [InlineKeyboardButton(text="📂 GitHub репо", url=GITHUB_REPO)],
-        [InlineKeyboardButton(text="📦 Упаковать с этого сервера", callback_data="tool:deploy_pack")],
-    ]
-    await cb.message.answer(text, parse_mode="HTML",
-                            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
-
-
-@router.callback_query(F.data == "tool:deploy_pack")
-async def cb_tool_deploy_pack(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer("Упаковываю...", show_alert=False)
-
-    pack_script = Path("/opt/deploy-kit/pack.sh")
-    if not pack_script.exists():
-        await cb.message.answer("❌ Скрипт /opt/deploy-kit/pack.sh не найден")
-        return
-
-    msg = await cb.message.answer("⏳ Упаковываю проект, это займёт 30-60 секунд...")
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "bash", str(pack_script),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
-        output = out.decode(errors="replace")
-
-        # Найти путь к архиву
-        archive = None
-        for line in output.splitlines():
-            if line.strip().endswith(".tar.gz") and "/tmp/" in line:
-                for part in line.split():
-                    if part.endswith(".tar.gz"):
-                        archive = Path(part.strip())
-                        break
-
-        if archive and archive.exists():
-            size = archive.stat().st_size / (1024 * 1024)
-            await msg.edit_text(
-                f"✅ Архив создан: <code>{archive.name}</code> ({size:.1f} MB)\n\n"
-                "📤 Скопируй на новый сервер:\n"
-                f"<code>scp root@{MC_URL.replace('https://', '').split(':')[0]}:{archive} /tmp/</code>\n\n"
-                "Затем на новом сервере:\n"
-                f"<code>cd /tmp && tar xzf {archive.name}</code>\n"
-                f"<code>cd mc-stack-deploy/deploy-kit && bash deploy.sh</code>",
-                parse_mode="HTML",
-            )
-        else:
-            await msg.edit_text(f"⚠️ Архив не найден. Вывод:\n<code>{output[-500:]}</code>",
-                                parse_mode="HTML")
-    except asyncio.TimeoutError:
-        await msg.edit_text("⏱ Таймаут упаковки (>120 сек)")
-    except Exception as e:
-        await msg.edit_text(f"❌ Ошибка: {e}")
-
-
-@router.message(Command("certs"))
-@router.callback_query(F.data == "tool:certs")
-async def cmd_certs(event):
-    msg = event if isinstance(event, Message) else event.message
-    if not is_admin(event.from_user.id):
-        if isinstance(event, CallbackQuery):
-            await event.answer("🔒", show_alert=True)
-        return
-    if isinstance(event, CallbackQuery):
-        await event.answer()
-    wait = await msg.answer("⏳ Проверяю SSL сертификаты...")
-    results = await check_all_ssl()
-    global _ssl_cache
-    _ssl_cache = results
-    text = ssl_status_text(results)
-    ok_count = sum(1 for r in results if r["ok"] and r["days_left"] > SSL_WARN_DAYS)
-    warn_count = sum(1 for r in results if r["ok"] and SSL_CRIT_DAYS < r["days_left"] <= SSL_WARN_DAYS)
-    crit_count = sum(1 for r in results if not r["ok"] or r["days_left"] <= SSL_CRIT_DAYS)
-    summary = f"🟢 {ok_count}  🟡 {warn_count}  🔴 {crit_count}"
-    await wait.edit_text(
-        f"━━━━━━━━━━━━━━━━━━━━━━\n🔐 <b>SSL Сертификаты</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{text}\n\n{summary}",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Обновить статус", callback_data="tool:certs"),
-             InlineKeyboardButton(text="🔁 Продлить certbot",  callback_data="tool:ssl_renew")],
-        ]),
-    )
-
-
-# ─── SSL Renew ───────────────────────────────────────────────────────────────
-
-@router.callback_query(F.data == "tool:ssl_renew")
-async def cb_ssl_renew(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True); return
-    await cb.answer()
-    wait = await cb.message.answer("⏳ Запускаю <code>certbot renew</code>…\n<i>Это может занять 30–60 секунд.</i>",
-                                   parse_mode="HTML")
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "certbot", "renew", "--non-interactive", "--quiet",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=120)
-        rc   = proc.returncode
-        text = (out or b"").decode(errors="replace").strip()
-        errt = (err or b"").decode(errors="replace").strip()
-        combined = (text + "\n" + errt).strip() or "(certbot не вывел ничего — сертификаты актуальны)"
-        icon = "✅" if rc == 0 else "⚠️"
-        msg_text = (f"{icon} <b>certbot renew</b>  (exit {rc})\n\n"
-                    f"<pre>{combined[:3000]}</pre>")
-    except asyncio.TimeoutError:
-        msg_text = "⏱ Timeout: certbot не ответил за 120 секунд."
-    except Exception as e:
-        msg_text = f"❌ Ошибка запуска certbot: {e}"
-
-    await wait.edit_text(msg_text, parse_mode="HTML",
-                         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                             [InlineKeyboardButton(text="🔐 Проверить SSL", callback_data="tool:certs")],
-                             [InlineKeyboardButton(text="🔁 Повторить",     callback_data="tool:ssl_renew")],
-                         ]))
-
-
-# ─── Ping / Traceroute ───────────────────────────────────────────────────────
-
-def _ping_target_kb(ip: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🏓 Ping (4 пакета)",  callback_data=f"ping:run:ping:{ip}"),
-         InlineKeyboardButton(text="🌐 Traceroute",       callback_data=f"ping:run:trace:{ip}")],
-        [InlineKeyboardButton(text="📊 MTR (10 циклов)",  callback_data=f"ping:run:mtr:{ip}")],
-        [InlineKeyboardButton(text="◀️ Выбрать другой",   callback_data="tool:ping")],
-    ])
-
-
-@router.callback_query(F.data == "tool:ping")
-async def cb_tool_ping(cb: CallbackQuery, state: FSMContext):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True); return
-    await cb.answer()
-    await state.clear()
-    devs = await get_full_devices()
-    # Collect unique WAN IPs per group
-    seen: dict[str, str] = {}   # ip → group
-    for d in sorted(devs, key=lambda x: x.get("group", "")):
-        wan = (d.get("ip") or "").strip()
-        grp = d.get("group", "?")
-        if wan and wan not in seen:
-            seen[wan] = grp
-    rows = []
-    for ip, grp in seen.items():
-        rows.append([InlineKeyboardButton(
-            text=f"🏢 {grp}  —  {ip}", callback_data=f"ping:ip:{ip}")])
-    rows.append([InlineKeyboardButton(text="✏️ Ввести IP / hostname вручную",
-                                      callback_data="ping:manual")])
-    rows.append([InlineKeyboardButton(text="◀️ Инструменты", callback_data="ping:back")])
-    await cb.message.answer(
-        "━━━━━━━━━━━━━━━━━━━━━━\n🏓 <b>Ping / Traceroute</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Пинг выполняется <b>с сервера</b> (144.31.89.167).\n"
-        "Выбери цель или введи адрес вручную:",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-    )
-
-
-@router.callback_query(F.data.startswith("ping:ip:"))
-async def cb_ping_ip(cb: CallbackQuery, state: FSMContext):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True); return
-    await cb.answer()
-    ip = cb.data[len("ping:ip:"):]
-    await cb.message.answer(
-        f"🎯 Цель: <code>{ip}</code>\n\nВыбери действие:",
-        parse_mode="HTML", reply_markup=_ping_target_kb(ip))
-
-
-@router.callback_query(F.data == "ping:manual")
-async def cb_ping_manual(cb: CallbackQuery, state: FSMContext):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True); return
-    await cb.answer()
-    await state.set_state(PingState.waiting_ip)
-    await cb.message.answer("✏️ Введи IP-адрес или hostname:")
-
-
-@router.message(PingState.waiting_ip)
-async def ping_manual_ip(msg: Message, state: FSMContext):
-    if not is_admin(msg.from_user.id): return
-    ip = msg.text.strip()
-    await state.clear()
-    await msg.answer(
-        f"🎯 Цель: <code>{ip}</code>\n\nВыбери действие:",
-        parse_mode="HTML", reply_markup=_ping_target_kb(ip))
-
-
-@router.callback_query(F.data.startswith("ping:run:"))
-async def cb_ping_run(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True); return
-    await cb.answer()
-    # Format: ping:run:TYPE:IP  (IP may contain colons for IPv6)
-    parts = cb.data.split(":", 3)
-    action, ip = parts[2], parts[3]
-
-    icons = {"ping": "🏓", "trace": "🌐", "mtr": "📊"}
-    wait = await cb.message.answer(
-        f"{icons.get(action,'🔍')} <b>{action}</b> → <code>{ip}</code> …",
-        parse_mode="HTML")
-
-    if action == "ping":
-        cmd = ["ping", "-c", "4", "-W", "3", ip]; timeout = 20
-    elif action == "trace":
-        cmd = ["traceroute", "-n", "-m", "20", "-w", "2", ip]; timeout = 60
-    else:  # mtr
-        cmd = ["mtr", "--report", "--report-cycles", "10", "-n", ip]; timeout = 90
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        result = (out or b"").decode(errors="replace").strip() or \
-                 (err or b"").decode(errors="replace").strip() or "(нет вывода)"
-    except asyncio.TimeoutError:
-        result = f"⏱ Timeout ({timeout}s)"
-    except Exception as e:
-        result = f"❌ {e}"
-
-    # Parse ping summary line if present
-    summary = ""
-    for line in result.splitlines():
-        if "packet loss" in line or "packets transmitted" in line:
-            summary = f"\n<i>{line.strip()}</i>"
-            break
-
-    text = (f"{icons.get(action,'🔍')} <b>{action}</b> → <code>{ip}</code>{summary}\n\n"
-            f"<pre>{result[:3400]}</pre>")
-    rows = [
-        [InlineKeyboardButton(text="🔄 Повторить", callback_data=cb.data)],
-    ]
-    if action == "ping":
-        rows.append([InlineKeyboardButton(text="🌐 Traceroute", callback_data=f"ping:run:trace:{ip}"),
-                     InlineKeyboardButton(text="📊 MTR",        callback_data=f"ping:run:mtr:{ip}")])
-    rows.append([InlineKeyboardButton(text="◀️ Выбрать другой", callback_data="tool:ping")])
-    await wait.edit_text(text, parse_mode="HTML",
-                         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
-
-
-@router.callback_query(F.data == "ping:back")
-async def cb_ping_back(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True); return
-    await cb.answer()
-    # Re-open tools menu
-    await cb.message.delete()
-
-
-# ─── Notes ───────────────────────────────────────────────────────────────────
-
-def _load_notes() -> dict:
-    try:
-        if NOTES_FILE.exists():
-            return json.loads(NOTES_FILE.read_text())
+        if FAMILY_USERS_FILE.exists():
+            return json.loads(FAMILY_USERS_FILE.read_text())
     except Exception:
         pass
     return {}
 
+def _save_family_users(data: dict):
+    FAMILY_USERS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
-def _save_notes(notes: dict) -> None:
-    NOTES_FILE.write_text(json.dumps(notes, ensure_ascii=False, indent=2))
+def is_family(uid: int) -> bool:
+    return str(uid) in _load_family_users()
 
+def is_allowed(uid: int) -> bool:
+    return is_admin(uid) or is_family(uid)
 
-def _notes_device_kb(device_name: str, has_note: bool) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text="✏️ Написать заметку",  callback_data=f"note:edit:{device_name[:50]}")],
-    ]
-    if has_note:
-        rows.append([InlineKeyboardButton(text="🗑 Удалить заметку", callback_data=f"note:del:{device_name[:50]}")])
-    rows.append([InlineKeyboardButton(text="◀️ К заметкам", callback_data="tool:notes")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+def _user_name(uid: int) -> str:
+    """Return saved name for a family user or str(uid)."""
+    users = _load_family_users()
+    return users.get(str(uid), {}).get("name", str(uid))
 
+def family_kb() -> ReplyKeyboardMarkup:
+    """Limited keyboard for family members."""
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="👪 Семья"),  KeyboardButton(text="🌤️ Погода")],
+        [KeyboardButton(text="🕌 Намаз"),  KeyboardButton(text="📊 Статус")],
+    ], resize_keyboard=True)
 
-@router.callback_query(F.data == "tool:notes")
-async def cb_tool_notes(cb: CallbackQuery, state: FSMContext):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True); return
-    await cb.answer()
-    await state.clear()
-    notes = _load_notes()
-    devs  = await get_full_devices()
-    # Sort: devices with notes first, then alphabetically
-    rows = []
-    with_note    = sorted([d for d in devs if d["name"] in notes], key=lambda d: d["name"])
-    without_note = sorted([d for d in devs if d["name"] not in notes], key=lambda d: d["name"])
-    for d in with_note + without_note:
-        has = d["name"] in notes
-        icon = "📝" if has else ("🟢" if d.get("online") else "⚫")
-        rows.append([InlineKeyboardButton(
-            text=f"{icon} {d['name'][:35]}",
-            callback_data=f"note:dev:{d['name'][:50]}")])
-    note_lines = [f"📝 <b>Заметки к устройствам</b>  ({len(notes)} записей)\n"]
-    if notes:
-        for name, note in sorted(notes.items()):
-            note_lines.append(f"• <b>{name}</b>: {note[:80]}{'…' if len(note)>80 else ''}")
-    await cb.message.answer(
-        "━━━━━━━━━━━━━━━━━━━━━━\n" + "\n".join(note_lines) + "\n━━━━━━━━━━━━━━━━━━━━━━\n\nВыбери устройство:",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-    )
-
-
-@router.callback_query(F.data.startswith("note:dev:"))
-async def cb_note_device(cb: CallbackQuery, state: FSMContext):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True); return
-    await cb.answer()
-    device_name = cb.data[len("note:dev:"):]
-    notes = _load_notes()
-    note  = notes.get(device_name, "")
-    text  = (f"📝 <b>{device_name}</b>\n\n"
-             f"Текущая заметка:\n<blockquote>{note}</blockquote>" if note
-             else f"📝 <b>{device_name}</b>\n\nЗаметок нет.")
-    await cb.message.answer(text, parse_mode="HTML",
-                             reply_markup=_notes_device_kb(device_name, bool(note)))
-
-
-@router.callback_query(F.data.startswith("note:edit:"))
-async def cb_note_edit(cb: CallbackQuery, state: FSMContext):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True); return
-    await cb.answer()
-    device_name = cb.data[len("note:edit:"):]
-    await state.set_state(NotesState.writing_note)
-    await state.update_data(device_name=device_name)
-    notes = _load_notes()
-    hint  = f"\nТекущая: <i>{notes[device_name][:80]}</i>" if device_name in notes else ""
-    await cb.message.answer(
-        f"✏️ Введи заметку для <b>{device_name}</b>:{hint}\n\n"
-        "<i>(отправь '-' чтобы отменить)</i>",
-        parse_mode="HTML")
-
-
-@router.message(NotesState.writing_note)
-async def notes_write(msg: Message, state: FSMContext):
-    if not is_admin(msg.from_user.id): return
-    data = await state.get_data()
-    device_name = data.get("device_name", "")
-    await state.clear()
-    if msg.text.strip() == "-":
-        await msg.answer("❌ Отменено.", reply_markup=MAIN_KB); return
-    notes = _load_notes()
-    notes[device_name] = msg.text.strip()[:500]
-    _save_notes(notes)
-    await msg.answer(f"✅ Заметка сохранена для <b>{device_name}</b>:\n<blockquote>{notes[device_name]}</blockquote>",
-                     parse_mode="HTML", reply_markup=MAIN_KB)
-
-
-@router.callback_query(F.data.startswith("note:del:"))
-async def cb_note_del(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True); return
-    device_name = cb.data[len("note:del:"):]
-    notes = _load_notes()
-    notes.pop(device_name, None)
-    _save_notes(notes)
-    await cb.answer(f"🗑 Заметка удалена", show_alert=False)
-    await cb.message.answer(f"🗑 Заметка для <b>{device_name}</b> удалена.",
-                             parse_mode="HTML", reply_markup=MAIN_KB)
-
-
-# ─── Disk trend handler ───────────────────────────────────────────────
-
-@router.callback_query(F.data == "tool:disk_trend")
-async def cb_tool_disk_trend(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-
-    trends = get_disk_trends()
-    hist   = _load_json(DISK_HISTORY_FILE, {})
-    n_devices = len(hist)
-    n_points  = sum(len(v) for v in hist.values())
-
-    header = (
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📈 <b>Тренд заполнения дисков</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"📊 История: {n_devices} устройств, {n_points} замеров\n"
-    )
-
-    if not trends:
-        text = (
-            header +
-            "\n<i>Данных пока недостаточно. Тренд считается по данным\n"
-            "ежедневного инвентаря (08:00 UTC). Нужно минимум 2 дня.</i>\n\n"
-            "💡 Чтобы собрать данные сейчас:\n"
-            "🔧 Инструменты → 📈 Тренд дисков → кнопка 🔄 Собрать сейчас"
-        )
-        rows = [
-            [InlineKeyboardButton(text="🔄 Собрать сейчас", callback_data="disk_trend:collect")],
-            [InlineKeyboardButton(text="◀️ Инструменты",    callback_data="disk_trend:back")],
-        ]
-        await cb.message.answer(text, parse_mode="HTML",
-                                reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
-        return
-
-    lines = [header]
-    crit  = [t for t in trends if t["days_to_full"] is not None and t["days_to_full"] <= 30]
-    warn  = [t for t in trends if t["days_to_full"] is not None and 30 < t["days_to_full"] <= 90]
-    ok    = [t for t in trends if t["days_to_full"] is None]
-
-    def _trend_line(t: dict) -> str:
-        d2f = t["days_to_full"]
-        if d2f is not None:
-            urgency = "🔴" if d2f <= 30 else "🟡"
-            eta = f"⚠️ заполнится через ~{int(d2f)} д."
-        else:
-            urgency = "🟢"
-            eta = "стабильно"
-        rate = f"+{t['fill_rate_gb_day']:.2f}" if t['fill_rate_gb_day'] >= 0 else f"{t['fill_rate_gb_day']:.2f}"
-        return (
-            f"{urgency} <b>{t['device']}</b>  {t['letter']}:\n"
-            f"   {t['used_gb']:.1f}/{t['total_gb']:.1f} ГБ ({t['used_pct']:.0f}%)  "
-            f"{rate} ГБ/д  {eta}"
-        )
-
-    if crit:
-        lines.append("🔴 <b>Критично (заполнится &lt;30 дней):</b>")
-        for t in crit:
-            lines.append(_trend_line(t))
-        lines.append("")
-    if warn:
-        lines.append("🟡 <b>Внимание (30–90 дней):</b>")
-        for t in warn[:5]:
-            lines.append(_trend_line(t))
-        if len(warn) > 5:
-            lines.append(f"   <i>... и ещё {len(warn)-5}</i>")
-        lines.append("")
-    if ok:
-        lines.append(f"🟢 <b>Стабильны:</b> {len(ok)} дисков")
-
-    text = "\n".join(lines)
-    if len(text) > 4000:
-        text = text[:4000] + "\n<i>... (обрезано)</i>"
-
-    rows = [
-        [InlineKeyboardButton(text="🔄 Собрать сейчас", callback_data="disk_trend:collect")],
-        [InlineKeyboardButton(text="◀️ Инструменты",    callback_data="disk_trend:back")],
-    ]
-    await cb.message.answer(text, parse_mode="HTML",
-                            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
-
-
-@router.callback_query(F.data == "disk_trend:collect")
-async def cb_disk_trend_collect(cb: CallbackQuery):
-    """Collect disk snapshot right now (don't wait for daily inventory)."""
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer("⏳ Собираю данные...")
-    await cb.message.answer("⏳ Опрашиваю устройства...", parse_mode="HTML")
-    devs = await get_full_devices()
-    if devs:
-        save_disk_snapshot(devs)
-        n = sum(1 for d in devs if d.get("volumes_raw"))
-        await cb.message.answer(f"✅ Сохранён снапшот дисков: {n} устройств с данными.\n"
-                                 f"Нажми 📈 Тренд дисков снова для просмотра.",
-                                 parse_mode="HTML")
-    else:
-        await cb.message.answer("⚠️ Не удалось получить данные устройств.", parse_mode="HTML")
-
-
-@router.callback_query(F.data == "disk_trend:back")
-async def cb_disk_trend_back(cb: CallbackQuery):
-    await cb.answer()
-    await cb.message.answer("🔧 Выберите инструмент:", reply_markup=MAIN_KB)
-
-
-# ─── Snapshot 7-day compare ──────────────────────────────────────────
-
-@router.callback_query(F.data == "tool:snap_compare")
-async def cb_snap_compare(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    wait = await cb.message.answer("⏳ Получаю данные…")
-    devs = await get_full_devices()
-    text = compare_snap_history(devs, days=7)
-    await wait.delete()
-    for chunk in [text[i:i+3800] for i in range(0, len(text), 3800)]:
-        await cb.message.answer(chunk, parse_mode="HTML")
-
-
-# ─── Group WoL ───────────────────────────────────────────────────────
-
-@router.callback_query(F.data.startswith("wol_grp:"))
-async def cb_wol_group(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    group = cb.data.split(":", 1)[1]
-    devs = [d for d in await get_full_devices() if d["group"] == group and not d["online"]]
-    sent, skipped = [], []
-    for d in devs:
-        macs = [nic["mac"] for nic in d.get("nic_details", [])
-                if nic.get("mac", "") not in ("", "00:00:00:00:00:00")]
-        if not macs:
-            skipped.append(d["name"])
-            continue
-        ok = send_wol(macs[0])
-        sent.append(f"{'✅' if ok else '❌'} {d['name']} ({macs[0]})")
-    lines = [f"📡 <b>Group WoL: {group}</b>", ""]
-    if sent:
-        lines += ["<b>Отправлено:</b>"] + sent
-    if skipped:
-        lines += ["", "<b>Пропущено (нет MAC):</b>"] + [f"  ⚪ {n}" for n in skipped]
-    if not sent and not skipped:
-        lines.append("✅ Все устройства уже онлайн.")
-    await cb.message.answer("\n".join(lines), parse_mode="HTML")
-    await cb.answer()
-
-
-# ─── Command Scheduler ───────────────────────────────────────────────
-
-def _sched_load() -> list[dict]:
-    return _load_json(SCHEDULER_FILE, [])
-
-def _sched_save(tasks: list[dict]) -> None:
-    _save_json(SCHEDULER_FILE, tasks)
-
-def _sched_add(devices: list[str], command: str, run_at: datetime) -> dict:
-    tasks = _sched_load()
-    task = {
-        "id": int(time.time() * 1000) % 100000,
-        "devices": devices,
-        "command": command,
-        "run_at": run_at.isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "status": "pending",
+# ── Семья — auto-discovery ─────────────────────────────────────────────────────
+async def get_family() -> dict:
+    """Fetch all person.* entities from HA. Returns {friendly_name: entity_id}."""
+    global _family_cache, _family_cache_ts
+    now = _time.monotonic()
+    if _family_cache and now - _family_cache_ts < _FAMILY_CACHE_TTL:
+        return _family_cache
+    try:
+        all_states = await ha_get("states")
+        if isinstance(all_states, list):
+            members = {}
+            for s in all_states:
+                eid = s.get("entity_id", "")
+                if eid.startswith("person."):
+                    name = (s.get("attributes", {}).get("friendly_name")
+                            or eid.split(".")[-1].capitalize())
+                    members[name] = eid
+            if members:
+                _family_cache = members
+                _family_cache_ts = now
+                return members
+    except Exception as e:
+        log.error(f"get_family: {e}")
+    # fallback to last good cache or hardcoded defaults
+    return _family_cache or {
+        "Хамзат": "person.khamzat",
+        "Айза":   "person.aiza",
+        "Сулим":  "person.sulim",
+        "Камила": "person.kamila",
     }
-    tasks.append(task)
-    _sched_save(tasks)
-    return task
 
-def _parse_run_time(text: str) -> datetime | None:
-    """Parse 'через 30' / '30' (minutes from now) or 'HH:MM' (today/tomorrow UTC)."""
-    text = text.strip()
-    now = datetime.now(timezone.utc)
-    m = re.match(r'^(?:через\s+)?(\d+)$', text, re.IGNORECASE)
-    if m:
-        return now + timedelta(minutes=int(m.group(1)))
-    m = re.match(r'^(\d{1,2}):(\d{2})$', text)
-    if m:
-        h, mn = int(m.group(1)), int(m.group(2))
-        candidate = now.replace(hour=h, minute=mn, second=0, microsecond=0)
-        if candidate <= now:
-            candidate += timedelta(days=1)
-        return candidate
+# ── Погода Open-Meteo ─────────────────────────────────────────────────────────
+WMO_CODES = {
+    0: "☀️ Ясно", 1: "🌤 В основном ясно", 2: "⛅ Переменная облачность",
+    3: "☁️ Пасмурно", 45: "🌫 Туман", 48: "🌫 Изморозь",
+    51: "🌦 Мелкий дождь", 53: "🌧 Дождь", 55: "🌧 Сильный дождь",
+    61: "🌧 Слабый дождь", 63: "🌧 Дождь", 65: "🌧 Сильный дождь",
+    71: "🌨 Снег слабый", 73: "❄️ Снег", 75: "🌨 Сильный снег",
+    80: "🌦 Ливень", 81: "🌧 Ливень", 82: "⛈ Сильный ливень",
+    95: "⛈ Гроза", 96: "⛈ Гроза с градом", 99: "⛈ Сильная гроза",
+}
+
+async def get_weather() -> dict | None:
+    global _weather_cache, _weather_cache_ts
+    now = _time.monotonic()
+    if _weather_cache and now - _weather_cache_ts < _WEATHER_CACHE_TTL:
+        return _weather_cache
+    url = (
+        f"https://api.open-meteo.com/v1/forecast"
+        f"?latitude={LAT}&longitude={LON}"
+        f"&current=temperature_2m,apparent_temperature,relative_humidity_2m,"
+        f"wind_speed_10m,precipitation,weather_code"
+        f"&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code"
+        f"&timezone={TIMEZONE}&forecast_days=3"
+    )
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    _weather_cache = data
+                    _weather_cache_ts = now
+                    return data
+    except Exception as e:
+        log.error(f"Open-Meteo: {e}")
+    return _weather_cache  # return stale cache on error
+
+def build_weather_text(data: dict) -> str:
+    c      = data.get("current", {})
+    daily  = data.get("daily", {})
+    temp   = c.get("temperature_2m", "?")
+    feels  = c.get("apparent_temperature", "?")
+    hum    = c.get("relative_humidity_2m", "?")
+    wind   = c.get("wind_speed_10m", "?")
+    precip = c.get("precipitation", 0)
+    code   = c.get("weather_code", 0)
+    cond   = WMO_CODES.get(code, f"Код {code}")
+    try:
+        updated = datetime.fromisoformat(c.get("time", "")).strftime("%H:%M")
+    except Exception:
+        updated = "?"
+    day_names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    days      = daily.get("time", [])
+    t_max     = daily.get("temperature_2m_max", [])
+    t_min     = daily.get("temperature_2m_min", [])
+    codes     = daily.get("weather_code", [])
+    fc_lines  = []
+    for i in range(min(3, len(days))):
+        try:
+            d = datetime.fromisoformat(days[i])
+            icon = WMO_CODES.get(codes[i], "?").split()[0]
+            fc_lines.append(f"  {day_names[d.weekday()]} {d.strftime('%d.%m')}: {icon} {t_min[i]:.0f}…{t_max[i]:.0f}°C")
+        except Exception:
+            pass
+    text = (
+        f"🌤️ <b>Погода — Грозный</b>\n"
+        f"<i>Обновлено: {updated}</i>\n\n"
+        f"{cond}\n"
+        f"🌡️ <b>{temp}°C</b> (ощущается {feels}°C)\n"
+        f"💧 Влажность: {hum}%\n"
+        f"💨 Ветер: {wind} км/ч\n"
+        f"🌧 Осадки: {precip} мм\n"
+    )
+    if fc_lines:
+        text += "\n📅 <b>Прогноз:</b>\n" + "\n".join(fc_lines)
+    return text
+
+_WEATHER_KB = InlineKeyboardMarkup(inline_keyboard=[[
+    InlineKeyboardButton(text="🔄 Обновить", callback_data="weather_refresh")
+]])
+
+# ── Намаз — время молитв (Aladhan API) ───────────────────────────────────────
+MSK = timezone(timedelta(hours=3))
+
+PRAYERS_RU = {
+    "Fajr":    ("🌙", "Фаджр"),
+    "Dhuhr":   ("🌞", "Зухр"),
+    "Asr":     ("🌤️", "Аср"),
+    "Maghrib": ("🌅", "Магриб"),
+    "Isha":    ("🌃", "Иша"),
+}
+PRAYERS_ORDER = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
+
+# HA input_datetime entities for prayer times (manually set by user in HA)
+_HA_PRAYER_EIDS = {
+    "Fajr":    "input_datetime.namaz_fadzhr",
+    "Dhuhr":   "input_datetime.namaz_zukhr",
+    "Asr":     "input_datetime.namaz_asr",
+    "Maghrib": "input_datetime.namaz_magrib",
+    "Isha":    "input_datetime.namaz_isha",
+}
+
+_prayer_cache: dict = {"date": None, "timings": None}
+
+# ── Журнал активности ─────────────────────────────────────────────────────────
+def _activity_log(action: str, detail: str = ""):
+    """Append event to activity_log.json, keep last 200 entries."""
+    try:
+        entries: list = []
+        if ACTIVITY_LOG_FILE.exists():
+            try:
+                entries = json.loads(ACTIVITY_LOG_FILE.read_text())
+            except Exception:
+                entries = []
+        entries.append({
+            "ts":     datetime.now(MSK).strftime("%Y-%m-%d %H:%M:%S"),
+            "action": action,
+            "detail": detail,
+        })
+        entries = entries[-200:]
+        ACTIVITY_LOG_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2))
+    except Exception as e:
+        log.error(f"activity_log: {e}")
+
+
+def _faces_log(person: str, event_id: str, camera: str):
+    """Append face detection to faces_log.json, keep last 200 entries."""
+    try:
+        entries: list = []
+        if FACES_LOG_FILE.exists():
+            try:
+                entries = json.loads(FACES_LOG_FILE.read_text())
+            except Exception:
+                entries = []
+        entries.append({
+            "ts":       datetime.now(MSK).isoformat(),
+            "person":   person,
+            "event_id": event_id,
+            "camera":   camera,
+        })
+        entries = entries[-200:]
+        FACES_LOG_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2))
+    except Exception as e:
+        log.error(f"faces_log: {e}")
+
+
+def _validate_tg_initdata(init_data: str) -> dict | None:
+    """Validate Telegram WebApp initData HMAC. Returns parsed params or None."""
+    try:
+        params = dict(urlparse.parse_qsl(init_data, keep_blank_values=True))
+        received_hash = params.pop("hash", "")
+        if not received_hash:
+            return None
+        data_check = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
+        secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+        computed   = hmac.new(secret_key, data_check.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(computed, received_hash):
+            return None
+        if _time.time() - int(params.get("auth_date", 0)) > 86400:
+            return None
+        return params
+    except Exception as e:
+        log.error(f"tg_initdata: {e}")
+        return None
+
+
+async def get_prayer_times() -> dict | None:
+    """Получить времена намаза из HA input_datetime сущностей."""
+    today = datetime.now(MSK).date().isoformat()
+    if _prayer_cache["date"] == today and _prayer_cache["timings"]:
+        return _prayer_cache["timings"]
+    try:
+        results = await asyncio.gather(*[ha_get(f"states/{eid}") for eid in _HA_PRAYER_EIDS.values()])
+        timings = {}
+        for prayer, d in zip(_HA_PRAYER_EIDS.keys(), results):
+            if d:
+                # state = "HH:MM:SS" или "HH:MM"
+                t = d.get("state", "")[:5]   # берём "HH:MM"
+                if t and ":" in t:
+                    timings[prayer] = t
+        if len(timings) == len(_HA_PRAYER_EIDS):
+            _prayer_cache["date"] = today
+            _prayer_cache["timings"] = timings
+            return timings
+    except Exception as e:
+        log.error(f"Prayer times from HA: {e}")
     return None
 
-
-async def cmd_scheduler_loop():
-    """Background task: run scheduled commands when their time comes."""
-    while not _shutdown_event.is_set():
-        try:
-            tasks = _sched_load()
-            now = datetime.now(timezone.utc)
-            changed = False
-            for t in tasks:
-                if t["status"] != "pending":
-                    continue
-                run_at = datetime.fromisoformat(t["run_at"])
-                if run_at.tzinfo is None:
-                    run_at = run_at.replace(tzinfo=timezone.utc)
-                if now < run_at:
-                    continue
-                devs = await get_full_devices()
-                name_to_id = {d["name"]: d["id"] for d in devs}
-                results = []
-                for dev_name in t["devices"]:
-                    dev_id = name_to_id.get(dev_name)
-                    if not dev_id:
-                        results.append(f"<b>{dev_name}</b>: ⚠️ не найдено")
-                        continue
-                    try:
-                        out = await mc_run_command(dev_id, t["command"])
-                        out_short = (out or "(нет вывода)")[:200]
-                        results.append(f"<b>{dev_name}</b>:\n<code>{out_short}</code>")
-                    except Exception as ex:
-                        results.append(f"<b>{dev_name}</b>: ❌ {ex}")
-                t["status"] = "done"
-                t["result"] = results
-                t["done_at"] = now.isoformat()
-                changed = True
-                admin_id = _load_json(ADMIN_FILE, {}).get("admin_id") or _load_json(ADMIN_FILE, {}).get("id")
-                if admin_id:
-                    msg_lines = [f"⏰ <b>Планировщик</b> — задача #{t['id']} выполнена",
-                                 f"Команда: <code>{t['command'][:100]}</code>", ""] + results[:10]
-                    try:
-                        await bot.send_message(admin_id, "\n".join(msg_lines), parse_mode="HTML")
-                    except Exception:
-                        pass
-            if changed:
-                _sched_save(tasks)
-        except Exception as e:
-            log.error(f"cmd_scheduler_loop: {e}")
-        try:
-            await asyncio.wait_for(_shutdown_event.wait(), timeout=30)
-            break
-        except asyncio.TimeoutError:
-            pass
-
-
-@router.callback_query(F.data == "tool:scheduler")
-async def cb_tool_scheduler(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    tasks = _sched_load()
-    pending = [t for t in tasks if t["status"] == "pending"]
-    done_recent = sorted([t for t in tasks if t["status"] == "done"],
-                          key=lambda t: t.get("done_at", ""), reverse=True)[:5]
-    lines = ["⏰ <b>Планировщик команд</b>", ""]
-    if pending:
-        lines.append(f"<b>Ожидают выполнения ({len(pending)}):</b>")
-        for t in pending:
-            run_at = datetime.fromisoformat(t["run_at"])
-            devs_s = ", ".join(t["devices"][:3])
-            if len(t["devices"]) > 3:
-                devs_s += f" (+{len(t['devices'])-3})"
-            lines.append(f"  #{t['id']} — {t['command'][:40]}\n"
-                         f"  → {devs_s}\n"
-                         f"  ⏱ {run_at.strftime('%d.%m %H:%M')} UTC")
-    else:
-        lines.append("Нет запланированных задач.")
-    if done_recent:
-        lines += ["", "<b>Недавно выполнены:</b>"]
-        for t in done_recent:
-            lines.append(f"  #{t['id']} ✅ {t['command'][:40]}")
-    kb_rows = [[InlineKeyboardButton(text="➕ Новая задача", callback_data="sched:new")]]
-    if pending:
-        kb_rows.append([InlineKeyboardButton(text="🗑 Очистить pending", callback_data="sched:clear")])
-    await cb.message.answer("\n".join(lines), parse_mode="HTML",
-                            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
-
-
-@router.callback_query(F.data == "sched:new")
-async def cb_sched_new(cb: CallbackQuery, state: FSMContext):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    devs = await get_full_devices()
-    groups = sorted(set(d["group"] for d in devs if d.get("group")))
-    rows = [[InlineKeyboardButton(text=f"📁 {g}", callback_data=f"sched:grp:{g[:40]}")] for g in groups]
-    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="sched:cancel")])
-    await state.set_state(SchedulerFSM.picking_group)
-    await cb.message.answer("⏰ <b>Новая задача — шаг 1/4</b>\nВыберите группу:",
-                            parse_mode="HTML",
-                            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
-
-
-@router.callback_query(F.data.startswith("sched:grp:"), SchedulerFSM.picking_group)
-async def cb_sched_pick_group(cb: CallbackQuery, state: FSMContext):
-    group = cb.data[len("sched:grp:"):]
-    devs = await get_full_devices()
-    group_devs = [d for d in devs if d["group"] == group]
-    await state.update_data(group=group, selected=[], group_devs=[d["name"] for d in group_devs])
-    await state.set_state(SchedulerFSM.picking_devices)
-    rows = []
-    for d in group_devs:
-        st = "🟢" if d["online"] else "🔴"
-        rows.append([InlineKeyboardButton(text=f"{st} {d['name']}", callback_data=f"sched:dev:{d['name'][:50]}")])
-    rows.append([
-        InlineKeyboardButton(text="☑️ Выбрать все", callback_data="sched:all"),
-        InlineKeyboardButton(text="➡️ Далее", callback_data="sched:next_cmd"),
-    ])
-    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="sched:cancel")])
-    await cb.answer()
-    await cb.message.answer(
-        f"⏰ <b>Шаг 2/4</b> — выберите устройства (тап = вкл/выкл)\nГруппа: <b>{group}</b>",
-        parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
-
-
-@router.callback_query(F.data.startswith("sched:dev:"), SchedulerFSM.picking_devices)
-async def cb_sched_toggle_dev(cb: CallbackQuery, state: FSMContext):
-    name = cb.data[len("sched:dev:"):]
-    data = await state.get_data()
-    selected: list = list(data.get("selected", []))
-    if name in selected:
-        selected.remove(name)
-        note = f"❌ {name}"
-    else:
-        selected.append(name)
-        note = f"✅ {name}"
-    await state.update_data(selected=selected)
-    await cb.answer(note, show_alert=False)
-
-
-@router.callback_query(F.data == "sched:all", SchedulerFSM.picking_devices)
-async def cb_sched_all(cb: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    all_devs = data.get("group_devs", [])
-    await state.update_data(selected=list(all_devs))
-    await cb.answer(f"Выбраны все: {len(all_devs)}", show_alert=False)
-
-
-@router.callback_query(F.data == "sched:next_cmd", SchedulerFSM.picking_devices)
-async def cb_sched_next_cmd(cb: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    selected = data.get("selected", [])
-    if not selected:
-        await cb.answer("Выберите хотя бы одно устройство!", show_alert=True)
-        return
-    await state.set_state(SchedulerFSM.entering_cmd)
-    await cb.answer()
-    sel_s = ", ".join(selected[:5])
-    if len(selected) > 5:
-        sel_s += f" (+{len(selected)-5})"
-    await cb.message.answer(
-        f"⏰ <b>Шаг 3/4</b>\nУстройств: {len(selected)} ({sel_s})\n\nВведите команду:",
-        parse_mode="HTML")
-
-
-@router.message(SchedulerFSM.entering_cmd)
-async def sched_enter_cmd(msg: Message, state: FSMContext):
-    if not is_admin(msg.from_user.id):
-        return
-    cmd = msg.text.strip() if msg.text else ""
-    if not cmd:
-        await msg.answer("Введите непустую команду.")
-        return
-    await state.update_data(command=cmd)
-    await state.set_state(SchedulerFSM.entering_time)
-    await msg.answer(
-        "⏰ <b>Шаг 4/4</b> — введите время запуска:\n"
-        "• <code>30</code> — через 30 минут\n"
-        "• <code>14:30</code> — в 14:30 UTC (сегодня или завтра)",
-        parse_mode="HTML")
-
-
-@router.message(SchedulerFSM.entering_time)
-async def sched_enter_time(msg: Message, state: FSMContext):
-    if not is_admin(msg.from_user.id):
-        return
-    run_at = _parse_run_time(msg.text.strip() if msg.text else "")
-    if not run_at:
-        await msg.answer(
-            "❌ Не понял время. Примеры:\n"
-            "<code>30</code> — через 30 мин\n"
-            "<code>14:30</code> — в 14:30 UTC", parse_mode="HTML")
-        return
-    data = await state.get_data()
-    await state.clear()
-    task = _sched_add(data["selected"], data["command"], run_at)
-    devs_s = ", ".join(data["selected"][:5])
-    if len(data["selected"]) > 5:
-        devs_s += f" (+{len(data['selected'])-5})"
-    await msg.answer(
-        f"✅ <b>Задача #{task['id']} запланирована</b>\n\n"
-        f"Команда: <code>{data['command'][:100]}</code>\n"
-        f"Устройства: {devs_s}\n"
-        f"Запуск: {run_at.strftime('%d.%m.%Y %H:%M')} UTC",
-        parse_mode="HTML")
-
-
-@router.callback_query(F.data == "sched:cancel")
-async def cb_sched_cancel(cb: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await cb.answer("Отменено")
-    await cb.message.answer("❌ Создание задачи отменено.")
-
-
-@router.callback_query(F.data == "sched:clear")
-async def cb_sched_clear(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    tasks = _sched_load()
-    tasks = [t for t in tasks if t["status"] != "pending"]
-    _sched_save(tasks)
-    await cb.answer("Pending задачи очищены", show_alert=True)
-
-
-# ─── SNMP Router Monitoring ───────────────────────────────────────────
-
-async def run_snmp_probe(device_id: str, probe: dict) -> dict | None:
-    """Run snmp_probe.ps1 on the remote PC; return parsed JSON or None."""
+def _namaz_remaining(finishes_at: str) -> str:
     try:
-        script = SNMP_PROBE_SCRIPT.read_text(encoding="utf-8")
+        dt = datetime.fromisoformat(finishes_at.replace("Z", "+00:00"))
+        secs = max(0, int((dt - datetime.now(timezone.utc)).total_seconds()))
+    except Exception:
+        return "?"
+    h = secs // 3600; m = (secs % 3600) // 60; s = secs % 60
+    if h > 0: return f"{h}ч {m:02d}м"
+    if m > 0: return f"{m}м {s:02d}с"
+    return f"{s}с"
+
+async def build_namaz_text() -> str:
+    now = datetime.now(MSK)
+    day_names = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+    day_ru   = day_names[now.weekday()]
+    date_str = now.strftime("%d.%m")
+    time_str = now.strftime("%H:%M")
+
+    header = f"🕌 <b>Намаз</b> — {day_ru}, {date_str}\n🕐 Сейчас: {time_str}\n"
+    timings = await get_prayer_times()
+
+    if not timings:
+        # Fallback на HA таймер
+        d = await ha_get(f"states/{NAMAZ_EID}")
+        if not d:
+            return header + "\n❌ Расписание недоступно"
+        state    = d.get("state", "?")
+        finishes = d.get("attributes", {}).get("finishes_at", "")
+        if state == "active" and finishes:
+            return header + f"\n⏳ До намаза: <b>{_namaz_remaining(finishes)}</b>"
+        if state == "idle":
+            return header + "\n✅ Намаз совершён"
+        return header + f"\nСтатус: {state}"
+
+    lines = []
+    next_found = False
+    for p_name in PRAYERS_ORDER:
+        p_time_str = timings.get(p_name, "")
+        if not p_time_str:
+            continue
+        try:
+            p_dt = datetime.strptime(p_time_str, "%H:%M").replace(
+                year=now.year, month=now.month, day=now.day, tzinfo=MSK
+            )
+        except Exception:
+            continue
+        icon, ru_name = PRAYERS_RU[p_name]
+        diff_min = int((p_dt - now).total_seconds() / 60)
+
+        if diff_min < 0:
+            lines.append(f"  ✅ {icon} {ru_name:<8}  {p_time_str}")
+        elif not next_found:
+            next_found = True
+            if diff_min < 60:
+                remain = f"через {diff_min} мин"
+            else:
+                h = diff_min // 60; m = diff_min % 60
+                remain = f"через {h}ч {m:02d}м" if m else f"через {h}ч"
+            lines.append(f"  ⏰ {icon} <b>{ru_name}</b>   {p_time_str}  ← {remain}")
+        else:
+            lines.append(f"  🕌 {icon} {ru_name:<8}  {p_time_str}")
+
+    body = "\n".join(lines) if lines else "❌ Данные недоступны"
+    return header + "\n" + body
+
+_NAMAZ_KB = InlineKeyboardMarkup(inline_keyboard=[[
+    InlineKeyboardButton(text="🔄 Обновить", callback_data="namaz_refresh")
+]])
+
+# ── TV helpers ────────────────────────────────────────────────────────────────
+async def build_tv_text() -> str:
+    d = await ha_get(f"states/{TV_EID}")
+    if not d:
+        return "📺 <b>Телевизор</b>\n\n❌ Недоступен"
+    state = d.get("state", "?")
+    attrs = d.get("attributes", {})
+    app   = attrs.get("app_name", "")
+    vol   = attrs.get("volume_level", None)
+    muted = attrs.get("is_volume_muted", False)
+    icons = {"playing": "▶️", "paused": "⏸", "idle": "💤", "standby": "📴", "off": "📴"}
+    icon  = icons.get(state, "📺")
+    vol_str   = f"{int(float(vol)*100)}%" if vol is not None else "?"
+    mute_str  = " 🔇" if muted else ""
+    text = f"📺 <b>Телевизор</b>\n\n{icon} Статус: <b>{state}</b>\n"
+    if app:
+        text += f"📱 Приложение: {app}\n"
+    text += f"🔊 Громкость: {vol_str}{mute_str}"
+    return text
+
+def tv_kb(state: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    if state in ("off", "standby", "unavailable"):
+        builder.button(text="⚡ Включить ТВ", callback_data="tv:turn_on")
+        builder.button(text="🔄 Обновить",    callback_data="tv:refresh")
+        builder.adjust(1)
+    else:
+        builder.button(text="⏯ Play / Pause", callback_data="tv:media_play_pause")
+        builder.button(text="⏹ Стоп",         callback_data="tv:media_stop")
+        builder.button(text="🔊+",             callback_data="tv:volume_up")
+        builder.button(text="🔇 Mute",         callback_data="tv:mute")
+        builder.button(text="🔉−",             callback_data="tv:volume_down")
+        builder.button(text="🏠 Домой",        callback_data="tv:go_home")
+        builder.button(text="📴 Выключить",    callback_data="tv:turn_off")
+        builder.button(text="🔄 Обновить",     callback_data="tv:refresh")
+        builder.adjust(2, 3, 1, 1)
+    return builder.as_markup()
+
+# ── Автоматизации (с кешем для индексации) ────────────────────────────────────
+_autos_cache: list = []
+
+async def _fetch_automations() -> list:
+    all_states = await ha_get("states")
+    if not all_states:
+        return []
+    return [e for e in all_states if e["entity_id"].startswith("automation.")][:18]
+
+def _build_auto_kb(autos: list) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for i, a in enumerate(autos):
+        state   = a.get("state", "?")
+        name    = a.get("attributes", {}).get("friendly_name", a["entity_id"])
+        icon    = "✅" if state == "on" else "🚫"
+        display = (name[:26] + "…") if len(name) > 27 else name
+        builder.button(text=f"{icon} {display}", callback_data=f"auto:{i}")
+    builder.button(text="🔄 Обновить", callback_data="auto:r")
+    builder.adjust(1)
+    return builder.as_markup()
+
+# ── Главная клавиатура ────────────────────────────────────────────────────────
+def main_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="💡 Свет"),     KeyboardButton(text="⚡ Энергия"),  KeyboardButton(text="🌡️ Климат")],
+        [KeyboardButton(text="📺 Телевизор"),KeyboardButton(text="🤖 Пылесос"),  KeyboardButton(text="🛒 Покупки")],
+        [KeyboardButton(text="🏡 Дом"),      KeyboardButton(text="👪 Семья"),    KeyboardButton(text="🌤️ Погода")],
+        [KeyboardButton(text="📹 Камеры"),   KeyboardButton(text="⚙️ Автоматизации"), KeyboardButton(text="🕌 Намаз")],
+        [KeyboardButton(text="📊 Статус"),   KeyboardButton(text="🛠 Устройства"), KeyboardButton(text="🧠 ИИ Ассистент")],
+        [KeyboardButton(text="🖥️ Панель управления", web_app=WebAppInfo(url=WEBAPP_URL))],
+    ], resize_keyboard=True)
+
+# ── /start ────────────────────────────────────────────────────────────────────
+@dp.message(Command("start"))
+async def cmd_start(msg: Message, state: FSMContext):
+    uid  = msg.from_user.id
+    args = (msg.text or "").split(maxsplit=1)
+    deep = args[1] if len(args) > 1 else ""
+
+    # Handle invite deep link
+    if deep.startswith("inv_"):
+        code = deep[4:]
+        inv  = _invite_codes.get(code)
+        if inv and (_time.time() - inv["ts"]) < 86400:
+            del _invite_codes[code]
+            role  = inv["role"]
+            fname = msg.from_user.full_name or str(uid)
+            users = _load_family_users()
+            users[str(uid)] = {"name": fname, "role": role, "added_ts": datetime.now().isoformat()}
+            _save_family_users(users)
+            _activity_log("user_joined_invite", f"{fname} [{role}]")
+            kb = main_kb() if role == "admin" else family_kb()
+            await msg.answer(
+                f"✅ <b>Доступ получен!</b>\n"
+                f"Добро пожаловать, {fname}!\nРоль: {role}",
+                parse_mode="HTML", reply_markup=kb
+            )
+            await bot.send_message(ADMIN_ID, f"✅ {fname} (ID: {uid}) присоединился по инвайт [{role}]")
+            return
+        else:
+            await msg.answer("❌ Ссылка недействительна или истекла.")
+            return
+
+    if is_admin(uid):
+        await state.clear()
+        await msg.answer(
+            "🏠 <b>Home Assistant Bot v3</b>\n\n"
+            "Управляй умным домом из Telegram!\n"
+            "• 🕌 Намаз таймер\n"
+            "• 📺 Управление телевизором\n"
+            "• 👪 Местоположение семьи\n"
+            "• 🛒 Список покупок\n"
+            "• 🧠 ИИ Ассистент",
+            parse_mode="HTML",
+            reply_markup=main_kb()
+        )
+        return
+    if is_family(uid):
+        users = _load_family_users()
+        info  = users.get(str(uid), {})
+        name  = info.get("name", str(uid))
+        role  = info.get("role", "viewer")
+        kb    = main_kb() if role == "admin" else family_kb()
+        await msg.answer(f"👋 Привет, {name}!", reply_markup=kb)
+        return
+    # Unknown user — notify admin with role selection
+    uname  = f"@{msg.from_user.username}" if msg.from_user.username else "—"
+    fname  = msg.from_user.full_name or str(uid)
+    req_kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="👁️ Viewer",     callback_data=f"usr:approve:{uid}:viewer"),
+        InlineKeyboardButton(text="👑 Бот-Админ",  callback_data=f"usr:approve:{uid}:admin"),
+        InlineKeyboardButton(text="❌ Отклонить",  callback_data=f"usr:rej:{uid}"),
+    ]])
+    await bot.send_message(
+        ADMIN_ID,
+        f"👤 <b>Новый запрос доступа</b>\n"
+        f"Имя: <b>{fname}</b>\n"
+        f"Username: {uname}\n"
+        f"ID: <code>{uid}</code>\n\n"
+        f"<i>Viewer — только просмотр\nБот-Админ — полный доступ</i>",
+        parse_mode="HTML",
+        reply_markup=req_kb,
+    )
+    await msg.answer("⏳ Запрос отправлен администратору. Ожидайте подтверждения.")
+
+@dp.callback_query(F.data.startswith("usr:approve:"))
+async def usr_approve_cb(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    # Format: usr:approve:{uid}:{role}
+    parts = cb.data.split(":")
+    uid  = int(parts[2])
+    role = parts[3] if len(parts) > 3 else "viewer"
+
+    # Try to get user's Telegram name from the request message text
+    fname = str(uid)
+    try:
+        text = cb.message.text or ""
+        for line in text.splitlines():
+            if line.startswith("Имя:"):
+                fname = line.replace("Имя:", "").strip()
+                break
+    except Exception:
+        pass
+
+    users = _load_family_users()
+    users[str(uid)] = {"name": fname, "role": role, "added_ts": datetime.now().isoformat()}
+    _save_family_users(users)
+    _activity_log("user_approved", f"{fname} [{role}]")
+
+    role_label = "👑 Бот-Админ" if role == "admin" else "👁️ Viewer"
+    await cb.message.edit_text(
+        cb.message.text + f"\n\n✅ <b>Принят как {role_label}</b>",
+        parse_mode="HTML", reply_markup=None
+    )
+    await cb.answer(f"Добавлен как {role}")
+
+    # Notify new user
+    kb = main_kb() if role == "admin" else family_kb()
+    role_desc = "полный доступ к боту" if role == "admin" else "доступ к просмотру данных дома"
+    try:
+        await bot.send_message(
+            uid,
+            f"✅ <b>Добро пожаловать, {fname}!</b>\n"
+            f"Вам выдан {role_desc}.",
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+    except Exception:
+        pass
+
+@dp.callback_query(F.data.startswith("usr:rej:"))
+async def usr_rej_cb(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    uid = int(cb.data.split(":")[2])
+    await cb.message.edit_reply_markup(reply_markup=None)
+    await cb.answer("Отклонено")
+    try:
+        await bot.send_message(uid, "❌ Ваш запрос отклонён.")
+    except Exception:
+        pass
+
+def _users_text(users: dict) -> str:
+    if not users:
+        return "Нет пользователей."
+    role_icon = {"admin": "👑", "viewer": "👁️"}
+    lines = []
+    for k, v in users.items():
+        icon = role_icon.get(v.get("role", "viewer"), "👤")
+        lines.append(f"{icon} <b>{v.get('name', k)}</b> — {v.get('role','viewer')} (ID: <code>{k}</code>)")
+    return "👥 <b>Пользователи бота:</b>\n" + "\n".join(lines)
+
+def _users_kb(users: dict) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for fuid, info in users.items():
+        name = info.get("name", fuid)
+        role = info.get("role", "viewer")
+        # Toggle role button
+        new_role  = "admin" if role == "viewer" else "viewer"
+        role_icon = "👁️→👑" if role == "viewer" else "👑→👁️"
+        builder.button(text=f"{role_icon} {name}", callback_data=f"usr:role:{fuid}:{new_role}")
+        builder.button(text="❌", callback_data=f"usr:del:{fuid}")
+    builder.adjust(2)
+    return builder.as_markup()
+
+@dp.message(Command("users"))
+async def cmd_users(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    users = _load_family_users()
+    await msg.answer(
+        _users_text(users) + "\n\n<i>Кнопка 👁️→👑 / 👑→👁️ меняет роль\n❌ — удалить</i>",
+        parse_mode="HTML",
+        reply_markup=_users_kb(users) if users else None
+    )
+
+@dp.callback_query(F.data.startswith("usr:role:"))
+async def usr_role_cb(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    parts    = cb.data.split(":")
+    fuid     = parts[2]
+    new_role = parts[3]
+    users    = _load_family_users()
+    if fuid in users:
+        old_role = users[fuid].get("role", "viewer")
+        users[fuid]["role"] = new_role
+        _save_family_users(users)
+        name = users[fuid].get("name", fuid)
+        _activity_log("user_role_changed", f"{name}: {old_role}→{new_role}")
+        await cb.answer(f"Роль изменена: {new_role}")
+        # Notify user of role change
+        kb = main_kb() if new_role == "admin" else family_kb()
+        try:
+            await bot.send_message(
+                int(fuid),
+                f"🔄 Ваша роль изменена: <b>{new_role}</b>",
+                parse_mode="HTML", reply_markup=kb
+            )
+        except Exception:
+            pass
+    await cb.message.edit_text(
+        _users_text(users) + "\n\n<i>Кнопка 👁️→👑 / 👑→👁️ меняет роль\n❌ — удалить</i>",
+        parse_mode="HTML", reply_markup=_users_kb(users)
+    )
+
+# ── /invite — одноразовая ссылка ──────────────────────────────────────────────
+import secrets as _secrets
+_invite_codes: dict = {}  # {code: {"role": "viewer"|"admin", "ts": float}}
+
+@dp.message(Command("invite"))
+async def cmd_invite(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    parts = (msg.text or "").split()
+    role  = "viewer"
+    if len(parts) > 1 and parts[1] in ("viewer", "admin"):
+        role = parts[1]
+    code = _secrets.token_urlsafe(8)
+    _invite_codes[code] = {"role": role, "ts": _time.time()}
+    # Get bot username for link
+    me = await bot.get_me()
+    link = f"https://t.me/{me.username}?start=inv_{code}"
+    await msg.answer(
+        f"🔗 <b>Ссылка-приглашение [{role}]</b>\n"
+        f"Действует 24 часа:\n\n<code>{link}</code>\n\n"
+        "Отправь эту ссылку пользователю.",
+        parse_mode="HTML"
+    )
+
+@dp.callback_query(F.data.startswith("usr:del:"))
+async def usr_del_cb(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    fuid  = cb.data.split(":")[2]
+    users = _load_family_users()
+    info  = users.pop(fuid, {})
+    name  = info.get("name", fuid)
+    _save_family_users(users)
+    _activity_log("user_deleted", name)
+    await cb.answer(f"Удалён: {name}")
+    try:
+        await bot.send_message(int(fuid), "❌ Ваш доступ к боту отозван.")
+    except Exception:
+        pass
+    await cb.message.edit_text(
+        _users_text(users) + ("\n\n<i>Кнопка 👁️→👑 / 👑→👁️ меняет роль\n❌ — удалить</i>" if users else ""),
+        parse_mode="HTML",
+        reply_markup=_users_kb(users) if users else None
+    )
+
+# ── 📊 Статус ─────────────────────────────────────────────────────────────────
+async def build_status_text() -> str:
+    results = await asyncio.gather(
+        ha_get("states/sensor.moshchnost_vsego_doma"),
+        ha_get("states/sensor.elektroenergiia_stoimost_za_den"),
+        ha_get("states/sensor.elektroenergiia_prognoz_scheta_za_mesiats"),
+        ha_get("states/sensor.temp_detskaia_temperature"),
+        ha_get("states/sensor.temp_detskaia_humidity"),
+        ha_get("states/binary_sensor.keenetic_gateway_wan_status_2"),
+        ha_get(f"states/{TV_EID}"),
+        ha_get("states/person.khamzat"),
+        ha_get("states/vacuum.pylik"),
+        ha_get(f"states/{NAMAZ_EID}"),
+    )
+    def st(d): return d.get("state", "?") if d else "?"
+    def at(d, k): return d.get("attributes", {}).get(k, "?") if d else "?"
+
+    power_d, day_d, prog_d, temp_d, hum_d, inet_d, tv_d, person_d, vac_d, namaz_d = results
+    power   = st(power_d)
+    day     = st(day_d)
+    prog    = st(prog_d)
+    temp    = st(temp_d)
+    hum     = st(hum_d)
+    inet    = "✅ Онлайн" if st(inet_d) == "on" else "❌ Офлайн"
+    khamzat = "🏠 Дома" if st(person_d) == "home" else "🚗 Вне дома"
+    vac     = st(vac_d)
+
+    tv_state  = st(tv_d)
+    tv_detail = ""
+    if tv_d and tv_state == "playing":
+        tv_detail = f" ({at(tv_d, 'app_name')})"
+
+    namaz_str = ""
+    if namaz_d and st(namaz_d) == "active":
+        finishes = at(namaz_d, "finishes_at")
+        if finishes and finishes != "?":
+            rem = _namaz_remaining(str(finishes))
+            namaz_str = f"\n🕌 До намаза: <b>{rem}</b>"
+
+    # Fix daily cost if stuck at 0
+    try:
+        if float(day) < 0.1:
+            kwh = await _ha_today_kwh()
+            if kwh is not None and kwh > 0:
+                try:
+                    tariff = max(float(await ha_state("input_number.tarif_den_kvt_ch")), 0.5)
+                except Exception:
+                    tariff = 5.68
+                day = f"{kwh * tariff:.2f}"
+    except Exception:
+        pass
+
+    return (
+        f"📊 <b>Статус дома</b> — {datetime.now().strftime('%H:%M')}\n"
+        f"\n⚡ Мощность: <b>{power} Вт</b>"
+        f"\n💰 Сегодня: {day} ₽ | Прогноз: {prog} ₽"
+        f"\n🌡️ Детская: <b>{temp}°C</b>, влажность {hum}%"
+        f"\n🌐 Интернет: {inet}"
+        f"\n📺 TV: {tv_state}{tv_detail}"
+        f"\n👤 Хамзат: {khamzat}"
+        f"\n🤖 Пылесос: {vac}"
+        + namaz_str
+    )
+
+@dp.message(F.text == "📊 Статус")
+async def status_home(msg: Message):
+    if not is_allowed(msg.from_user.id): return
+    text = await build_status_text()
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="status_refresh")
+    ]])
+    await msg.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@dp.callback_query(F.data == "status_refresh")
+async def status_refresh(cb: CallbackQuery):
+    if not is_allowed(cb.from_user.id): return
+    await cb.answer("Обновляю...")
+    text = await build_status_text()
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="status_refresh")
+    ]])
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+
+# ── 💡 Свет + 🛠 Управление устройствами ─────────────────────────────────────
+# Defaults — первый запуск или если devices.json не содержит эти entity
+_DEVICES_DEFAULTS: dict = {
+    "light.svet_krovat":           {"name": "Кровать",        "icon": "🛏️", "section": "lights",   "enabled": True,  "order": 1},
+    "switch.vykliuchatel_kukhnia": {"name": "Кухня",          "icon": "🍳", "section": "lights",   "enabled": True,  "order": 2},
+    "switch.kabinet_svet_pk_left": {"name": "ПК Левый",       "icon": "🖥️", "section": "lights",   "enabled": True,  "order": 3},
+    "switch.kabinet_svet_pk_right":{"name": "ПК Правый",      "icon": "🖥️", "section": "lights",   "enabled": True,  "order": 4},
+    "switch.sonoff_100093f84f":    {"name": "Люстра Детская", "icon": "💡", "section": "lights",   "enabled": True,  "order": 5},
+    "switch.sonoff_1000a60930":    {"name": "Шкаф",           "icon": "🚪", "section": "lights",   "enabled": True,  "order": 6},
+    # Frigate cameras
+    "camera.cam_a6810678":                        {"name": "Камера лофт", "icon": "📹", "section": "cameras", "enabled": True, "order": 10},
+    "switch.cam_a6810678_detect":                 {"name": "Детекция",   "icon": "🔍", "section": "cameras", "enabled": True, "order": 11},
+    "switch.cam_a6810678_recordings":             {"name": "Запись",     "icon": "🎬", "section": "cameras", "enabled": True, "order": 12},
+    "switch.cam_a6810678_snapshots":              {"name": "Снимки",     "icon": "📸", "section": "cameras", "enabled": True, "order": 13},
+    "sensor.cam_a6810678_person_count":           {"name": "Людей",     "icon": "👤", "section": "cameras", "enabled": True, "order": 14},
+    "sensor.cam_a6810678_all_count":              {"name": "Объектов",  "icon": "📦", "section": "cameras", "enabled": True, "order": 15},
+}
+
+LIGHTS: dict      = {}  # {display_name: (domain, entity_id)} — пересобирается из devices.json
+LIGHTS_ICON: dict = {}  # {entity_id: icon}                   — пересобирается из devices.json
+
+# ── devices.json helpers ──────────────────────────────────────────────────────
+
+def _dev_load() -> dict:
+    """Загрузить devices.json → dict {entity_id: {name,icon,section,enabled,order}}."""
+    if DEVICES_FILE.exists():
+        try:
+            return json.loads(DEVICES_FILE.read_text())
+        except Exception as e:
+            log.error(f"devices_load: {e}")
+    return {}
+
+def _dev_save(d: dict):
+    try:
+        DEVICES_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2))
     except Exception as e:
-        log.error(f"snmp_probe: cannot read script: {e}")
+        log.error(f"devices_save: {e}")
+
+def _dev_rebuild_lights(devices: dict):
+    """Пересобрать LIGHTS/LIGHTS_ICON из devices (section=lights, enabled=True)."""
+    LIGHTS.clear()
+    LIGHTS_ICON.clear()
+    items = sorted(devices.items(), key=lambda x: x[1].get("order", 99))
+    for eid, cfg in items:
+        if cfg.get("section") == "lights" and cfg.get("enabled", True):
+            domain = eid.split(".")[0]
+            name   = cfg.get("name", eid.split(".", 1)[-1])
+            icon   = cfg.get("icon", "💡")
+            LIGHTS[name]    = (domain, eid)
+            LIGHTS_ICON[eid] = icon
+
+def _dev_init():
+    """При старте: дополнить devices.json дефолтами, пересобрать LIGHTS."""
+    devices = _dev_load()
+    changed = False
+    for eid, cfg in _DEVICES_DEFAULTS.items():
+        if eid not in devices:
+            devices[eid] = dict(cfg)
+            changed = True
+    if changed:
+        _dev_save(devices)
+    _dev_rebuild_lights(devices)
+
+def _guess_light_icon(name: str, eid: str) -> str:
+    s = (name + " " + eid).lower()
+    if any(x in s for x in ["кроват", "krovat", "bed", "спальн", "spaln"]):     return "🛏️"
+    if any(x in s for x in ["кухн", "kukhn", "kitchen"]):                        return "🍳"
+    if any(x in s for x in ["_pk", "pk_", "_пк", "пк_", "монитор"]):            return "🖥️"
+    if any(x in s for x in ["люстр", "chandelier"]):                             return "💡"
+    if any(x in s for x in ["шкаф", "shkaf", "wardrobe"]):                       return "🚪"
+    if any(x in s for x in ["детск", "detsk", "child", "kids"]):                 return "👶"
+    if any(x in s for x in ["ванн", "bath"]):                                     return "🚿"
+    if any(x in s for x in ["туалет", "toilet"]):                                return "🚽"
+    if any(x in s for x in ["лоджи", "lodzhi", "балкон", "balkon", "balcon"]):  return "🌿"
+    if any(x in s for x in ["зал", "гостин", "gostinaia", "hall", "living"]):    return "🛋️"
+    if any(x in s for x in ["коридор", "corridor"]):                             return "🚶"
+    if any(x in s for x in ["кабинет", "kabinet", "office"]):                    return "📋"
+    if any(x in s for x in ["прихожа", "prikhozh", "entranc"]):                  return "🚪"
+    return "💡"
+
+# MDI icon prefixes that indicate a light/lamp device
+_LIGHT_MDI_KEYWORDS = (
+    "light", "lamp", "bulb", "ceiling", "chandelier", "led",
+    "wall-sconce", "floor-lamp", "string-lights", "spotlight",
+)
+# Switch entity_id suffixes to skip (auxiliary controls, not actual lights)
+_SWITCH_SKIP_SUFFIXES = (
+    "do_not_disturb", "power_outage_memory", "flip_indicator_light",
+    "child_lock", "led_indicator", "backlight", "indicator",
+)
+
+def _is_switch_a_light(attrs: dict, eid: str) -> bool:
+    """Return True if a switch entity looks like a light controller."""
+    # Skip auxiliary/config switches
+    eid_lower = eid.lower()
+    if any(eid_lower.endswith(suf) for suf in _SWITCH_SKIP_SUFFIXES):
+        return False
+    icon = attrs.get("icon", "").lower()
+    fn   = attrs.get("friendly_name", "").lower()
+    if any(kw in icon for kw in _LIGHT_MDI_KEYWORDS):
+        return True
+    s = fn + " " + eid_lower
+    return any(kw in s for kw in ["свет", "svet", "люстр", "гостин", "спальн",
+                                    "лампа", "подсветк", "торшер"])
+
+async def _refresh_lights():
+    """Сканировать HA, добавить новые light/switch в devices.json и пересобрать LIGHTS."""
+    try:
+        states = await ha_get("states")
+        if not states:
+            return
+        devices = _dev_load()
+        light_eids = {s["entity_id"] for s in states if s.get("entity_id","").startswith("light.")}
+        max_order  = max((v.get("order", 0) for v in devices.values()), default=6)
+        added = 0
+        for s in states:
+            eid   = s.get("entity_id", "")
+            attrs = s.get("attributes", {})
+            domain = eid.split(".")[0] if "." in eid else ""
+
+            is_light  = domain == "light"
+            is_switch = domain == "switch" and _is_switch_a_light(attrs, eid)
+            if not (is_light or is_switch):
+                continue
+            if eid in devices:
+                continue  # уже в конфиге (пользователь мог скрыть — не трогаем)
+            # Если есть light.X для того же устройства — предпочитаем его
+            if is_switch:
+                suffix = eid.split(".", 1)[1] if "." in eid else eid
+                if any(le.split(".", 1)[1] == suffix for le in light_eids):
+                    continue
+
+            fn = attrs.get("friendly_name", eid)
+            max_order += 1
+            devices[eid] = {
+                "name":    fn,
+                "icon":    _guess_light_icon(fn, eid),
+                "section": "lights",
+                "enabled": True,
+                "order":   max_order,
+            }
+            added += 1
+            log.info(f"Lights auto-discovery: +{domain} {eid} ({fn})")
+        if added:
+            _dev_save(devices)
+            log.info(f"Lights auto-discovery total: +{added}")
+        _dev_rebuild_lights(devices)
+    except Exception as e:
+        log.error(f"_refresh_lights error: {e}")
+
+def lights_kb(states: dict) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for name, (domain, eid) in LIGHTS.items():
+        icon = "🟡" if states.get(eid) == "on" else "⚫"
+        builder.button(text=f"{icon} {name}", callback_data=f"lt:{domain}:{eid}")
+    builder.button(text="💡 Всё вкл",    callback_data="lights_all:on")
+    builder.button(text="🌑 Всё выкл",   callback_data="lights_all:off")
+    builder.button(text="🛠 Настройки",  callback_data="lights_settings")
+    builder.button(text="🔄 Обновить",   callback_data="lights_refresh")
+    n = len(LIGHTS)
+    builder.adjust(*([2] * (n // 2 + n % 2)), 2, 1, 1)
+    return builder.as_markup()
+
+@dp.message(F.text == "💡 Свет")
+async def lights_menu(msg: Message):
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
+    states = {e: await ha_state(e) for _, (_, e) in LIGHTS.items()}
+    await msg.answer("💡 <b>Управление светом</b>", parse_mode="HTML",
+                     reply_markup=lights_kb(states))
+
+@dp.callback_query(F.data.startswith("lt:"))
+async def light_toggle(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    _, domain, eid = cb.data.split(":", 2)
+    state   = await ha_state(eid)
+    service = "turn_off" if state == "on" else "turn_on"
+    await ha_call(domain, service, eid)
+    await cb.answer("Выключаю..." if service == "turn_off" else "Включаю...")
+    await asyncio.sleep(0.5)
+    states = {e: await ha_state(e) for _, (_, e) in LIGHTS.items()}
+    await cb.message.edit_reply_markup(reply_markup=lights_kb(states))
+
+@dp.callback_query(F.data.startswith("lights_all:"))
+async def lights_all(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    action = cb.data.split(":")[1]
+    for _, (domain, eid) in LIGHTS.items():
+        await ha_call(domain, f"turn_{action}", eid)
+    await cb.answer("💡 Весь свет включён" if action == "on" else "🌑 Весь свет выключен")
+    await asyncio.sleep(1)
+    states = {e: await ha_state(e) for _, (_, e) in LIGHTS.items()}
+    await cb.message.edit_reply_markup(reply_markup=lights_kb(states))
+
+@dp.callback_query(F.data == "lights_refresh")
+async def lights_refresh(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    states = {e: await ha_state(e) for _, (_, e) in LIGHTS.items()}
+    await cb.message.edit_reply_markup(reply_markup=lights_kb(states))
+    await cb.answer("Обновлено")
+
+@dp.callback_query(F.data == "lights_settings")
+async def lights_settings(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    devices = _dev_load()
+    await cb.message.answer(_devices_main_text(devices), parse_mode="HTML",
+                             reply_markup=_devices_main_kb(devices))
+    await cb.answer()
+
+@dp.message(Command("lights_sync"))
+async def cmd_lights_sync(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    await _refresh_lights()
+    lines = "\n".join(f"  {n}: {eid}" for n, (_, eid) in LIGHTS.items())
+    await msg.answer(f"✅ Свет синхронизирован ({len(LIGHTS)} шт):\n{lines}")
+
+# ── 🛠 Управление устройствами (/devices) ─────────────────────────────────────
+_SECT_LABELS = {"lights": "💡 Свет", "hidden": "🚫 Скрыто"}
+
+def _devices_main_kb(devices: dict) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    items = sorted(devices.items(), key=lambda x: x[1].get("order", 99))
+    for eid, cfg in items:
+        enabled = cfg.get("enabled", True)
+        icon    = cfg.get("icon", "💡")
+        name    = cfg.get("name", eid)
+        dot     = "🟢" if enabled else "⚫"
+        builder.button(text=f"{dot} {icon} {name}", callback_data=f"dev:info:{eid}")
+    builder.button(text="🔍 Сканировать HA", callback_data="dev:scan")
+    builder.button(text="❌ Закрыть",         callback_data="dev:close")
+    builder.adjust(2)
+    return builder.as_markup()
+
+def _device_info_kb(eid: str, cfg: dict) -> InlineKeyboardMarkup:
+    enabled = cfg.get("enabled", True)
+    sect    = cfg.get("section", "lights")
+    builder = InlineKeyboardBuilder()
+    if enabled:
+        builder.button(text="🚫 Скрыть",     callback_data=f"dev:hide:{eid}")
+    else:
+        builder.button(text="✅ Показать",    callback_data=f"dev:show:{eid}")
+    builder.button(text="✏️ Переименовать",   callback_data=f"dev:rename:{eid}")
+    # Section toggle (currently only lights/hidden)
+    other_sect = "hidden" if sect == "lights" else "lights"
+    other_label = _SECT_LABELS.get(other_sect, other_sect)
+    builder.button(text=f"→ {other_label}", callback_data=f"dev:sect:{eid}:{other_sect}")
+    builder.button(text="◀️ Назад",          callback_data="dev:list")
+    builder.adjust(2, 1, 1)
+    return builder.as_markup()
+
+def _devices_info_text(eid: str, cfg: dict) -> str:
+    icon    = cfg.get("icon", "💡")
+    name    = cfg.get("name", eid)
+    enabled = cfg.get("enabled", True)
+    sect    = cfg.get("section", "lights")
+    return (
+        f"{icon} <b>{name}</b>\n"
+        f"<code>{eid}</code>\n\n"
+        f"Раздел: <b>{_SECT_LABELS.get(sect, sect)}</b>\n"
+        f"Статус: {'✅ Показывается' if enabled else '🚫 Скрыто'}"
+    )
+
+def _devices_main_text(devices: dict) -> str:
+    enabled = sum(1 for c in devices.values() if c.get("enabled", True))
+    hidden  = len(devices) - enabled
+    return (
+        f"🛠 <b>Управление устройствами</b>\n\n"
+        f"Всего: {len(devices)} | ✅ Показывается: {enabled} | 🚫 Скрыто: {hidden}\n\n"
+        f"🟢 — устройство видно в боте и мини апп\n"
+        f"⚫ — устройство скрыто\n\n"
+        f"Тапни устройство для управления:"
+    )
+
+@dp.message(Command("devices"))
+@dp.message(F.text == "🛠 Устройства")
+async def cmd_devices(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    devices = _dev_load()
+    await msg.answer(_devices_main_text(devices), parse_mode="HTML",
+                     reply_markup=_devices_main_kb(devices))
+
+@dp.callback_query(F.data == "dev:list")
+async def dev_list(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    devices = _dev_load()
+    await cb.message.edit_text(_devices_main_text(devices), parse_mode="HTML",
+                                reply_markup=_devices_main_kb(devices))
+    await cb.answer()
+
+@dp.callback_query(F.data.startswith("dev:info:"))
+async def dev_info(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    eid     = cb.data[len("dev:info:"):]
+    devices = _dev_load()
+    cfg     = devices.get(eid)
+    if not cfg:
+        await cb.answer("Устройство не найдено"); return
+    await cb.message.edit_text(_devices_info_text(eid, cfg), parse_mode="HTML",
+                                reply_markup=_device_info_kb(eid, cfg))
+    await cb.answer()
+
+@dp.callback_query(F.data.startswith("dev:hide:"))
+async def dev_hide(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    eid = cb.data[len("dev:hide:"):]
+    devices = _dev_load()
+    if eid in devices:
+        devices[eid]["enabled"] = False
+        _dev_save(devices)
+        _dev_rebuild_lights(devices)
+    cfg = devices.get(eid, {})
+    await cb.message.edit_text(_devices_info_text(eid, cfg), parse_mode="HTML",
+                                reply_markup=_device_info_kb(eid, cfg))
+    await cb.answer("🚫 Устройство скрыто")
+
+@dp.callback_query(F.data.startswith("dev:show:"))
+async def dev_show(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    eid = cb.data[len("dev:show:"):]
+    devices = _dev_load()
+    if eid in devices:
+        devices[eid]["enabled"] = True
+        _dev_save(devices)
+        _dev_rebuild_lights(devices)
+    cfg = devices.get(eid, {})
+    await cb.message.edit_text(_devices_info_text(eid, cfg), parse_mode="HTML",
+                                reply_markup=_device_info_kb(eid, cfg))
+    await cb.answer("✅ Устройство показано")
+
+@dp.callback_query(F.data.startswith("dev:sect:"))
+async def dev_sect(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    _, _, eid, new_sect = cb.data.split(":", 3)
+    devices = _dev_load()
+    if eid in devices:
+        devices[eid]["section"] = new_sect
+        # При переходе в hidden — отключаем; при lights — включаем
+        devices[eid]["enabled"] = (new_sect != "hidden")
+        _dev_save(devices)
+        _dev_rebuild_lights(devices)
+    cfg = devices.get(eid, {})
+    await cb.message.edit_text(_devices_info_text(eid, cfg), parse_mode="HTML",
+                                reply_markup=_device_info_kb(eid, cfg))
+    sect_label = _SECT_LABELS.get(new_sect, new_sect)
+    await cb.answer(f"Раздел: {sect_label}")
+
+@dp.callback_query(F.data.startswith("dev:rename:"))
+async def dev_rename_start(cb: CallbackQuery, state: FSMContext):
+    if not is_admin(cb.from_user.id): return
+    eid = cb.data[len("dev:rename:"):]
+    await state.update_data(rename_eid=eid)
+    await state.set_state(DeviceMgmt.rename_wait)
+    devices = _dev_load()
+    cur_name = devices.get(eid, {}).get("name", eid)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="❌ Отмена", callback_data=f"dev:rename_cancel:{eid}")
+    ]])
+    await cb.message.edit_text(
+        f"✏️ Введите новое имя для <b>{cur_name}</b>\n<code>{eid}</code>",
+        parse_mode="HTML", reply_markup=kb
+    )
+    await cb.answer()
+
+@dp.callback_query(F.data.startswith("dev:rename_cancel:"))
+async def dev_rename_cancel(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    eid = cb.data[len("dev:rename_cancel:"):]
+    devices = _dev_load()
+    cfg = devices.get(eid, {})
+    await cb.message.edit_text(_devices_info_text(eid, cfg), parse_mode="HTML",
+                                reply_markup=_device_info_kb(eid, cfg))
+    await cb.answer("Отменено")
+
+@dp.message(StateFilter(DeviceMgmt.rename_wait))
+async def dev_rename_done(msg: Message, state: FSMContext):
+    if not is_admin(msg.from_user.id):
+        await state.clear(); return
+    data = await state.get_data()
+    eid  = data.get("rename_eid")
+    new_name = msg.text.strip()
+    await state.clear()
+    if not eid or not new_name:
+        await msg.answer("❌ Пустое имя — отмена"); return
+    devices = _dev_load()
+    if eid in devices:
+        devices[eid]["name"] = new_name
+        _dev_save(devices)
+        _dev_rebuild_lights(devices)
+    await msg.answer(f"✅ Переименовано → <b>{new_name}</b>", parse_mode="HTML",
+                     reply_markup=_device_info_kb(eid, devices.get(eid, {})))
+
+@dp.callback_query(F.data == "dev:scan")
+async def dev_scan(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    await cb.answer("🔍 Сканирую HA...")
+    await _refresh_lights()
+    devices = _dev_load()
+    await cb.message.edit_text(_devices_main_text(devices), parse_mode="HTML",
+                                reply_markup=_devices_main_kb(devices))
+
+@dp.callback_query(F.data == "dev:close")
+async def dev_close(cb: CallbackQuery):
+    await cb.message.delete()
+    await cb.answer()
+
+# ── 🌡️ Климат ─────────────────────────────────────────────────────────────────
+async def build_climate_text() -> str:
+    (temp, hum, floor, floor_t), weather_data = await asyncio.gather(
+        asyncio.gather(
+            ha_state("sensor.temp_detskaia_temperature"),
+            ha_state("sensor.temp_detskaia_humidity"),
+            ha_state("climate.teplyi_pol_lodzhiia"),
+            ha_attr("climate.teplyi_pol_lodzhiia", "current_temperature"),
+        ),
+        get_weather(),
+    )
+    rising  = await ha_state("sensor.sun_next_rising")
+    setting = await ha_state("sensor.sun_next_setting")
+
+    def fmt_time(iso):
+        try:
+            dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            return dt.astimezone().strftime("%H:%M")
+        except Exception:
+            return "?"
+
+    floor_icon  = "🔥" if floor == "heat" else "❄️"
+    temp_alert  = ""
+    try:
+        t = float(temp)
+        if t < 18:   temp_alert = " ⚠️ ХОЛОДНО!"
+        elif t > 27: temp_alert = " ⚠️ ЖАРКО!"
+    except Exception:
+        pass
+
+    outdoor_line = ""
+    if weather_data:
+        outdoor_t = weather_data.get("current", {}).get("temperature_2m")
+        if outdoor_t is not None:
+            try:
+                diff = float(temp) - float(outdoor_t)
+                diff_str = f" (+{diff:.0f}° теплее)" if diff > 0 else f" ({diff:.0f}° холоднее)"
+            except Exception:
+                diff_str = ""
+            outdoor_line = f"\n🌤️ На улице: <b>{outdoor_t:.0f}°C</b>{diff_str}"
+
+    return (
+        f"🌡️ <b>Климат</b>\n\n"
+        f"🏠 Детская: <b>{temp}°C</b>{temp_alert}, влажность {hum}%"
+        f"{outdoor_line}\n"
+        f"{floor_icon} Тёплый пол (лоджия): <b>{floor}</b>, {floor_t}°C\n"
+        f"🌅 Восход: {fmt_time(rising)}  🌇 Закат: {fmt_time(setting)}"
+    )
+
+def _climate_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔥 Пол вкл",  callback_data="floor_on"),
+            InlineKeyboardButton(text="❄️ Пол выкл", callback_data="floor_off"),
+        ],
+        [
+            InlineKeyboardButton(text="🌡️ Пол +1°",  callback_data="floor_temp:+1"),
+            InlineKeyboardButton(text="🌡️ Пол -1°",  callback_data="floor_temp:-1"),
+        ],
+        [InlineKeyboardButton(text="📈 История темп 24ч", callback_data="temp_chart")],
+        [InlineKeyboardButton(text="🔄 Обновить",         callback_data="climate_refresh")],
+    ])
+
+@dp.message(F.text == "🌡️ Климат")
+async def climate_menu(msg: Message):
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
+    text = await build_climate_text()
+    await msg.answer(text, parse_mode="HTML", reply_markup=_climate_kb())
+
+@dp.callback_query(F.data.in_({"floor_on", "floor_off", "climate_refresh"}))
+async def climate_basic(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    if cb.data == "floor_on":
+        await ha_call("climate", "turn_on", "climate.teplyi_pol_lodzhiia")
+        await cb.answer("🔥 Тёплый пол включён")
+    elif cb.data == "floor_off":
+        await ha_call("climate", "turn_off", "climate.teplyi_pol_lodzhiia")
+        await cb.answer("❄️ Тёплый пол выключен")
+    else:
+        await cb.answer("Обновлено")
+    await asyncio.sleep(0.5)
+    text = await build_climate_text()
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=_climate_kb())
+
+@dp.callback_query(F.data == "temp_chart")
+async def temp_chart_cb(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    await cb.answer("📈 Строю график температуры...")
+    points = await ha_history("sensor.temp_detskaia_temperature", hours=24)
+    if not points:
+        await cb.message.answer("❌ Нет данных истории в HA")
+        return
+    img = _make_chart(points, "🌡️ Температура детской — 24 ч", "°C", "#ef5350")
+    if not img:
+        await cb.message.answer("❌ Не удалось построить график")
+        return
+    await cb.message.answer_photo(
+        BufferedInputFile(img, filename="temp.png"),
+        caption="🌡️ <b>Температура детской — 24 ч</b>",
+        parse_mode="HTML"
+    )
+
+@dp.callback_query(F.data.startswith("floor_temp:"))
+async def floor_temp_adjust(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    delta = int(cb.data.split(":")[1])
+    d = await ha_get("states/climate.teplyi_pol_lodzhiia")
+    if d:
+        current = d.get("attributes", {}).get("temperature", 25)
+        new_t   = float(current) + delta
+        await ha_post("services/climate/set_temperature", {
+            "entity_id": "climate.teplyi_pol_lodzhiia", "temperature": new_t
+        })
+        await cb.answer(f"🌡️ Установлено {new_t}°C")
+    else:
+        await cb.answer("❌ Не удалось")
+
+# ── ⚡ Энергия ────────────────────────────────────────────────────────────────
+async def _ha_today_kwh() -> float | None:
+    """Compute today's kWh from dom_energiia_vsego history (from midnight MSK)."""
+    try:
+        now_msk = datetime.now(MSK)
+        midnight = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
+        start = midnight.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        data = await ha_get(
+            f"history/period/{start}?filter_entity_id=sensor.dom_energiia_vsego&minimal_response=true"
+        )
+        if not data or not isinstance(data, list) or not data[0]:
+            return None
+        vals = []
+        for x in data[0]:
+            try:
+                vals.append(float(x["state"]))
+            except Exception:
+                pass
+        if len(vals) < 2:
+            return None
+        return max(0.0, vals[-1] - vals[0])
+    except Exception as e:
+        log.warning(f"_ha_today_kwh error: {e}")
         return None
-    community = probe.get("snmp_community", "public") or "public"
-    script = script.replace("SNMP_COMMUNITY_PLACEHOLDER", community)
-    login_key = await _get_login_key()
-    if not login_key:
-        return None
-    args = [
-        "node", MESHCTRL, "RunCommand",
-        "--url", MC_WSS,
-        "--loginkey", login_key,
-        "--id", device_id,
-        "--run", script,
-        "--reply", "--powershell",
-    ]
+
+async def build_energy_text() -> str:
+    power, v1, v2, v3, day, month, prog = await asyncio.gather(
+        ha_state("sensor.moshchnost_vsego_doma"),
+        ha_state("sensor.vvod_1_moshchnost"),
+        ha_state("sensor.vvod_2_moshchnost"),
+        ha_state("sensor.vvod_3_moshchnost"),
+        ha_state("sensor.elektroenergiia_stoimost_za_den"),
+        ha_state("sensor.elektroenergiia_stoimost_za_mesiats"),
+        ha_state("sensor.elektroenergiia_prognoz_scheta_za_mesiats"),
+    )
+    power_alert = ""
+    try:
+        if float(power) > 3000:
+            power_alert = " ⚠️"
+    except Exception:
+        pass
+    # Fix: if daily cost sensor is stuck at 0, compute from history
+    try:
+        if float(day) < 0.1:
+            kwh = await _ha_today_kwh()
+            if kwh is not None and kwh > 0:
+                try:
+                    tariff = max(float(await ha_state("input_number.tarif_den_kvt_ch")), 0.5)
+                except Exception:
+                    tariff = 5.68
+                day = f"{kwh * tariff:.2f}"
+    except Exception:
+        pass
+    return (
+        f"⚡ <b>Энергия</b>\n\n"
+        f"🏠 Общая мощность: <b>{power} Вт{power_alert}</b>\n"
+        f"  ├ Ввод 1: {v1} Вт\n"
+        f"  ├ Ввод 2: {v2} Вт\n"
+        f"  └ Ввод 3: {v3} Вт\n\n"
+        f"💰 Сегодня: <b>{day} ₽</b>\n"
+        f"💰 Месяц:   {month} ₽\n"
+        f"📈 Прогноз: {prog} ₽"
+    )
+
+def _energy_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📊 График 24ч",  callback_data="energy_chart:24"),
+            InlineKeyboardButton(text="📊 График 7д",   callback_data="energy_chart:168"),
+        ],
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data="energy_refresh")],
+    ])
+
+@dp.message(F.text == "⚡ Энергия")
+async def energy_menu(msg: Message):
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
+    text = await build_energy_text()
+    await msg.answer(text, parse_mode="HTML", reply_markup=_energy_kb())
+
+@dp.callback_query(F.data == "energy_refresh")
+async def energy_refresh(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    await cb.answer("Обновляю...")
+    text = await build_energy_text()
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=_energy_kb())
+
+@dp.callback_query(F.data.startswith("energy_chart:"))
+async def energy_chart_cb(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    hours = int(cb.data.split(":")[1])
+    label = "24 ч" if hours == 24 else "7 дней"
+    await cb.answer(f"📊 Строю график {label}...")
+    points = await ha_history("sensor.moshchnost_vsego_doma", hours=hours)
+    if not points:
+        await cb.message.answer("❌ Нет данных истории в HA")
+        return
+    img = _make_chart(points, f"⚡ Мощность дома — {label}", "Вт", "#ffd54f")
+    if not img:
+        await cb.message.answer("❌ Не удалось построить график")
+        return
+    await cb.message.answer_photo(
+        BufferedInputFile(img, filename="energy.png"),
+        caption=f"⚡ <b>Мощность дома — {label}</b>",
+        parse_mode="HTML"
+    )
+
+# ── 🌤️ Погода ─────────────────────────────────────────────────────────────────
+@dp.message(F.text == "🌤️ Погода")
+async def weather_menu(msg: Message):
+    if not is_allowed(msg.from_user.id): return
+    await msg.answer("🌤️ Загружаю погоду...")
+    data = await get_weather()
+    if not data:
+        await msg.answer("❌ Погода временно недоступна")
+        return
+    await msg.answer(build_weather_text(data), parse_mode="HTML", reply_markup=_WEATHER_KB)
+
+@dp.callback_query(F.data == "weather_refresh")
+async def weather_refresh(cb: CallbackQuery):
+    if not is_allowed(cb.from_user.id): return
+    await cb.answer("Загружаю...")
+    data = await get_weather()
+    if not data:
+        await cb.answer("❌ Недоступно")
+        return
+    await cb.message.edit_text(build_weather_text(data), parse_mode="HTML", reply_markup=_WEATHER_KB)
+
+# ── 🕌 Намаз ──────────────────────────────────────────────────────────────────
+@dp.message(F.text == "🕌 Намаз")
+async def namaz_menu(msg: Message):
+    if not is_allowed(msg.from_user.id): return
+    text = await build_namaz_text()
+    await msg.answer(text, parse_mode="HTML", reply_markup=_NAMAZ_KB)
+
+@dp.callback_query(F.data == "namaz_refresh")
+async def namaz_refresh(cb: CallbackQuery):
+    if not is_allowed(cb.from_user.id): return
+    await cb.answer("Обновляю...")
+    text = await build_namaz_text()
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=_NAMAZ_KB)
+
+# ── 📺 Телевизор ──────────────────────────────────────────────────────────────
+@dp.message(F.text == "📺 Телевизор")
+async def tv_menu(msg: Message):
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
+    d     = await ha_get(f"states/{TV_EID}")
+    state = d.get("state", "off") if d else "off"
+    text  = await build_tv_text()
+    await msg.answer(text, parse_mode="HTML", reply_markup=tv_kb(state))
+
+@dp.callback_query(F.data.startswith("tv:"))
+async def tv_action(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    action = cb.data.split(":", 1)[1]
+    if action == "turn_on":
+        await ha_call("media_player", "turn_on", TV_EID)
+        await cb.answer("▶️ Включаю...")
+    elif action == "turn_off":
+        await ha_call("media_player", "turn_off", TV_EID)
+        await cb.answer("📴 Выключаю...")
+    elif action == "media_play_pause":
+        await ha_call("media_player", "media_play_pause", TV_EID)
+        await cb.answer("⏯")
+    elif action == "media_stop":
+        await ha_call("media_player", "media_stop", TV_EID)
+        await cb.answer("⏹ Стоп")
+    elif action == "volume_up":
+        await ha_call("media_player", "volume_up", TV_EID)
+        await cb.answer("🔊")
+    elif action == "volume_down":
+        await ha_call("media_player", "volume_down", TV_EID)
+        await cb.answer("🔉")
+    elif action == "mute":
+        d     = await ha_get(f"states/{TV_EID}")
+        muted = d.get("attributes", {}).get("is_volume_muted", False) if d else False
+        await ha_post("services/media_player/volume_mute",
+                      {"entity_id": TV_EID, "is_volume_muted": not muted})
+        await cb.answer("🔇 Mute" if not muted else "🔊 Unmute")
+    elif action == "go_home":
+        await ha_call("media_player", "select_source", TV_EID, {"source": "Home"})
+        await cb.answer("🏠 Домой")
+    elif action == "refresh":
+        await cb.answer("Обновлено")
+    await asyncio.sleep(0.5)
+    d     = await ha_get(f"states/{TV_EID}")
+    state = d.get("state", "off") if d else "off"
+    text  = await build_tv_text()
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=tv_kb(state))
+
+# ── 🏡 Дом ────────────────────────────────────────────────────────────────────
+@dp.message(F.text == "🏡 Дом")
+async def home_menu(msg: Message):
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
+    khamzat, inet, dl, ul, tv, vacuum = await asyncio.gather(
+        ha_state("person.khamzat"),
+        ha_state("binary_sensor.keenetic_gateway_wan_status_2"),
+        ha_state("sensor.keenetic_gateway_download_speed_2"),
+        ha_state("sensor.keenetic_gateway_upload_speed_2"),
+        ha_state(TV_EID),
+        ha_state("vacuum.pylik"),
+    )
+    p_icon = "🏠" if khamzat == "home" else "🚗"
+    i_icon = "✅" if inet == "on" else "❌"
+    text = (
+        f"🏡 <b>Дом</b>\n\n"
+        f"{p_icon} Хамзат: <b>{khamzat}</b>\n"
+        f"{i_icon} Интернет: ↓{dl} / ↑{ul} Мбит/с\n"
+        f"📺 TV: <b>{tv}</b>\n"
+        f"🤖 Пылесос: <b>{vacuum}</b>"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔔 Обновить новости", callback_data="news_refresh")],
+        [InlineKeyboardButton(text="🔄 Обновить",         callback_data="home_refresh")],
+    ])
+    await msg.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@dp.callback_query(F.data == "home_refresh")
+async def home_refresh(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    khamzat, inet, dl, ul, tv, vacuum = await asyncio.gather(
+        ha_state("person.khamzat"),
+        ha_state("binary_sensor.keenetic_gateway_wan_status_2"),
+        ha_state("sensor.keenetic_gateway_download_speed_2"),
+        ha_state("sensor.keenetic_gateway_upload_speed_2"),
+        ha_state(TV_EID),
+        ha_state("vacuum.pylik"),
+    )
+    p_icon = "🏠" if khamzat == "home" else "🚗"
+    i_icon = "✅" if inet == "on" else "❌"
+    text = (
+        f"🏡 <b>Дом</b> ({datetime.now().strftime('%H:%M')})\n\n"
+        f"{p_icon} Хамзат: <b>{khamzat}</b>\n"
+        f"{i_icon} Интернет: ↓{dl} / ↑{ul} Мбит/с\n"
+        f"📺 TV: <b>{tv}</b>\n"
+        f"🤖 Пылесос: <b>{vacuum}</b>"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔔 Обновить новости", callback_data="news_refresh")],
+        [InlineKeyboardButton(text="🔄 Обновить",         callback_data="home_refresh")],
+    ])
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    await cb.answer("Обновлено")
+
+@dp.callback_query(F.data == "news_refresh")
+async def news_refresh(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    await ha_call("input_boolean", "turn_on",  "input_boolean.news_refresh_trigger")
+    await asyncio.sleep(0.5)
+    await ha_call("input_boolean", "turn_off", "input_boolean.news_refresh_trigger")
+    await cb.answer("📰 Новости обновляются...")
+
+# ── 🤖 Пылесос ────────────────────────────────────────────────────────────────
+async def build_vacuum_text() -> str:
+    d = await ha_get("states/vacuum.pylik")
+    if not d:
+        return "🤖 <b>Пылесос</b>\n\n❌ Недоступен"
+    state   = d.get("state", "?")
+    attrs   = d.get("attributes", {})
+    battery = attrs.get("battery_level", "?")
+    area    = attrs.get("cleaned_area", "?")
+    fan     = attrs.get("fan_speed", "?")
+    return (
+        f"🤖 <b>Пылесос Pylik</b>\n\n"
+        f"Статус: <b>{state}</b>\n"
+        f"🔋 Батарея: {battery}%\n"
+        f"📐 Площадь: {area} м²\n"
+        f"💨 Мощность: {fan}"
+    )
+
+@dp.message(F.text == "🤖 Пылесос")
+async def vacuum_menu(msg: Message):
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
+    text = await build_vacuum_text()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="▶️ Старт", callback_data="vac:start"),
+            InlineKeyboardButton(text="⏸ Пауза",  callback_data="vac:pause"),
+        ],
+        [
+            InlineKeyboardButton(text="🏠 База",     callback_data="vac:home"),
+            InlineKeyboardButton(text="🔄 Обновить", callback_data="vac:refresh"),
+        ],
+    ])
+    await msg.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("vac:"))
+async def vacuum_actions(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    action = cb.data.split(":")[1]
+    if action == "start":
+        await ha_call("vacuum", "start", "vacuum.pylik")
+        await cb.answer("▶️ Пылесос запущен")
+    elif action == "pause":
+        await ha_call("vacuum", "pause", "vacuum.pylik")
+        await cb.answer("⏸ Пауза")
+    elif action == "home":
+        await ha_call("vacuum", "return_to_base", "vacuum.pylik")
+        await cb.answer("🏠 На базу")
+    elif action == "refresh":
+        await cb.answer("Обновлено")
+    await asyncio.sleep(1)
+    text = await build_vacuum_text()
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=cb.message.reply_markup)
+
+# ── 👪 Семья ──────────────────────────────────────────────────────────────────
+async def build_family_text() -> str:
+    family = await get_family()
+    person_states = await asyncio.gather(*[ha_get(f"states/{eid}") for eid in family.values()])
+    lines = ["👪 <b>Семья</b>\n"]
+    for (label, eid), d in zip(family.items(), person_states):
+        if not d:
+            lines.append(f"👤 {label}: ❓ нет данных")
+            continue
+        state = d.get("state", "?")
+        if state == "home":
+            lines.append(f"👤 {label}: 🏠 <b>Дома</b>")
+        elif state == "not_home":
+            lines.append(f"👤 {label}: 🚗 Вне дома")
+        else:
+            lines.append(f"👤 {label}: 📍 {state}")
+    return "\n".join(lines)
+
+async def _family_kb() -> InlineKeyboardMarkup:
+    family = await get_family()
+    builder = InlineKeyboardBuilder()
+    for label, eid in family.items():
+        key = eid.split(".")[-1]       # "khamzat", "aiza", ...
+        builder.button(text=f"📍 {label}", callback_data=f"fam_loc:{key}")
+    builder.adjust(2)
+    builder.row(InlineKeyboardButton(text="🔄 Обновить", callback_data="family_refresh"))
+    return builder.as_markup()
+
+@dp.message(F.text == "👪 Семья")
+async def family_menu(msg: Message):
+    if not is_allowed(msg.from_user.id): return
+    text = await build_family_text()
+    await msg.answer(text, parse_mode="HTML", reply_markup=await _family_kb())
+
+@dp.callback_query(F.data == "family_refresh")
+async def family_refresh(cb: CallbackQuery):
+    if not is_allowed(cb.from_user.id): return
+    await cb.answer("Обновляю...")
+    text = await build_family_text()
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=await _family_kb())
+
+@dp.callback_query(F.data.startswith("fam_loc:"))
+async def family_location(cb: CallbackQuery):
+    if not is_allowed(cb.from_user.id): return
+    key = cb.data.split(":", 1)[1]   # "khamzat"
+    eid = f"person.{key}"
+    family = await get_family()
+    label = next((l for l, e in family.items() if e == eid), eid)
+    d = await ha_get(f"states/{eid}")
+    if not d:
+        await cb.answer("❌ Нет данных", show_alert=True)
+        return
+    attrs = d.get("attributes", {})
+    lat   = attrs.get("latitude")
+    lon   = attrs.get("longitude")
+    state = d.get("state", "?")
+    if lat and lon:
+        maps_url = f"https://www.google.com/maps?q={lat},{lon}"
+        acc      = attrs.get("gps_accuracy", "?")
+        text = (f"📍 <b>{label}</b>\n"
+                f"Статус: {'🏠 Дома' if state == 'home' else '🚗 Вне дома' if state == 'not_home' else state}\n"
+                f"Координаты: <code>{lat:.5f}, {lon:.5f}</code>\n"
+                f"Точность GPS: {acc} м")
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🗺 Открыть карту", url=maps_url)
+        ]])
+        await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
+        await cb.answer()
+    else:
+        await cb.answer(
+            f"📍 {label}: нет координат GPS (статус: {state})",
+            show_alert=True
+        )
+
+# ── 🛒 Покупки ─────────────────────────────────────────────────────────────────
+def _shop_kb(items: list) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for item in items:
+        name    = item.get("summary", "?")
+        status  = item.get("status", "needs_action")
+        done_cb = f"shop:done:{name[:40]}"
+        del_cb  = f"shop:del:{name[:40]}"
+        icon    = "☑️" if status == "completed" else "🔲"
+        display = (name[:30] + "…") if len(name) > 31 else name
+        builder.button(text=f"{icon} {display}", callback_data=done_cb)
+        builder.button(text="🗑",                callback_data=del_cb)
+    builder.button(text="➕ Добавить",   callback_data="shop:add")
+    builder.button(text="🧹 Очистить",  callback_data="shop:clear")
+    builder.button(text="🔄 Обновить",  callback_data="shop:refresh")
+    if items:
+        builder.adjust(*([2] * len(items)), 1, 2)
+    else:
+        builder.adjust(1, 2)
+    return builder.as_markup()
+
+async def build_shopping_text(items: list) -> str:
+    if not items:
+        return "🛒 <b>Список покупок</b>\n\n📭 Список пуст"
+    total   = len(items)
+    done    = sum(1 for i in items if i.get("status") == "completed")
+    pending = total - done
+    lines   = [f"🛒 <b>Список покупок</b> ({pending} не куплено)\n"]
+    for item in items:
+        name   = item.get("summary", "?")
+        status = item.get("status", "needs_action")
+        icon   = "✅" if status == "completed" else "🔲"
+        lines.append(f"{icon} {name}")
+    return "\n".join(lines)
+
+@dp.message(F.text == "🛒 Покупки")
+async def shopping_menu(msg: Message):
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
+    items = await ha_ws_get_todo_items(SHOP_EID)
+    text  = await build_shopping_text(items)
+    await msg.answer(text, parse_mode="HTML", reply_markup=_shop_kb(items))
+
+@dp.callback_query(F.data == "shop:refresh")
+async def shop_refresh(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    await cb.answer("Обновляю...")
+    items = await ha_ws_get_todo_items(SHOP_EID)
+    text  = await build_shopping_text(items)
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=_shop_kb(items))
+
+@dp.callback_query(F.data == "shop:add")
+async def shop_add_start(cb: CallbackQuery, state: FSMContext):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    await state.set_state(ShoppingAdd.waiting)
+    await cb.answer()
+    await cb.message.answer(
+        "🛒 Введи название товара:\n<i>(или /cancel для отмены)</i>",
+        parse_mode="HTML"
+    )
+
+@dp.message(Command("cancel"))
+async def cmd_cancel(msg: Message, state: FSMContext):
+    if not is_allowed(msg.from_user.id): return
+    current = await state.get_state()
+    await state.clear()
+    if current:
+        await msg.answer("❌ Отменено", reply_markup=main_kb())
+    else:
+        await msg.answer("🏠 Главное меню", reply_markup=main_kb())
+
+@dp.message(StateFilter(ShoppingAdd.waiting))
+async def shop_add_item(msg: Message, state: FSMContext):
+    if not is_bot_admin(msg.from_user.id): return
+    item_text = (msg.text or "").strip()
+    if not item_text or item_text.startswith("/"):
+        await state.clear()
+        await msg.answer("❌ Отменено", reply_markup=main_kb())
+        return
+    await state.clear()
+    result = await ha_post(f"services/todo/add_item",
+                           {"entity_id": SHOP_EID, "item": item_text})
+    if result is not None:
+        await msg.answer(f"✅ <b>{item_text}</b> добавлен в список", parse_mode="HTML",
+                         reply_markup=main_kb())
+    else:
+        await msg.answer("❌ Не удалось добавить", reply_markup=main_kb())
+    # Показываем обновлённый список
+    await asyncio.sleep(0.5)
+    items = await ha_ws_get_todo_items(SHOP_EID)
+    text  = await build_shopping_text(items)
+    await msg.answer(text, parse_mode="HTML", reply_markup=_shop_kb(items))
+
+@dp.callback_query(F.data.startswith("shop:done:"))
+async def shop_done_item(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    name = cb.data[10:]
+    # Toggle: check current status
+    items = await ha_ws_get_todo_items(SHOP_EID)
+    current_item = next((i for i in items if i.get("summary", "").startswith(name[:40])), None)
+    if current_item:
+        new_status = "needs_action" if current_item.get("status") == "completed" else "completed"
+        await ha_post(f"services/todo/update_item",
+                      {"entity_id": SHOP_EID, "item": current_item["summary"], "status": new_status})
+        await cb.answer("☑️ Отмечено" if new_status == "completed" else "🔲 Снято")
+    else:
+        await cb.answer("Не найдено")
+    await asyncio.sleep(0.3)
+    items = await ha_ws_get_todo_items(SHOP_EID)
+    text  = await build_shopping_text(items)
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=_shop_kb(items))
+
+@dp.callback_query(F.data.startswith("shop:del:"))
+async def shop_del_item(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    name = cb.data[9:]
+    items = await ha_ws_get_todo_items(SHOP_EID)
+    full_name = next((i["summary"] for i in items if i.get("summary", "").startswith(name[:40])), name)
+    await ha_post(f"services/todo/remove_item",
+                  {"entity_id": SHOP_EID, "item": full_name})
+    await cb.answer(f"🗑 Удалено")
+    await asyncio.sleep(0.3)
+    items = await ha_ws_get_todo_items(SHOP_EID)
+    text  = await build_shopping_text(items)
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=_shop_kb(items))
+
+@dp.callback_query(F.data == "shop:clear")
+async def shop_clear(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    # Remove all completed items
+    items = await ha_ws_get_todo_items(SHOP_EID)
+    done  = [i["summary"] for i in items if i.get("status") == "completed"]
+    for name in done:
+        await ha_post("services/todo/remove_item", {"entity_id": SHOP_EID, "item": name})
+    await cb.answer(f"🧹 Удалено {len(done)} выполненных")
+    await asyncio.sleep(0.5)
+    items = await ha_ws_get_todo_items(SHOP_EID)
+    text  = await build_shopping_text(items)
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=_shop_kb(items))
+
+# ── ⚙️ Автоматизации (с toggle) ──────────────────────────────────────────────
+@dp.message(F.text == "⚙️ Автоматизации")
+async def automations_menu(msg: Message):
+    global _autos_cache
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
+    _autos_cache = await _fetch_automations()
+    if not _autos_cache:
+        await msg.answer("❌ Нет автоматизаций")
+        return
+    await msg.answer(
+        "⚙️ <b>Автоматизации</b>\n\nНажми для включения/выключения:",
+        parse_mode="HTML",
+        reply_markup=_build_auto_kb(_autos_cache)
+    )
+
+@dp.callback_query(F.data.startswith("auto:"))
+async def automation_action(cb: CallbackQuery):
+    global _autos_cache
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    val = cb.data[5:]
+
+    if val == "r":
+        _autos_cache = await _fetch_automations()
+        await cb.message.edit_reply_markup(reply_markup=_build_auto_kb(_autos_cache))
+        await cb.answer("Обновлено")
+        return
+
+    try:
+        idx   = int(val)
+        entry = _autos_cache[idx]
+        eid   = entry["entity_id"]
+        state = entry.get("state", "off")
+    except (ValueError, IndexError):
+        await cb.answer("Ошибка")
+        return
+
+    if state == "on":
+        await ha_call("automation", "turn_off", eid)
+        _autos_cache[idx]["state"] = "off"
+        await cb.answer("🚫 Выключено")
+    else:
+        await ha_call("automation", "turn_on", eid)
+        _autos_cache[idx]["state"] = "on"
+        await cb.answer("✅ Включено")
+    await cb.message.edit_reply_markup(reply_markup=_build_auto_kb(_autos_cache))
+
+# ── 📹 Камеры ─────────────────────────────────────────────────────────────────
+_LABEL_MAP = {"person": "👤 Человек", "car": "🚗 Авто", "dog": "🐕 Собака", "cat": "🐱 Кот", "face": "😶 Лицо"}
+
+def _cameras_kb(event_count: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    evt_label = f"📋 События детекции ({event_count})" if event_count else "📋 Нет событий"
+    builder.button(text=evt_label,            callback_data="fri:events:0")
+    builder.button(text="🔄 Обновить",        callback_data="fri:refresh")
+    builder.button(text="📹 HA Камеры",       url=f"{HA_URL}/lovelace/cameras")
+    builder.button(text="🎞 Frigate",          url=f"{HA_URL}/ccab4aaf_frigate-fa")
+    builder.adjust(2)
+    return builder.as_markup()
+
+@dp.message(F.text == "📹 Камеры")
+async def cameras_menu(msg: Message):
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
+    evts = list(reversed(_frigate_events[-20:]))
+    await msg.answer(
+        "📹 <b>Камеры</b>\n\n"
+        f"🎥 Лофт · cam_a6810678\n"
+        f"📦 Событий в кеше: <b>{len(_frigate_events)}</b>\n\n"
+        "<i>Нажми «События детекции» чтобы увидеть список</i>",
+        parse_mode="HTML",
+        reply_markup=_cameras_kb(len(_frigate_events)),
+        disable_web_page_preview=True
+    )
+
+@dp.callback_query(F.data == "fri:refresh")
+async def fri_refresh(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    await cb.message.edit_text(
+        "📹 <b>Камеры</b>\n\n"
+        f"🎥 Лофт · cam_a6810678\n"
+        f"📦 Событий в кеше: <b>{len(_frigate_events)}</b>\n\n"
+        "<i>Нажми «События детекции» чтобы увидеть список</i>",
+        parse_mode="HTML",
+        reply_markup=_cameras_kb(len(_frigate_events)),
+    )
+    await cb.answer("Обновлено")
+
+@dp.callback_query(F.data.startswith("fri:events:"))
+async def fri_events(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    page = int(cb.data.split(":")[2])
+    per_page = 8
+    evts = list(reversed(_frigate_events))  # newest first
+    total = len(evts)
+    if not evts:
+        await cb.answer("Нет событий")
+        await cb.message.edit_text("📹 <b>Нет событий детекции</b>", parse_mode="HTML",
+                                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                                        InlineKeyboardButton(text="◀️ Назад", callback_data="fri:back")
+                                    ]]))
+        return
+    chunk = evts[page * per_page:(page + 1) * per_page]
+    lines = []
+    builder = InlineKeyboardBuilder()
+    for i, e in enumerate(chunk):
+        label   = _LABEL_MAP.get(e.get("label",""), f"📦 {e.get('label','')}")
+        camera  = e.get("camera","?")
+        score   = e.get("score", 0)
+        ts_str  = datetime.fromtimestamp(e.get("ts", 0), tz=MSK).strftime("%d.%m %H:%M")
+        eid     = e.get("id","")
+        lines.append(f"{label} · <b>{score}%</b> · {camera[:12]} · {ts_str}")
+        if eid:
+            builder.button(text=f"📸 #{page*per_page+i+1}", callback_data=f"fri:snap:{eid[:50]}")
+    builder.adjust(4)
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀️ Пред", callback_data=f"fri:events:{page-1}"))
+    if (page + 1) * per_page < total:
+        nav.append(InlineKeyboardButton(text="След ▶️", callback_data=f"fri:events:{page+1}"))
+    nav.append(InlineKeyboardButton(text="◀️ Назад", callback_data="fri:back"))
+    if nav:
+        builder.row(*nav)
+    text = (f"📋 <b>События детекции</b> (стр. {page+1}, всего {total})\n\n"
+            + "\n".join(lines)
+            + "\n\n<i>📸 — снимок конкретного события</i>")
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
+    await cb.answer()
+
+@dp.callback_query(F.data.startswith("fri:snap:"))
+async def fri_snap(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    eid_prefix = cb.data[len("fri:snap:"):]
+    # Find event by ID prefix
+    entry = next((e for e in _frigate_events if e.get("id","").startswith(eid_prefix)), None)
+    if not entry:
+        await cb.answer("❌ Событие не найдено"); return
+    snap_url = entry.get("snapshot_url","")
+    label    = _LABEL_MAP.get(entry.get("label",""), entry.get("label","?"))
+    camera   = entry.get("camera","?")
+    score    = entry.get("score", 0)
+    ts_str   = datetime.fromtimestamp(entry.get("ts", 0), tz=MSK).strftime("%d.%m.%Y %H:%M:%S")
+    caption  = f"📸 <b>Детекция Frigate</b>\n{label} · {score}%\n📷 {camera}\n🕐 {ts_str}"
+    # Also offer clip button via existing /send endpoint
+    eid_full = entry.get("id","")
+    clip_kb  = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🎬 Скачать клип", callback_data=f"fri:clip:{eid_full[:50]}")
+    ]]) if eid_full else None
+    if snap_url:
+        try:
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(snap_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        await cb.message.answer_photo(
+                            BufferedInputFile(data, "snap.jpg"),
+                            caption=caption, parse_mode="HTML", reply_markup=clip_kb
+                        )
+                        await cb.answer()
+                        return
+        except Exception as e:
+            log.warning(f"fri_snap download: {e}")
+    await cb.message.answer(caption, parse_mode="HTML", reply_markup=clip_kb)
+    await cb.answer()
+
+@dp.callback_query(F.data.startswith("fri:clip:"))
+async def fri_clip(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    eid_prefix = cb.data[len("fri:clip:"):]
+    entry = next((e for e in _frigate_events if e.get("id","").startswith(eid_prefix)), None)
+    if not entry:
+        await cb.answer("❌ Событие не найдено"); return
+    eid_full = entry.get("id","")
+    clip_url = f"{HA_URL}/api/frigate/notifications/{eid_full}/clip.mp4"
+    await cb.answer("🎬 Скачиваю клип...")
+    try:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(clip_url, headers=HA_HEADERS, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status == 200:
+                    data = await resp.read()
+                    camera  = entry.get("camera","cam")
+                    label   = _LABEL_MAP.get(entry.get("label",""), entry.get("label",""))
+                    ts_str  = datetime.fromtimestamp(entry.get("ts", 0), tz=MSK).strftime("%d.%m %H:%M")
+                    await cb.message.answer_video(
+                        BufferedInputFile(data, f"clip_{eid_full[:8]}.mp4"),
+                        caption=f"🎬 {label} · {camera} · {ts_str}", parse_mode="HTML"
+                    )
+                    return
+        await cb.message.answer("❌ Не удалось скачать клип (возможно слишком старое)")
+    except Exception as e:
+        await cb.message.answer(f"❌ Ошибка: {e}")
+
+@dp.callback_query(F.data == "fri:back")
+async def fri_back(cb: CallbackQuery):
+    await cb.message.edit_text(
+        "📹 <b>Камеры</b>\n\n"
+        f"🎥 Лофт · cam_a6810678\n"
+        f"📦 Событий в кеше: <b>{len(_frigate_events)}</b>\n\n"
+        "<i>Нажми «События детекции» чтобы увидеть список</i>",
+        parse_mode="HTML",
+        reply_markup=_cameras_kb(len(_frigate_events)),
+    )
+    await cb.answer()
+
+# ── 🧠 ИИ Ассистент (Claude) ──────────────────────────────────────────────────
+async def get_ha_context() -> str:
+    power, temp, hum, inet, tv, person, floor, vacuum, namaz_d = await asyncio.gather(
+        ha_state("sensor.moshchnost_vsego_doma"),
+        ha_state("sensor.temp_detskaia_temperature"),
+        ha_state("sensor.temp_detskaia_humidity"),
+        ha_state("binary_sensor.keenetic_gateway_wan_status_2"),
+        ha_state(TV_EID),
+        ha_state("person.khamzat"),
+        ha_state("climate.teplyi_pol_lodzhiia"),
+        ha_state("vacuum.pylik"),
+        ha_get(f"states/{NAMAZ_EID}"),
+    )
+    light_on = [n for n, (_, e) in LIGHTS.items() if await ha_state(e) == "on"]
+    lights_str = ", ".join(light_on) if light_on else "весь выключен"
+
+    namaz_str = ""
+    if namaz_d and namaz_d.get("state") == "active":
+        finishes = namaz_d.get("attributes", {}).get("finishes_at", "")
+        if finishes:
+            namaz_str = f"\nДо намаза: {_namaz_remaining(finishes)}"
+
+    return (
+        f"Мощность дома: {power} Вт\n"
+        f"Температура детской: {temp}°C, влажность {hum}%\n"
+        f"Интернет: {'онлайн' if inet == 'on' else 'офлайн'}\n"
+        f"TV: {tv}\nХамзат: {person}\n"
+        f"Тёплый пол: {floor}\nПылесос: {vacuum}\n"
+        f"Свет горит: {lights_str}"
+        + namaz_str
+    )
+
+async def ask_claude(question: str, context: str) -> str:
+    system = (
+        "Ты — умный ассистент умного дома. Отвечай коротко и по делу на русском языке. "
+        "Текущее состояние дома:\n" + context
+    )
+    prompt = f"{system}\n\nВопрос: {question}"
+    env = os.environ.copy()
+    env.pop("CLAUDECODE", None)
     try:
         proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=MC_DIR,
+            "/root/.local/bin/claude", "-p", prompt, "--model", "claude-haiku-4-5",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
-        raw = stdout.decode(errors="replace").strip()
-        brace = raw.find("{")
-        if brace == -1:
-            return None
-        obj, _ = json.JSONDecoder().raw_decode(raw, brace)
-        return obj
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        result = stdout.decode("utf-8", errors="replace").strip()
+        if result:
+            return result
+        log.error(f"Claude stderr: {stderr.decode('utf-8', errors='replace').strip()}")
+        return "❌ ИИ временно недоступен"
     except asyncio.TimeoutError:
-        log.warning(f"snmp_probe timeout for device {device_id}")
+        return "⏱ Таймаут — попробуй ещё раз"
     except Exception as e:
-        log.error(f"snmp_probe error: {e}")
-    return None
+        log.error(f"Claude error: {e}")
+        return f"❌ Ошибка: {e}"
 
+@dp.message(F.text == "🧠 ИИ Ассистент")
+async def ai_enter(msg: Message, state: FSMContext):
+    if not is_bot_admin(msg.from_user.id):
+        if is_allowed(msg.from_user.id): await msg.answer("🚫 Только просмотр")
+        return
+    await state.set_state(AIChat.active)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="❌ Выйти из чата с ИИ", callback_data="ai_exit")
+    ]])
+    await msg.answer(
+        "🧠 <b>ИИ Ассистент активен</b>\n\n"
+        "Задавай вопросы о состоянии дома.\n"
+        "Примеры:\n"
+        "• <i>Какая температура в детской?</i>\n"
+        "• <i>Сколько потребляет дом?</i>\n"
+        "• <i>Кто дома?</i>\n\n"
+        "Для выхода — /start или кнопка ниже",
+        parse_mode="HTML", reply_markup=kb
+    )
 
-def _snmp_fmt_rate(bps: float) -> str:
-    """Format bytes/sec as human-readable rate."""
-    if bps < 0:
-        return "?"
-    if bps < 1024:
-        return f"{bps:.0f} B/s"
-    if bps < 1024 * 1024:
-        return f"{bps/1024:.1f} KB/s"
-    return f"{bps/1024/1024:.2f} MB/s"
+@dp.callback_query(F.data == "ai_exit")
+async def ai_exit_cb(cb: CallbackQuery, state: FSMContext):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    await state.clear()
+    await cb.message.edit_text("✅ Вышел из режима ИИ")
+    await cb.message.answer("🏠 Главное меню:", reply_markup=main_kb())
+    await cb.answer()
 
+@dp.message(StateFilter(AIChat.active))
+async def ai_chat(msg: Message, state: FSMContext):
+    if not is_bot_admin(msg.from_user.id): return
+    question = msg.text or ""
+    if question.startswith("/"):
+        await state.clear()
+        await msg.answer("🏠 Главное меню:", reply_markup=main_kb())
+        return
+    thinking = await msg.answer("🧠 Думаю...")
+    context  = await get_ha_context()
+    answer   = await ask_claude(question, context)
+    await thinking.delete()
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="❌ Выйти из чата с ИИ", callback_data="ai_exit")
+    ]])
+    await msg.answer(f"🧠 {answer}", parse_mode="HTML", reply_markup=kb)
 
-async def snmp_poll_loop():
-    """Background task: poll SNMP on router via MeshCentral agent every 5 min."""
-    global _snmp_data
-    # Load cached data
-    try:
-        _snmp_data = json.loads(SNMP_DATA_FILE.read_text())
-    except Exception:
-        _snmp_data = {}
+# ── 🔍 Inline режим ───────────────────────────────────────────────────────────
+@dp.inline_query()
+async def inline_handler(query: InlineQuery):
+    q       = query.query.strip().lower()
+    results = []
 
-    while not _shutdown_event.is_set():
+    # Статус дома
+    if not q or any(k in q for k in ("дом", "статус", "status", "дома")):
         try:
-            probes = _load_json(KEENETIC_PROBES_FILE, [])
-            devs = await get_full_devices()
-            name_to_id = {d["name"]: d["id"] for d in devs}
-
-            for probe in probes:
-                if not probe.get("snmp_community"):
-                    continue
-                agent_name = probe.get("agent_name", "")
-                dev_id = name_to_id.get(agent_name)
-                if not dev_id:
-                    continue
-                # Check if agent is online
-                dev = next((d for d in devs if d["name"] == agent_name), None)
-                if not dev or not dev.get("online"):
-                    continue
-
-                result = await run_snmp_probe(dev_id, probe)
-                location = probe.get("location", agent_name)
-                now_ts = time.time()
-
-                if not result or result.get("error"):
-                    err = result.get("error", "timeout") if result else "timeout"
-                    _snmp_data[agent_name] = {
-                        "ok": False, "location": location,
-                        "error": err, "updated": now_ts,
-                    }
-                    log.warning(f"snmp_poll: {agent_name}: {err}")
-                    continue
-
-                # Calculate traffic rates from previous sample
-                prev = _snmp_data.get(agent_name, {}).get("data")
-                prev_ts = _snmp_data.get(agent_name, {}).get("updated", 0)
-                rates = {}
-                if prev and prev_ts and (now_ts - prev_ts) > 5:
-                    dt = now_ts - prev_ts
-                    for iface in ("if1", "if2", "if3"):
-                        old_in  = prev.get(f"{iface}_in", -1)
-                        old_out = prev.get(f"{iface}_out", -1)
-                        new_in  = result.get(f"{iface}_in", -1)
-                        new_out = result.get(f"{iface}_out", -1)
-                        if old_in >= 0 and new_in >= 0 and new_in >= old_in:
-                            rates[f"{iface}_rate_in"]  = (new_in  - old_in)  / dt
-                            rates[f"{iface}_rate_out"] = (new_out - old_out) / dt
-
-                _snmp_data[agent_name] = {
-                    "ok": True, "location": location,
-                    "router": result.get("router", ""),
-                    "updated": now_ts,
-                    "data": result,
-                    "rates": rates,
-                }
-                log.info(f"snmp_poll: {agent_name} ({location}) CPU={result.get('cpu_pct',-1)}%"
-                         f" uptime={result.get('uptime','?')}")
-
-            _save_json(SNMP_DATA_FILE, _snmp_data)
-        except Exception as e:
-            log.error(f"snmp_poll_loop: {e}")
-        try:
-            await asyncio.wait_for(_shutdown_event.wait(), timeout=SNMP_POLL_INTERVAL)
-            break
-        except asyncio.TimeoutError:
+            text = await build_status_text()
+            results.append(InlineQueryResultArticle(
+                id="status",
+                title="📊 Статус дома",
+                description="Мощность, температура, интернет, TV",
+                input_message_content=InputTextMessageContent(
+                    message_text=text, parse_mode="HTML"
+                )
+            ))
+        except Exception:
             pass
 
+    # Погода
+    if not q or any(k in q for k in ("погода", "weather", "темп")):
+        try:
+            data = await get_weather()
+            if data:
+                results.append(InlineQueryResultArticle(
+                    id="weather",
+                    title="🌤️ Погода — Грозный",
+                    description="Текущая погода и прогноз на 3 дня",
+                    input_message_content=InputTextMessageContent(
+                        message_text=build_weather_text(data), parse_mode="HTML"
+                    )
+                ))
+        except Exception:
+            pass
 
-def _snmp_status_text() -> str:
-    """Build SNMP status summary string."""
-    if not _snmp_data:
-        return "Нет данных. Добавьте <code>snmp_community</code> в keenetic_probes.json."
-    lines = ["📡 <b>SNMP роутеры</b>", ""]
-    for agent, entry in _snmp_data.items():
-        loc = entry.get("location", agent)
-        if not entry.get("ok"):
-            lines.append(f"🔴 <b>{loc}</b> — ❌ {entry.get('error','?')}")
-            continue
-        d = entry.get("data", {})
-        r = entry.get("rates", {})
-        cpu    = d.get("cpu_pct", -1)
-        uptime = d.get("uptime", "?")
-        router = d.get("router", "?")
-        name   = d.get("sys_name", "") or d.get("sys_descr", "")[:40] or "?"
-        cpu_s  = f"{cpu}%" if cpu >= 0 else "?"
-        upd    = datetime.fromtimestamp(entry["updated"]).strftime("%H:%M")
-        lines.append(f"🟢 <b>{loc}</b> — {router} ({name})")
-        lines.append(f"   CPU: {cpu_s}  |  Uptime: {uptime}  |  ⏱ {upd}")
-        # Traffic for first non-zero interface rate
-        for iface in ("if1", "if2", "if3"):
-            ri = r.get(f"{iface}_rate_in", -1)
-            ro = r.get(f"{iface}_rate_out", -1)
-            if ri >= 0 and ro >= 0:
-                lines.append(f"   ↓ {_snmp_fmt_rate(ri)}  ↑ {_snmp_fmt_rate(ro)}")
-                break
-        lines.append("")
-    return "\n".join(lines).strip()
+    # Намаз
+    if not q or any(k in q for k in ("намаз", "namaz", "молитва")):
+        try:
+            text = await build_namaz_text()
+            results.append(InlineQueryResultArticle(
+                id="namaz",
+                title="🕌 Намаз",
+                description="Таймер до следующего намаза",
+                input_message_content=InputTextMessageContent(
+                    message_text=text, parse_mode="HTML"
+                )
+            ))
+        except Exception:
+            pass
 
+    # Энергия
+    if not q or any(k in q for k in ("энергия", "свет", "мощность", "energy")):
+        try:
+            text = await build_energy_text()
+            results.append(InlineQueryResultArticle(
+                id="energy",
+                title="⚡ Энергия",
+                description="Мощность и стоимость электричества",
+                input_message_content=InputTextMessageContent(
+                    message_text=text, parse_mode="HTML"
+                )
+            ))
+        except Exception:
+            pass
 
-@router.callback_query(F.data == "tool:snmp")
-async def cb_tool_snmp(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    text = _snmp_status_text()
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🔄 Обновить", callback_data="snmp:refresh"),
-        InlineKeyboardButton(text="⚙️ Настройка", callback_data="snmp:config"),
-    ]])
-    await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    # Семья
+    if not q or any(k in q for k in ("семья", "family", "дома", "хамзат")):
+        try:
+            text = await build_family_text()
+            results.append(InlineQueryResultArticle(
+                id="family",
+                title="👪 Семья",
+                description="Кто дома, кто вне дома",
+                input_message_content=InputTextMessageContent(
+                    message_text=text, parse_mode="HTML"
+                )
+            ))
+        except Exception:
+            pass
 
+    await query.answer(results[:10], cache_time=30, is_personal=True)
 
-@router.callback_query(F.data == "snmp:refresh")
-async def cb_snmp_refresh(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer("Данные обновляются раз в 5 мин автоматически")
-    text = _snmp_status_text()
+# ── Фоновые алерты ────────────────────────────────────────────────────────────
+_alert_state = {
+    "power_high":              False,
+    "temp_low":                False,
+    "temp_high":               False,
+    "person_khamzat":          None,   # kept for compat
+    "person_khamzat_notif_ts": None,
+    "persons":                 {},     # {entity_id: state} для всех членов семьи
+    "namaz_notified_prayer":   None,   # kept for compat
+    "namaz_done_keys":         set(),  # {"2026-03-09_Asr_15", ...} — отправленные уведомления
+    "namaz_done_day":          None,   # дата для сброса namaz_done_keys
+    "last_briefing_day":       None,
+    "last_weekly_report":      None,   # "week_10_2026"
+    "last_monthly_report":     None,   # "2026-03"
+    "all_away":                False,  # все ушли из дома
+    "all_away_notif_ts":       None,
+    "inet_down":               False,
+    "inet_down_ts":            None,   # datetime UTC когда интернет упал
+    "last_recognized_face":    None,   # последнее распознанное лицо
+    "person_img_ts":           None,   # последний timestamp image.cam_a6810678_person
+}
+
+async def alert_loop():
+    await asyncio.sleep(10)
+    while True:
+        try:
+            await _check_alerts()
+        except Exception as e:
+            log.error(f"Alert loop error: {e}")
+        await asyncio.sleep(60)
+
+async def _check_alerts():
+    family = await get_family()  # {name: entity_id}
+    person_eids = list(family.values()) or ["person.khamzat"]
+    gather_items = [
+        ha_get("states/sensor.moshchnost_vsego_doma"),
+        ha_get("states/sensor.temp_detskaia_temperature"),
+        ha_get("states/person.khamzat"),
+        ha_get("states/binary_sensor.keenetic_gateway_wan_status_2"),
+        ha_get("states/image.cam_a6810678_person"),
+        *[ha_get(f"states/{eid}") for eid in person_eids],
+    ]
+    results = await asyncio.gather(*gather_items)
+    power_d     = results[0]
+    temp_d      = results[1]
+    person_d    = results[2]
+    inet_d      = results[3]
+    person_img_d = results[4]
+    all_persons = results[5:]  # parallel to person_eids
+
+    acfg = _alerts_load()
+    now_h = datetime.now(MSK).hour
+    # Quiet hours check
+    qs, qe = acfg["quiet_hours_start"], acfg["quiet_hours_end"]
+    in_quiet = (qs > qe and (now_h >= qs or now_h < qe)) or (qs < qe and qs <= now_h < qe)
+
+    # ⚡ Высокая мощность
+    if acfg["enabled"].get("power", True) and not in_quiet:
+        try:
+            power = float(power_d.get("state", 0)) if power_d else 0
+            thr = acfg["power_threshold"]
+            if power > thr and not _alert_state["power_high"]:
+                _alert_state["power_high"] = True
+                await bot.send_message(ADMIN_ID, f"⚡ <b>Высокая нагрузка!</b> {power:.0f} Вт (порог {thr} Вт)", parse_mode="HTML")
+            elif power <= thr and _alert_state["power_high"]:
+                _alert_state["power_high"] = False
+        except Exception as e:
+            log.error(f"Alert power check: {e}")
+
+    # 🌡️ Температура детской
+    if acfg["enabled"].get("temp", True):
+        try:
+            temp = float(temp_d.get("state", 20)) if temp_d else 20
+            t_min, t_max = acfg["temp_min"], acfg["temp_max"]
+            if temp < t_min and not _alert_state["temp_low"]:
+                _alert_state["temp_low"] = True
+                await bot.send_message(ADMIN_ID, f"🥶 <b>Холодно в детской!</b> {temp}°C (мин {t_min}°C)", parse_mode="HTML")
+            elif temp >= t_min:
+                _alert_state["temp_low"] = False
+            if temp > t_max and not _alert_state["temp_high"]:
+                _alert_state["temp_high"] = True
+                await bot.send_message(ADMIN_ID, f"🥵 <b>Жарко в детской!</b> {temp}°C (макс {t_max}°C)", parse_mode="HTML")
+            elif temp <= t_max:
+                _alert_state["temp_high"] = False
+        except Exception as e:
+            log.error(f"Alert temp check: {e}")
+
+    # 🏠 Приход/уход всех членов семьи
+    if acfg["enabled"].get("person", True):
+        try:
+            now_utc = datetime.now(timezone.utc)
+            family_names = {v: k for k, v in family.items()}  # {entity_id: name}
+            for eid, d in zip(person_eids, all_persons):
+                state = d.get("state", "?") if d else "?"
+                prev  = _alert_state["persons"].get(eid)
+                if prev is not None and prev != state:
+                    name = family_names.get(eid, eid.split(".")[-1].capitalize())
+                    if state == "home":
+                        await bot.send_message(ADMIN_ID, f"🏠 <b>{name}</b> дома!", parse_mode="HTML")
+                        _activity_log("person_home", name)
+                    elif prev == "home":
+                        await bot.send_message(ADMIN_ID, f"🚗 <b>{name}</b> ушёл(а)", parse_mode="HTML")
+                        _activity_log("person_away", name)
+                _alert_state["persons"][eid] = state
+            # backwards compat
+            _alert_state["person_khamzat"] = _alert_state["persons"].get("person.khamzat",
+                person_d.get("state", "?") if person_d else "?")
+        except Exception as e:
+            log.error(f"Alert person check: {e}")
+
+    # 🏠 Geofencing — все ушли / первый вернулся
+    if acfg["enabled"].get("person", True):
+        try:
+            family_names_geo = {v: k for k, v in family.items()}
+            person_states = [d.get("state", "?") if d else "?" for d in all_persons]
+            anyone_home = any(s == "home" for s in person_states)
+            prev_all_away = _alert_state["all_away"]
+            if not anyone_home and not prev_all_away:
+                # Everyone just left
+                _alert_state["all_away"] = True
+                last_ts = _alert_state["all_away_notif_ts"]
+                now_utc = datetime.now(timezone.utc)
+                cooldown_ok = last_ts is None or (now_utc - last_ts).total_seconds() > 1800
+                if cooldown_ok:
+                    _alert_state["all_away_notif_ts"] = now_utc
+                    away_kb = InlineKeyboardMarkup(inline_keyboard=[[
+                        InlineKeyboardButton(text="🚗 Режим Уходим", callback_data="scene:run:away")
+                    ]])
+                    cap = "🏃 <b>Все ушли из дома!</b>"
+                    try:
+                        img_d = await ha_get("states/image.cam_a6810678_person")
+                        if img_d:
+                            tok = img_d.get("attributes", {}).get("access_token", "")
+                            snap_url = f"{HA_URL}/api/image_proxy/image.cam_a6810678_person?token={tok}"
+                            async with aiohttp.ClientSession() as sess:
+                                async with sess.get(snap_url, headers=HA_HEADERS, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                                    if r.status == 200:
+                                        img_bytes = await r.read()
+                                        await bot.send_photo(ADMIN_ID, BufferedInputFile(img_bytes, "geofence.jpg"),
+                                                             caption=cap, parse_mode="HTML", reply_markup=away_kb)
+                                        _activity_log("geofence_all_away", "snapshot sent")
+                                        return
+                    except Exception:
+                        pass
+                    await bot.send_message(ADMIN_ID, cap, parse_mode="HTML", reply_markup=away_kb)
+                    _activity_log("geofence_all_away", "text only")
+            elif anyone_home and prev_all_away:
+                _alert_state["all_away"] = False
+                # Кто первый вернулся?
+                first_home = next(
+                    (family_names_geo.get(eid, eid.split(".")[-1].capitalize())
+                     for eid, s in zip(person_eids, person_states) if s == "home"),
+                    None
+                )
+                if first_home:
+                    home_kb = InlineKeyboardMarkup(inline_keyboard=[[
+                        InlineKeyboardButton(text="💡 Режим Вечер", callback_data="scene:run:evening")
+                    ]])
+                    await bot.send_message(ADMIN_ID,
+                        f"🏠 <b>{first_home}</b> дома!\nВключить сцену?",
+                        parse_mode="HTML", reply_markup=home_kb)
+                    _activity_log("geofence_first_home", first_home)
+        except Exception as e:
+            log.error(f"Alert geofence check: {e}")
+
+    # 🌐 Интернет — падение/восстановление
+    if acfg["enabled"].get("inet", True):
+        try:
+            inet_state = inet_d.get("state", "unknown") if inet_d else "unknown"
+            prev_inet = _alert_state["inet_down"]
+            if inet_state in ("off", "unavailable") and not prev_inet:
+                _alert_state["inet_down"] = True
+                _alert_state["inet_down_ts"] = datetime.now(timezone.utc)
+                now_msk_str = datetime.now(MSK).strftime("%H:%M")
+                await bot.send_message(ADMIN_ID,
+                    f"🔴 <b>Интернет упал!</b>\n⏰ {now_msk_str}",
+                    parse_mode="HTML")
+                _activity_log("inet_down", now_msk_str)
+            elif inet_state == "on" and prev_inet:
+                _alert_state["inet_down"] = False
+                down_ts = _alert_state["inet_down_ts"]
+                if down_ts:
+                    secs = int((datetime.now(timezone.utc) - down_ts).total_seconds())
+                    if secs < 60:
+                        dur_str = f"{secs}с"
+                    elif secs < 3600:
+                        dur_str = f"{secs // 60}м {secs % 60:02d}с"
+                    else:
+                        dur_str = f"{secs // 3600}ч {(secs % 3600) // 60}м"
+                    await bot.send_message(ADMIN_ID,
+                        f"🟢 <b>Интернет восстановлен!</b>\n⏱ Простой: {dur_str}",
+                        parse_mode="HTML")
+                    _activity_log("inet_up", dur_str)
+                else:
+                    await bot.send_message(ADMIN_ID, "🟢 <b>Интернет восстановлен!</b>", parse_mode="HTML")
+                _alert_state["inet_down_ts"] = None
+        except Exception as e:
+            log.error(f"Alert inet check: {e}")
+
+    # 👤 Детекция человека камерой (через image entity)
+    if acfg["enabled"].get("camera", True) and not in_quiet:
+        try:
+            img_ts = person_img_d.get("state", "") if person_img_d else ""
+            prev_ts = _alert_state["person_img_ts"]
+            if img_ts and img_ts not in ("unavailable", "unknown", "") and img_ts != prev_ts:
+                _alert_state["person_img_ts"] = img_ts
+                if prev_ts is not None:  # skip initial state on startup
+                    img_tok = (person_img_d.get("attributes", {}).get("access_token", "")
+                               if person_img_d else "")
+                    img_url = f"{HA_URL}/api/image_proxy/image.cam_a6810678_person?token={img_tok}" if img_tok else ""
+                    caption = "📷 <b>Человек у камеры!</b>\nОбнаружено Frigate."
+                    sent = False
+                    if img_url:
+                        try:
+                            async with aiohttp.ClientSession() as sess:
+                                async with sess.get(img_url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                                    if resp.status == 200:
+                                        data = await resp.read()
+                                        await bot.send_photo(ADMIN_ID,
+                                            BufferedInputFile(data, "person.jpg"),
+                                            caption=caption, parse_mode="HTML")
+                                        sent = True
+                        except Exception as img_err:
+                            log.warning(f"Person detect photo: {img_err}")
+                    if not sent:
+                        await bot.send_message(ADMIN_ID, caption, parse_mode="HTML")
+                    _activity_log("person_detected", "cam_a6810678")
+                else:
+                    _alert_state["person_img_ts"] = img_ts
+        except Exception as e:
+            log.error(f"Alert person detect check: {e}")
+
+    # 📸 Распознавание лиц — только через webhook /frigate/person-identified от HA автоматизации
+
+    # 🕌 Намаз — уведомление за 15 мин (с кнопкой) и за 5 мин (финальное)
     try:
-        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=cb.message.reply_markup)
-    except Exception:
-        await cb.message.answer(text, parse_mode="HTML", reply_markup=cb.message.reply_markup)
+        now_msk = datetime.now(MSK)
+        # Сброс ключей уведомлений в новый день
+        today_str = now_msk.date().isoformat()
+        if _alert_state["namaz_done_day"] != today_str:
+            _alert_state["namaz_done_day"] = today_str
+            _alert_state["namaz_done_keys"] = set()
+        timings = await get_prayer_times() if acfg["enabled"].get("namaz", True) else None
+        timings = timings or {}
+        if timings:
+            for p_name in PRAYERS_ORDER:
+                p_time_str = timings.get(p_name, "")
+                if not p_time_str:
+                    continue
+                try:
+                    p_dt = datetime.strptime(p_time_str, "%H:%M").replace(
+                        year=now_msk.year, month=now_msk.month, day=now_msk.day,
+                        tzinfo=MSK
+                    )
+                except Exception:
+                    continue
+                diff_min = int((p_dt - now_msk).total_seconds() / 60)
+                icon, ru_name = PRAYERS_RU[p_name]
+                # 15-минутное предупреждение (от 6 до 15 минут)
+                if 5 < diff_min <= 15:
+                    key15 = f"{today_str}_{p_name}_15"
+                    if key15 not in _alert_state["namaz_done_keys"]:
+                        _alert_state["namaz_done_keys"].add(key15)
+                        kb = InlineKeyboardMarkup(inline_keyboard=[[
+                            InlineKeyboardButton(text="✅ Понял", callback_data=f"namaz_ok:{p_name}"),
+                        ]])
+                        await bot.send_message(
+                            ADMIN_ID,
+                            f"🕌 <b>Через {diff_min} мин — {ru_name}!</b>\n"
+                            f"{icon} Время намаза: <b>{p_time_str}</b>",
+                            parse_mode="HTML", reply_markup=kb
+                        )
+                    break
+                # 5-минутное финальное предупреждение
+                elif 0 < diff_min <= 5:
+                    key5 = f"{today_str}_{p_name}_5"
+                    if key5 not in _alert_state["namaz_done_keys"]:
+                        _alert_state["namaz_done_keys"].add(key5)
+                        await bot.send_message(
+                            ADMIN_ID,
+                            f"⏰ <b>Через {diff_min} мин — {ru_name}!</b>\n"
+                            f"{icon} Пора на намаз!",
+                            parse_mode="HTML"
+                        )
+                    break
+    except Exception as e:
+        log.error(f"Alert namaz check: {e}")
 
+    # 🌅 Утренняя сводка в 07:30 МСК
+    now = datetime.now(MSK)
+    if acfg["enabled"].get("morning", True) and now.hour == 7 and 28 <= now.minute <= 32:
+        today = now.date().isoformat()
+        if _alert_state["last_briefing_day"] != today:
+            _alert_state["last_briefing_day"] = today
+            await _send_morning_briefing()
 
-@router.callback_query(F.data == "snmp:config")
-async def cb_snmp_config(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    probes = _load_json(KEENETIC_PROBES_FILE, [])
-    lines = ["⚙️ <b>SNMP — настройка</b>", "",
-             "Добавьте поле <code>snmp_community</code> в keenetic_probes.json для нужных зондов:",
-             "", "<pre>"]
-    for p in probes:
-        has = "✅" if p.get("snmp_community") else "❌"
-        comm = p.get("snmp_community", "не задано")
-        lines.append(f'{has} {p.get("location", p.get("agent_name","?"))}: community="{comm}"')
-    lines += ["</pre>", "", "Пример: добавьте в probe объект:",
-              '<code>"snmp_community": "public"</code>',
-              "", "Стандартный community string на Keenetic: <b>public</b>"]
-    await cb.message.answer("\n".join(lines), parse_mode="HTML")
-    await cb.answer()
+    # 🗓️ Еженедельный отчёт — воскресенье 20:00
+    if now.weekday() == 6 and now.hour == 20 and now.minute < 1:
+        iso = now.isocalendar()
+        week_key = f"week_{iso.week}_{iso.year}"
+        if _alert_state["last_weekly_report"] != week_key:
+            _alert_state["last_weekly_report"] = week_key
+            await _send_weekly_report()
 
+    # 📅 Ежемесячный отчёт — 1-е число месяца 09:00 МСК
+    if now.day == 1 and now.hour == 9 and now.minute < 1:
+        month_key = now.strftime("%Y-%m")
+        if _alert_state["last_monthly_report"] != month_key:
+            _alert_state["last_monthly_report"] = month_key
+            await _send_monthly_report()
 
-# ─── HW Inventory handler ────────────────────────────────────────────
-
-@router.callback_query(F.data == "tool:hw_inventory")
-async def cb_tool_hw_inventory(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    global _hw_inventory
-    if not _hw_inventory:
-        _hw_inventory = _load_json(HW_INVENTORY_FILE, {})
-
-    if not _hw_inventory:
-        await cb.message.answer(
-            "💻 <b>HW инвентарь</b>\n\nДанные ещё собираются. Сбор запускается автоматически "
-            "каждые 4 часа для онлайн-устройств.\n\n"
-            "Нажмите кнопку ещё раз через несколько минут.",
-            parse_mode="HTML",
-        )
-        return
-
-    # Summary table
-    lines = ["💻 <b>Аппаратный инвентарь</b>\n"]
-    for name, inv in sorted(_hw_inventory.items()):
-        cpu = inv.get("cpu_name", "?")[:30]
-        ram = inv.get("ram_total_gb", "?")
-        disks = inv.get("disks", [])
-        disk_str = " ".join(f"{d.get('letter','?')}:{d.get('size_gb','?')}GB[{d.get('dtype','?')}]" for d in disks[:3])
-        lines.append(f"<b>{name}</b>")
-        lines.append(f"  ⚡ {cpu}")
-        lines.append(f"  🧠 {ram} GB RAM")
-        if disk_str:
-            lines.append(f"  💾 {disk_str}")
-        lines.append("")
-
-    text = "\n".join(lines)
-
-    # Offer per-device detail buttons
-    dev_buttons = []
-    for name in sorted(_hw_inventory.keys()):
-        safe = name[:30]
-        dev_buttons.append([InlineKeyboardButton(text=f"💻 {safe}", callback_data=f"hw_detail:{safe}")])
-    dev_buttons.append([InlineKeyboardButton(text="🔄 Собрать сейчас", callback_data="hw_collect_now")])
-
-    await cb.message.answer(
-        text[:4000],
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=dev_buttons),
-    )
-
-
-@router.callback_query(F.data.startswith("hw_detail:"))
-async def cb_hw_detail(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    device_name = cb.data.split(":", 1)[1]
-    inv = _hw_inventory.get(device_name)
-    text = _hw_inventory_text(inv, device_name)
-    await cb.message.answer(text, parse_mode="HTML")
-    await cb.answer()
-
-
-@router.callback_query(F.data == "hw_collect_now")
-async def cb_hw_collect_now(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer("⏳ Запускаю сбор…", show_alert=True)
-    await cb.message.answer("⏳ Запускаю сбор HW данных для онлайн-устройств…\nЭто займёт 1-3 минуты.", parse_mode="HTML")
-    asyncio.create_task(_hw_collect_now_task(cb.from_user.id))
-
-
-async def _hw_collect_now_task(aid: int):
+async def _send_morning_briefing():
     try:
-        devs = await get_full_devices()
-        online = [d for d in devs if d.get("online")]
-        for d in online:
-            await _collect_hw_for_device(d["id"], d["name"])
-            await asyncio.sleep(3)
+        now_msk = datetime.now(MSK)
+        date_str = now_msk.strftime("%d.%m.%Y")
+        day_names = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+        day_ru = day_names[now_msk.weekday()]
+
+        # Погода
+        weather_data = await get_weather()
+        weather_line = ""
+        if weather_data:
+            c    = weather_data.get("current", {})
+            daily = weather_data.get("daily", {})
+            code = c.get("weather_code", 0)
+            cond = WMO_CODES.get(code, "").split()[0] if WMO_CODES.get(code) else ""
+            temp = c.get("temperature_2m", "?")
+            t_max = daily.get("temperature_2m_max", [None])[0]
+            t_min = daily.get("temperature_2m_min", [None])[0]
+            if t_max is not None and t_min is not None:
+                weather_line = f"\n🌤️ Погода: {cond} <b>{temp}°C</b> (сегодня {t_min:.0f}…{t_max:.0f}°C)"
+            else:
+                weather_line = f"\n🌤️ Погода: {cond} <b>{temp}°C</b>"
+
+        # Расписание намаза
+        prayer_line = ""
+        timings = await get_prayer_times()
+        if timings:
+            parts = []
+            for p in PRAYERS_ORDER:
+                t = timings.get(p, "")
+                if t:
+                    icon, ru = PRAYERS_RU[p]
+                    parts.append(f"{icon}{t}")
+            if parts:
+                prayer_line = "\n🕌 " + "  ".join(parts)
+
+        # Кто дома
+        family = await get_family()
+        home_line = ""
+        if family:
+            try:
+                person_results = await asyncio.gather(*[ha_get(f"states/{eid}") for eid in family.values()])
+                home_list, away_list = [], []
+                for name, d in zip(family.keys(), person_results):
+                    if d and d.get("state") == "home":
+                        home_list.append(name)
+                    else:
+                        away_list.append(name)
+                if home_list:
+                    home_line = f"\n🏠 Дома: <b>{', '.join(home_list)}</b>"
+                elif away_list:
+                    home_line = f"\n🏠 Все ушли"
+            except Exception:
+                pass
+
+        # Расход за вчера
+        energy_line = ""
+        try:
+            cost_month = await ha_state("sensor.elektroenergiia_stoimost_za_mesiats")
+            cost_prog  = await ha_state("sensor.elektroenergiia_prognoz_scheta_za_mesiats")
+            day_num = now_msk.day
+            if day_num > 1 and cost_month:
+                try:
+                    avg_day = float(cost_month) / max(day_num - 1, 1)
+                    energy_line = f"\n⚡ Накоплено: <b>{float(cost_month):.0f} ₽</b> (~{avg_day:.0f} ₽/день)"
+                    if cost_prog:
+                        energy_line += f", прогноз: <b>{float(cost_prog):.0f} ₽</b>"
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         await bot.send_message(
-            aid,
-            f"✅ HW инвентарь обновлён: {len(online)} устройств\n"
-            f"Используйте 💻 Инвентарь HW чтобы посмотреть результаты.",
-            parse_mode="HTML",
+            ADMIN_ID,
+            f"🌅 <b>Доброе утро!</b> {day_ru}, {date_str}"
+            f"{weather_line}"
+            f"{home_line}"
+            f"{energy_line}"
+            f"{prayer_line}",
+            parse_mode="HTML"
+        )
+        _activity_log("morning_briefing", date_str)
+    except Exception as e:
+        log.error(f"Morning briefing error: {e}")
+
+async def _send_weekly_report():
+    try:
+        now = datetime.now(MSK)
+        week_num = now.isocalendar().week
+        day_d, month_d, prog_d = await asyncio.gather(
+            ha_state("sensor.elektroenergiia_stoimost_za_den"),
+            ha_state("sensor.elektroenergiia_stoimost_za_mesiats"),
+            ha_state("sensor.elektroenergiia_prognoz_scheta_za_mesiats"),
+        )
+        # Fix: if stoimost_za_den stuck at 0, calculate from kWh history
+        cost_day = day_d
+        try:
+            if float(day_d) < 0.1:
+                kwh = await _ha_today_kwh()
+                if kwh and kwh > 0:
+                    try:
+                        tariff = max(float(await ha_state("input_number.tarif_den")), 0.5)
+                    except Exception:
+                        tariff = 5.68
+                    cost_day = f"{kwh * tariff:.2f}"
+        except Exception:
+            pass
+        # Fix: calculate real monthly forecast from accumulated / days_passed * days_in_month
+        forecast = prog_d
+        try:
+            month_val = float(month_d)
+            day_num = now.day
+            if now.month == 12:
+                days_in_month = 31
+            else:
+                days_in_month = (now.replace(month=now.month + 1, day=1) - timedelta(days=1)).day
+            if month_val > 0 and day_num > 0:
+                forecast = f"{month_val / day_num * days_in_month:.0f}"
+        except Exception:
+            pass
+        text = (
+            f"🗓️ <b>Еженедельный отчёт — неделя {week_num}</b>\n\n"
+            f"⚡ Сегодня: <b>{cost_day} ₽</b>\n"
+            f"💰 Накоплено за месяц: <b>{month_d} ₽</b>\n"
+            f"📈 Прогноз за месяц: <b>{forecast} ₽</b>"
+        )
+        points = await ha_history("sensor.moshchnost_vsego_doma", hours=168)
+        if points:
+            img = _make_chart(points, f"⚡ Мощность дома — неделя {week_num}", "Вт", "#ffd54f")
+            if img:
+                await bot.send_photo(
+                    ADMIN_ID,
+                    BufferedInputFile(img, filename="weekly.png"),
+                    caption=text,
+                    parse_mode="HTML"
+                )
+                return
+        await bot.send_message(ADMIN_ID, text, parse_mode="HTML")
+    except Exception as e:
+        log.error(f"Weekly report error: {e}")
+
+async def _send_monthly_report():
+    """Ежемесячный отчёт: 1-е число месяца в 09:00 МСК."""
+    try:
+        now = datetime.now(MSK)
+        # Прошлый месяц
+        first_this = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        last_month_end = first_this - timedelta(seconds=1)
+        last_month_start = last_month_end.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        month_name = last_month_end.strftime("%B %Y")
+
+        month_d, day_d = await asyncio.gather(
+            ha_state("sensor.elektroenergiia_stoimost_za_mesiats"),
+            ha_state("sensor.elektroenergiia_stoimost_za_den"),
+        )
+
+        # История за 30 дней
+        points = await ha_history("sensor.moshchnost_vsego_doma", hours=720)
+
+        text = (
+            f"📅 <b>Ежемесячный отчёт — {month_name}</b>\n\n"
+            f"💰 Накоплено за месяц: <b>{month_d} ₽</b>\n"
+            f"⚡ Потребление за сегодня: <b>{day_d} ₽</b>\n\n"
+            f"Следующий отчёт — 1-е числа следующего месяца"
+        )
+        if points:
+            img = _make_chart(points, f"⚡ Мощность дома — {month_name}", "Вт", "#60a5fa")
+            if img:
+                await bot.send_photo(
+                    ADMIN_ID,
+                    BufferedInputFile(img, filename="monthly.png"),
+                    caption=text,
+                    parse_mode="HTML"
+                )
+                _activity_log("monthly_report", month_name)
+                return
+        await bot.send_message(ADMIN_ID, text, parse_mode="HTML")
+        _activity_log("monthly_report", month_name)
+    except Exception as e:
+        log.error(f"Monthly report error: {e}")
+
+# ── Web App handlers ──────────────────────────────────────────────────────────
+def _check_token(request: aiohttp_web.Request) -> bool:
+    auth = request.headers.get("Authorization", "")
+    return auth == f"Bearer {WEBAPP_TOKEN}"
+
+async def _web_index(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    path = WEBAPP_DIR / "index.html"
+    if not path.exists():
+        return aiohttp_web.Response(status=404, text="Not found")
+    # Inject real WEBAPP_TOKEN so the placeholder is never committed to git
+    html = path.read_text(encoding="utf-8").replace("__WEBAPP_TOKEN__", WEBAPP_TOKEN)
+    return aiohttp_web.Response(
+        text=html,
+        content_type="text/html",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+_CORS_HEADERS = {
+    "Access-Control-Allow-Origin":  "*",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+}
+
+async def _web_options(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    return aiohttp_web.Response(status=204, headers=_CORS_HEADERS)
+
+async def _web_health(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/health — healthcheck без аутентификации."""
+    uptime_sec = int(_time.time() - _BOT_START_TIME)
+    h = uptime_sec // 3600; m = (uptime_sec % 3600) // 60; s = uptime_sec % 60
+    uptime_str = f"{h}ч {m:02d}м {s:02d}с"
+    # Лёгкая проверка HA: GET /api/
+    ha_ok = False
+    try:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(
+                f"{HA_URL}/api/", headers=HA_HEADERS,
+                timeout=aiohttp.ClientTimeout(total=5)
+            ) as r:
+                ha_ok = r.status == 200
+    except Exception:
+        pass
+    payload = {
+        "ok":           True,
+        "version":      _BOT_VERSION,
+        "uptime":       uptime_str,
+        "uptime_sec":   uptime_sec,
+        "ha_connected": ha_ok,
+    }
+    return aiohttp_web.Response(
+        text=json.dumps(payload, ensure_ascii=False),
+        content_type="application/json",
+        headers=_CORS_HEADERS,
+    )
+
+async def _create_ha_automation(scene_id: str, scene: dict) -> dict:
+    """Create or update a HA automation for the given scene. Returns status dict."""
+    auto = scene.get("automation", {})
+    name = scene.get("name", scene_id)
+    actions = scene.get("actions", [])
+    trigger_type = auto.get("trigger_type", "time")
+
+    # Build trigger
+    if trigger_type == "time":
+        trigger_time = auto.get("trigger_time", "07:00")
+        # HA wants HH:MM:SS
+        if len(trigger_time) == 5:
+            trigger_time += ":00"
+        trigger = [{"platform": "time", "at": trigger_time}]
+    else:
+        entity = auto.get("trigger_entity", "")
+        state = auto.get("trigger_state", "on")
+        if not entity:
+            return {"error": "trigger_entity required for state trigger"}
+        trigger = [{"platform": "state", "entity_id": entity, "to": state}]
+
+    # Build HA action list from scene actions
+    ha_actions = []
+    for a in actions:
+        eid = a.get("entity_id", "")
+        svc = a.get("service", "")
+        if not eid or not svc or "." not in svc:
+            continue
+        domain, service = svc.split(".", 1)
+        action_body: dict = {"service": f"{domain}.{service}", "target": {"entity_id": eid}}
+        if a.get("extra"):
+            action_body["data"] = a["extra"]
+        ha_actions.append(action_body)
+
+    if not ha_actions:
+        return {"error": "no valid actions"}
+
+    automation_id = f"miniapp_scene_{scene_id}"
+    payload = {
+        "alias": f"Сцена: {name}",
+        "description": f"Создана через Mini App (сцена: {scene_id})",
+        "trigger": trigger,
+        "condition": [],
+        "action": ha_actions,
+        "mode": "single",
+    }
+
+    try:
+        url = f"{HA_URL}/api/config/automation/config/{automation_id}"
+        async with aiohttp.ClientSession() as sess:
+            async with sess.post(url, headers=HA_HEADERS, json=payload,
+                                 timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                body = await resp.text()
+                if resp.status in (200, 201):
+                    # Reload automations so HA picks up the change
+                    try:
+                        await ha_call("automation", "reload", "")
+                    except Exception:
+                        pass
+                    log.info(f"HA automation created: {automation_id}")
+                    return {"ok": True, "id": automation_id}
+                log.warning(f"HA automation create failed {resp.status}: {body[:200]}")
+                return {"error": f"HA returned {resp.status}", "detail": body[:200]}
+    except Exception as e:
+        log.warning(f"_create_ha_automation: {e}")
+        return {"error": str(e)}
+
+
+async def _web_scenes_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/scenes — список сцен."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    return aiohttp_web.Response(
+        text=json.dumps(_scenes_load(), ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+async def _web_scenes_post(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/scenes — создать/обновить сцену.
+    Body: {id, name, icon, description, actions: [{entity_id, service, extra?}]}"""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body = await request.json()
+        scene_id = body.get("id", "").strip()
+        if not scene_id:
+            return aiohttp_web.Response(status=400, text="id required", headers=_CORS_HEADERS)
+        scenes = _scenes_load()
+        auto_cfg = body.get("automation", {})
+        scenes[scene_id] = {
+            "name":        body.get("name", scene_id),
+            "icon":        body.get("icon", "⭐"),
+            "description": body.get("description", ""),
+            "actions":     body.get("actions", []),
+            "automation":  auto_cfg,
+        }
+        _scenes_save(scenes)
+        _activity_log("scene_saved", scene_id)
+        # Optionally create/update HA automation
+        auto_result = None
+        if auto_cfg.get("enabled"):
+            auto_result = await _create_ha_automation(scene_id, scenes[scene_id])
+        result = {"ok": True}
+        if auto_result:
+            result["automation"] = auto_result
+        return aiohttp_web.Response(text=json.dumps(result), content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+async def _web_scenes_delete(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """DELETE /ha-app/api/scenes/{id} — удалить сцену."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    scene_id = request.match_info.get("scene_id", "")
+    scenes = _scenes_load()
+    if scene_id in scenes:
+        del scenes[scene_id]
+        _scenes_save(scenes)
+        _activity_log("scene_deleted", scene_id)
+    return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                headers=_CORS_HEADERS)
+
+async def _web_scenes_run(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/scenes/{id}/run — запустить сцену."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    scene_id = request.match_info.get("scene_id", "")
+    scenes = _scenes_load()
+    scene = scenes.get(scene_id)
+    if not scene:
+        return aiohttp_web.Response(status=404, text="Scene not found", headers=_CORS_HEADERS)
+    errors = []
+    for action in scene.get("actions", []):
+        eid = action.get("entity_id", "")
+        svc = action.get("service", "")
+        extra = action.get("extra")
+        if not eid or not svc or "." not in svc:
+            continue
+        domain, service = svc.split(".", 1)
+        try:
+            await ha_call(domain, service, eid, extra)
+        except Exception as e:
+            errors.append(str(e))
+    _activity_log("scene_run", scene.get("name", scene_id))
+    # Invalidate status cache
+    _status_cache["ts"] = 0.0
+    result = {"ok": True, "scene": scene.get("name", scene_id), "actions": len(scene.get("actions", []))}
+    if errors:
+        result["errors"] = errors
+    return aiohttp_web.Response(text=json.dumps(result, ensure_ascii=False),
+                                content_type="application/json", headers=_CORS_HEADERS)
+
+async def _web_alerts_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/alerts — текущая конфигурация алертов."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    return aiohttp_web.Response(
+        text=json.dumps(_alerts_load(), ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+async def _web_alerts_post(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/alerts — сохранить конфигурацию алертов."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body = await request.json()
+        cfg  = _alerts_load()
+        for key in ("power_threshold", "temp_min", "temp_max", "quiet_hours_start", "quiet_hours_end"):
+            if key in body:
+                cfg[key] = int(body[key])
+        if "enabled" in body and isinstance(body["enabled"], dict):
+            cfg["enabled"].update(body["enabled"])
+        _alerts_save(cfg)
+        _activity_log("alerts_saved", str(cfg))
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+async def _web_activity(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/activity — последние 50 событий из activity_log.json."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        entries: list = []
+        if ACTIVITY_LOG_FILE.exists():
+            try:
+                entries = json.loads(ACTIVITY_LOG_FILE.read_text())
+            except Exception:
+                entries = []
+        return aiohttp_web.Response(
+            text=json.dumps(entries[-50:][::-1], ensure_ascii=False),
+            content_type="application/json",
+            headers=_CORS_HEADERS,
         )
     except Exception as e:
-        await bot.send_message(aid, f"❌ Ошибка сбора HW: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
-
-# ─── Temperature handler ─────────────────────────────────────────────
-
-@router.callback_query(F.data == "tool:temperature")
-async def cb_tool_temperature(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    global _temp_data
-    if not _temp_data:
-        _temp_data = _load_json(TEMP_DATA_FILE, {})
-
-    if not _temp_data:
-        await cb.message.answer(
-            "🌡 <b>Температуры</b>\n\nДанные ещё собираются. "
-            "Сбор запускается каждые 15 минут для онлайн-устройств.\n"
-            "Попробуйте через несколько минут.",
-            parse_mode="HTML",
-        )
-        return
-
-    lines = ["🌡 <b>Температуры и нагрузка CPU</b>\n"]
-    for name, data in sorted(_temp_data.items()):
-        load = data.get("cpu_load_pct", 0)
-        temps = data.get("temps", [])
-        updated = data.get("updated", "")
-        if data.get("no_sensor"):
-            lines.append(f"<b>{name}</b>: датчики недоступны, CPU {load}%")
-        elif not temps:
-            lines.append(f"<b>{name}</b>: нет данных, CPU {load}%")
-        else:
-            # Show max temp
-            max_t = max(t.get("temp_c", 0) for t in temps)
-            warn = "🔴" if max_t >= TEMP_WARN_C else ("🟡" if max_t >= 60 else "🟢")
-            lines.append(f"{warn} <b>{name}</b>: {max_t}°C  CPU {load}%")
-            for sensor in temps[:3]:
-                lines.append(f"   · {sensor.get('zone','?')[:40]}: {sensor.get('temp_c','?')}°C")
-        if updated:
-            lines.append(f"   <i>обновлено {updated}</i>")
-        lines.append("")
-
-    lines.append(f"🔴 ≥{TEMP_WARN_C}°C критично  🟡 ≥60°C повышено  🟢 норма")
-
-    await cb.message.answer(
-        "\n".join(lines)[:4000],
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Обновить сейчас", callback_data="temp_refresh_now")],
-        ]),
-    )
-
-
-@router.callback_query(F.data == "temp_refresh_now")
-async def cb_temp_refresh_now(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer("⏳ Собираю температуры…", show_alert=True)
-    asyncio.create_task(_temp_collect_now_task(cb.from_user.id))
-
-
-async def _temp_collect_now_task(aid: int):
-    global _temp_data
+async def _web_activity_clear(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/activity/clear — очистить историю активности."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
     try:
-        devs = await get_full_devices()
-        online = [d for d in devs if d.get("online")]
-        for d in online:
-            result = await _collect_temp_for_device(d["id"], d["name"])
-            if result:
-                result["updated"] = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M")
-                _temp_data[d["name"]] = result
-                _save_json(TEMP_DATA_FILE, _temp_data)
-            await asyncio.sleep(2)
-        await bot.send_message(aid, f"✅ Температуры собраны: {len(online)} устройств. Нажмите 🌡 Температуры снова.")
+        ACTIVITY_LOG_FILE.write_text("[]")
+        return aiohttp_web.Response(
+            text=json.dumps({"ok": True}),
+            content_type="application/json",
+            headers=_CORS_HEADERS,
+        )
     except Exception as e:
-        await bot.send_message(aid, f"❌ Ошибка: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
+# ── SSE (Server-Sent Events) real-time ───────────────────────────────────────
+_sse_clients: set = set()  # set of asyncio.Queue
 
-# ─── Availability heatmap handler ─────────────────────────────────────
+async def _sse_broadcast(entity_id: str, state: str, attrs: dict):
+    """Push state update to all connected SSE clients."""
+    payload = json.dumps({"entity_id": entity_id, "state": state, "attributes": attrs},
+                         ensure_ascii=False)
+    dead = set()
+    for q in _sse_clients:
+        try:
+            q.put_nowait(payload)
+        except asyncio.QueueFull:
+            dead.add(q)
+    _sse_clients -= dead
 
-@router.callback_query(F.data == "tool:availability")
-async def cb_tool_availability(cb: CallbackQuery, state: FSMContext):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    # Show device picker
-    devs = await get_full_devices()
-    buttons = []
-    row = []
-    for d in sorted(devs, key=lambda x: x["name"]):
-        row.append(InlineKeyboardButton(text=d["name"][:20], callback_data=f"avail_dev:{d['name'][:40]}"))
-        if len(row) == 2:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
-    await cb.message.answer(
-        "📊 <b>Доступность устройств</b>\n\nВыберите устройство для просмотра тепловой карты 7 дней:",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-    )
+def _check_token_qs(request: aiohttp_web.Request) -> bool:
+    """Check auth token from Authorization header or ?token= query param."""
+    auth = request.headers.get("Authorization", "")
+    if auth == f"Bearer {WEBAPP_TOKEN}":
+        return True
+    return request.rel_url.query.get("token") == WEBAPP_TOKEN
 
-
-@router.callback_query(F.data.startswith("avail_dev:"))
-async def cb_avail_device(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    device_name = cb.data.split(":", 1)[1]
-    heatmap = build_availability_heatmap(device_name)
-    await cb.message.answer(heatmap, parse_mode="HTML")
-    await cb.answer()
-
-
-# ─── Status page handler ─────────────────────────────────────────────
-
-@router.callback_query(F.data == "tool:status_page")
-async def cb_tool_status_page(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        await cb.answer("🔒", show_alert=True)
-        return
-    await cb.answer()
-    status_url = f"{MC_URL}/status"
-    if not STATUS_HTML_FILE.exists():
-        await cb.message.answer(
-            "🌐 Страница статуса ещё не сгенерирована. Подождите 60 секунд.",
-            parse_mode="HTML",
-        )
-        return
-    await cb.message.answer(
-        f"🌐 <b>Страница статуса сети</b>\n\n"
-        f"Публичная страница (без авторизации):\n"
-        f"<a href='{status_url}'>{status_url}</a>\n\n"
-        f"Обновляется каждые 60 секунд автоматически.\n"
-        f"Показывает онлайн/офлайн по каждой локации.",
-        parse_mode="HTML",
-        disable_web_page_preview=True,
-    )
-
-
-async def main():
-    log.info("MeshCentral Monitor Bot v4 starting...")
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, lambda: asyncio.create_task(shutdown()))
-    dp.startup.register(on_startup)
+async def _web_sse(request: aiohttp_web.Request) -> aiohttp_web.StreamResponse:
+    """GET /ha-app/api/events — SSE stream of HA state changes."""
+    if not _check_token_qs(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    headers = {
+        "Content-Type":  "text/event-stream",
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        **{k: v for k, v in _CORS_HEADERS.items()},
+    }
+    response = aiohttp_web.StreamResponse(headers=headers)
+    await response.prepare(request)
+    # Send initial "connected" event
+    await response.write(b"event: connected\ndata: {}\n\n")
+    queue: asyncio.Queue = asyncio.Queue(maxsize=50)
+    _sse_clients.add(queue)
     try:
-        await dp.start_polling(bot)
+        while True:
+            try:
+                payload = await asyncio.wait_for(queue.get(), timeout=25)
+                await response.write(f"data: {payload}\n\n".encode())
+            except asyncio.TimeoutError:
+                # Keepalive ping
+                await response.write(b": ping\n\n")
+    except (ConnectionResetError, asyncio.CancelledError):
+        pass
     finally:
-        if not _shutdown_event.is_set():
-            await shutdown()
+        _sse_clients.discard(queue)
+    return response
 
+async def _ha_state_watch_loop():
+    """Subscribe to HA state_changed events → broadcast via SSE."""
+    if not HAS_WS:
+        return
+    ha_ws = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
+    ssl_ctx = _ssl.create_default_context()
+    watch_eids: set[str] = set()
+
+    while True:
+        try:
+            async with websockets.connect(ha_ws, ssl=ssl_ctx, ping_interval=20, open_timeout=15) as ws:
+                msg = json.loads(await asyncio.wait_for(ws.recv(), 10))
+                await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
+                msg = json.loads(await asyncio.wait_for(ws.recv(), 10))
+                if msg.get("type") != "auth_ok":
+                    await asyncio.sleep(15)
+                    continue
+                # Subscribe to state_changed
+                await ws.send(json.dumps({"id": 1, "type": "subscribe_events",
+                                          "event_type": "state_changed"}))
+                await ws.recv()
+                log.info("HA state watch: subscribed to state_changed")
+                async for raw in ws:
+                    try:
+                        msg = json.loads(raw)
+                        if msg.get("type") != "event":
+                            continue
+                        evt  = msg.get("event", {})
+                        data = evt.get("data", {})
+                        eid  = data.get("entity_id", "")
+                        new_state = data.get("new_state")
+                        if not new_state or not eid:
+                            continue
+                        state  = new_state.get("state", "")
+                        attrs  = new_state.get("attributes", {})
+                        # Only broadcast for entities we track (lights, devices, key sensors)
+                        devs = _dev_load()
+                        relevant = (
+                            eid in devs or
+                            eid.startswith("light.") or
+                            eid.startswith("switch.") or
+                            eid == "sensor.moshchnost_vsego_doma" or
+                            eid == f"{TV_EID}" or
+                            eid.startswith("person.")
+                        )
+                        if relevant and _sse_clients:
+                            # Invalidate status cache on relevant change
+                            _status_cache["ts"] = 0.0
+                            await _sse_broadcast(eid, state, {
+                                "friendly_name": attrs.get("friendly_name", ""),
+                            })
+                    except Exception:
+                        pass
+        except Exception as e:
+            log.warning(f"HA state watch loop: {e}")
+            await asyncio.sleep(10)
+
+async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    # 5-second cache
+    now_ts = _time.time()
+    if _status_cache["data"] is not None and (now_ts - _status_cache["ts"]) < _STATUS_CACHE_TTL:
+        return aiohttp_web.Response(
+            text=_status_cache["data"],
+            content_type="application/json",
+            headers=_CORS_HEADERS,
+        )
+    try:
+        family = await get_family()
+        # Build list of custom-section devices (not lights, not hidden)
+        devices_cfg = _dev_load()
+        sections_cfg = _sect_load()
+        custom_sect_eids: list[str] = [
+            eid for eid, cfg in devices_cfg.items()
+            if cfg.get("section", "lights") not in ("lights", "hidden") and cfg.get("enabled", True)
+        ]
+
+        results = await asyncio.gather(
+            ha_get("states/sensor.moshchnost_vsego_doma"),
+            ha_get("states/sensor.temp_detskaia_temperature"),
+            ha_get("states/sensor.temp_detskaia_humidity"),
+            ha_get("states/binary_sensor.keenetic_gateway_wan_status_2"),
+            ha_get("states/climate.teplyi_pol_lodzhiia"),
+            ha_get(f"states/{TV_EID}"),
+            ha_get("states/vacuum.pylik"),
+            ha_get("states/sensor.elektroenergiia_stoimost_za_den"),
+            ha_get("states/sensor.elektroenergiia_stoimost_za_mesiats"),
+            *[ha_get(f"states/{eid}") for eid in family.values()],
+            *[ha_get(f"states/{eid}") for _, (_, eid) in LIGHTS.items()],
+            *[ha_get(f"states/{eid}") for eid in _HA_PRAYER_EIDS.values()],
+            *[ha_get(f"states/{eid}") for eid in custom_sect_eids],
+        )
+        n_fixed = 9
+        n_family = len(family)
+        n_lights = len(LIGHTS)
+        n_prayers = len(_HA_PRAYER_EIDS)
+        n_custom = len(custom_sect_eids)
+        power_d, temp_d, hum_d, inet_d, floor_d, tv_d, vac_d, cost_day_d, cost_month_d = results[:n_fixed]
+        family_results  = results[n_fixed:n_fixed + n_family]
+        lights_results  = results[n_fixed + n_family:n_fixed + n_family + n_lights]
+        prayer_results  = results[n_fixed + n_family + n_lights:n_fixed + n_family + n_lights + n_prayers]
+        custom_results  = results[n_fixed + n_family + n_lights + n_prayers:]
+
+        def st(d): return d.get("state", "?") if d else "?"
+
+        floor_attrs = floor_d.get("attributes", {}) if floor_d else {}
+        tv_attrs    = tv_d.get("attributes", {}) if tv_d else {}
+
+        family_data = {}
+        for (name, _), d in zip(family.items(), family_results):
+            attrs_f = d.get("attributes", {}) if d else {}
+            family_data[name] = {
+                "state": st(d),
+                "lat":   attrs_f.get("latitude"),
+                "lon":   attrs_f.get("longitude"),
+            }
+
+        lights_data = {}
+        for (name, (domain, eid)), d in zip(LIGHTS.items(), lights_results):
+            icon = LIGHTS_ICON.get(eid, "💡")
+            lights_data[eid] = {"state": st(d), "name": name, "icon": icon, "domain": domain}
+
+        # Prayers: {ru_name: "HH:MM"}
+        prayer_names_ru = {"Fajr": "Фаджр", "Dhuhr": "Зухр",
+                           "Asr": "Аср", "Maghrib": "Магриб", "Isha": "Иша"}
+        prayers_data = {}
+        for (prayer_key, _), pd in zip(_HA_PRAYER_EIDS.items(), prayer_results):
+            t = st(pd)[:5] if pd else "?"
+            prayers_data[prayer_names_ru.get(prayer_key, prayer_key)] = t
+
+        # Weather (cached, non-blocking)
+        weather_payload = None
+        wd = await get_weather()
+        if wd:
+            wc = wd.get("current", {})
+            wdaily = wd.get("daily", {})
+            wcode = wc.get("weather_code", 0)
+            try:
+                wupdated = datetime.fromisoformat(wc.get("time", "")).strftime("%H:%M")
+            except Exception:
+                wupdated = "?"
+            day_names_w = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+            wdays = wdaily.get("time", [])
+            wt_max = wdaily.get("temperature_2m_max", [])
+            wt_min = wdaily.get("temperature_2m_min", [])
+            wcodes = wdaily.get("weather_code", [])
+            wforecast = []
+            for wi in range(min(3, len(wdays))):
+                try:
+                    fd = datetime.fromisoformat(wdays[wi])
+                    wicon = WMO_CODES.get(wcodes[wi], "?").split()[0]
+                    wforecast.append({
+                        "label": f"{day_names_w[fd.weekday()]} {fd.strftime('%d.%m')}",
+                        "icon": wicon,
+                        "min": wt_min[wi],
+                        "max": wt_max[wi],
+                    })
+                except Exception:
+                    pass
+            weather_payload = {
+                "condition": WMO_CODES.get(wcode, f"Код {wcode}"),
+                "temp":      wc.get("temperature_2m"),
+                "feels_like": wc.get("apparent_temperature"),
+                "humidity":  wc.get("relative_humidity_2m"),
+                "wind":      wc.get("wind_speed_10m"),
+                "precip":    wc.get("precipitation", 0),
+                "updated":   wupdated,
+                "forecast":  wforecast,
+            }
+
+        outdoor_temp = None
+        if weather_payload:
+            outdoor_temp = weather_payload.get("temp")
+
+        # Daily cost: fix if sensor stuck at 0
+        cost_day_raw = st(cost_day_d)
+        cost_day_val = cost_day_raw
+        try:
+            if float(cost_day_raw) < 0.1:
+                kwh = await _ha_today_kwh()
+                if kwh is not None and kwh > 0:
+                    try:
+                        tariff = max(float(await ha_state("input_number.tarif_den_kvt_ch")), 0.5)
+                    except Exception:
+                        tariff = 5.68
+                    cost_day_val = f"{kwh * tariff:.2f}"
+        except Exception:
+            pass
+
+        # Custom sections data: group by section_id
+        custom_sections: dict = {}
+        for eid, d in zip(custom_sect_eids, custom_results):
+            cfg = devices_cfg.get(eid, {})
+            sect = cfg.get("section", "other")
+            if sect not in custom_sections:
+                custom_sections[sect] = {}
+            custom_sections[sect][eid] = {
+                "state":  st(d),
+                "name":   cfg.get("name", eid),
+                "icon":   cfg.get("icon", "📦"),
+                "domain": eid.split(".")[0] if "." in eid else "unknown",
+            }
+
+        # Sections metadata for frontend rendering
+        active_sects = []
+        for sect_id, sect_cfg in sorted(sections_cfg.items(), key=lambda x: x[1].get("order", 99)):
+            if sect_cfg.get("enabled", False) or sect_id in custom_sections:
+                active_sects.append({
+                    "id":      sect_id,
+                    "name":    sect_cfg.get("name", sect_id),
+                    "icon":    sect_cfg.get("icon", "📦"),
+                    "devices": custom_sections.get(sect_id, {}),
+                })
+
+        # Frigate camera counters
+        cam_person_d, cam_all_d = await asyncio.gather(
+            ha_get("states/sensor.cam_a6810678_person_count"),
+            ha_get("states/sensor.cam_a6810678_all_count"),
+        )
+        try:
+            cam_person_cnt = int(float(st(cam_person_d))) if cam_person_d else 0
+        except Exception:
+            cam_person_cnt = 0
+        try:
+            cam_all_cnt = int(float(st(cam_all_d))) if cam_all_d else 0
+        except Exception:
+            cam_all_cnt = 0
+
+        # Energy phases (vvod_1/2/3)
+        vvod1_d, vvod2_d, vvod3_d = await asyncio.gather(
+            ha_get("states/sensor.vvod_1_moshchnost"),
+            ha_get("states/sensor.vvod_2_moshchnost"),
+            ha_get("states/sensor.vvod_3_moshchnost"),
+        )
+        phases_data = [
+            {"name": "Фаза 1", "power": st(vvod1_d)},
+            {"name": "Фаза 2", "power": st(vvod2_d)},
+            {"name": "Фаза 3", "power": st(vvod3_d)},
+        ]
+
+        payload = {
+            "power":         st(power_d),
+            "temp_detskaia": st(temp_d),
+            "humidity":      st(hum_d),
+            "internet":      "on" if st(inet_d) == "on" else "off",
+            "floor_heating": st(floor_d),
+            "floor_setpoint": str(floor_attrs.get("temperature", "?")),
+            "floor_temp":    str(floor_attrs.get("current_temperature", "?")),
+            "cost_day":      cost_day_val,
+            "cost_month":    st(cost_month_d),
+            "cost_week":     (lambda: (lambda cm, dn: f"{float(cm)/max(dn,1)*7:.0f}"
+                              if cm and dn > 0 else None)(
+                              st(cost_month_d), datetime.now(MSK).day))(),
+            "outdoor_temp":  outdoor_temp,
+            "family":        family_data,
+            "lights":        lights_data,
+            "sections":      active_sects,
+            "phases":        phases_data,
+            "tv": {
+                "state":  st(tv_d),
+                "title":  tv_attrs.get("media_title", ""),
+                "volume": tv_attrs.get("volume_level"),
+                "muted":  tv_attrs.get("is_volume_muted", False),
+            },
+            "vacuum": {
+                "state": st(vac_d),
+            },
+            "prayers": prayers_data,
+            "weather": weather_payload,
+            "last_face": _alert_state.get("last_recognized_face") or "",
+            "cam_person_count": cam_person_cnt,
+            "cam_all_count":    cam_all_cnt,
+        }
+        payload_json = json.dumps(payload, ensure_ascii=False)
+        _status_cache["ts"]   = _time.time()
+        _status_cache["data"] = payload_json
+        return aiohttp_web.Response(
+            text=payload_json,
+            content_type="application/json",
+            headers=_CORS_HEADERS,
+        )
+    except Exception as e:
+        log.error(f"web_status error: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+async def _web_action(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body = await request.json()
+        service_str = body.get("service", "")   # e.g. "light.turn_on"
+        entity_id   = body.get("entity_id", "")
+        extra       = body.get("extra") or {}
+        if "." not in service_str or not entity_id:
+            return aiohttp_web.Response(status=400, text="Bad request", headers=_CORS_HEADERS)
+        domain, service = service_str.split(".", 1)
+        await ha_call(domain, service, entity_id, extra or None)
+        _activity_log(f"webapp:{service_str}", entity_id)
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    except Exception as e:
+        log.error(f"web_action error: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+async def _web_devices_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/devices — вернуть конфиг всех устройств."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    devices = _dev_load()
+    return aiohttp_web.Response(
+        text=json.dumps(devices, ensure_ascii=False),
+        content_type="application/json",
+        headers=_CORS_HEADERS,
+    )
+
+async def _web_devices_post(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/devices — обновить параметры устройства.
+    Body: {entity_id, name?, icon?, section?, enabled?}
+    """
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body = await request.json()
+        eid  = body.get("entity_id", "")
+        if not eid:
+            return aiohttp_web.Response(status=400, text="entity_id required", headers=_CORS_HEADERS)
+        devices = _dev_load()
+        if eid not in devices:
+            # Добавляем новую сущность
+            max_order = max((v.get("order", 0) for v in devices.values()), default=0) + 1
+            devices[eid] = {
+                "name":    body.get("name", eid),
+                "icon":    body.get("icon", "📦"),
+                "section": body.get("section", "hidden"),
+                "enabled": body.get("section", "hidden") != "hidden",
+                "order":   max_order,
+            }
+        else:
+            for field in ("name", "icon", "section", "enabled", "order"):
+                if field in body:
+                    devices[eid][field] = body[field]
+            # enabled = (section != "hidden")
+            if "section" in body:
+                devices[eid]["enabled"] = (body["section"] != "hidden")
+        _dev_save(devices)
+        _dev_rebuild_lights(devices)
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    except Exception as e:
+        log.error(f"web_devices_post error: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+FRIGATE_EVENTS_FILE = Path("/opt/ha-bot/frigate_events.json")
+_frigate_events: list = []  # in-memory cache of recent Frigate events
+
+def _frigate_events_load() -> list:
+    if FRIGATE_EVENTS_FILE.exists():
+        try:
+            return json.loads(FRIGATE_EVENTS_FILE.read_text())
+        except Exception:
+            return []
+    return []
+
+def _frigate_events_save(evts: list):
+    try:
+        FRIGATE_EVENTS_FILE.write_text(json.dumps(evts, ensure_ascii=False, indent=2))
+    except Exception as e:
+        log.error(f"frigate_events_save: {e}")
+
+async def _web_camera_info(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/camera/{entity_id} → stream/snapshot URLs with access_token."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    eid = request.match_info.get("entity_id", "")
+    if not eid.startswith("camera."):
+        return aiohttp_web.Response(status=400, text="Not a camera entity", headers=_CORS_HEADERS)
+    try:
+        d = await ha_get(f"states/{eid}")
+        if not d:
+            return aiohttp_web.Response(status=404, text="Not found", headers=_CORS_HEADERS)
+        tok = d.get("attributes", {}).get("access_token", "")
+        payload = {
+            "entity_id":    eid,
+            "name":         d.get("attributes", {}).get("friendly_name", eid),
+            "state":        d.get("state", ""),
+            "stream_url":   f"{HA_URL}/api/camera_proxy_stream/{eid}?token={tok}",
+            "snapshot_url": f"{HA_URL}/api/camera_proxy/{eid}?token={tok}",
+        }
+        return aiohttp_web.Response(text=json.dumps(payload, ensure_ascii=False),
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+async def _web_frigate_events(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/frigate/events — последние события детекции Frigate.
+    Если кеш пустой — читает клипы через media_source как fallback."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    evts = list(reversed(_frigate_events[-50:]))  # newest first
+    # Fallback: if cache empty, build events list from media_source clips
+    if not evts and HAS_WS:
+        try:
+            ha_ws = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
+            async with websockets.connect(ha_ws, ping_interval=None, open_timeout=15) as ws:
+                await ws.recv()
+                await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
+                msg = json.loads(await asyncio.wait_for(ws.recv(), 10))
+                if msg.get("type") == "auth_ok":
+                    await ws.send(json.dumps({
+                        "id": 1, "type": "media_source/browse_media",
+                        "media_content_id": "media-source://frigate/frigate/event-search/clips/////"
+                    }))
+                    msg = json.loads(await asyncio.wait_for(ws.recv(), 10))
+                    clips = msg.get("result", {}).get("children", [])
+                    for c in clips[:20]:
+                        mcid = c.get("media_content_id", "")
+                        event_id = mcid.rsplit("/", 1)[-1] if "/" in mcid else ""
+                        title = c.get("title", "")
+                        # Parse: "2026-03-08 23:08:49 [20s, Person 70%]"
+                        label = "person"
+                        camera = "cam_a6810678"
+                        score = 0
+                        ts = 0
+                        import re
+                        m_lbl = re.search(r'\[.*?(\w+)\s+(\d+)%\]', title, re.I)
+                        if m_lbl:
+                            label = m_lbl.group(1).lower()
+                            score = int(m_lbl.group(2))
+                        m_ts = re.match(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', title)
+                        if m_ts:
+                            from datetime import datetime
+                            try:
+                                ts = int(datetime.strptime(m_ts.group(1), "%Y-%m-%d %H:%M:%S").timestamp())
+                            except Exception:
+                                pass
+                        snap_url = f"{HA_URL}/api/frigate/notifications/{event_id}/snapshot.jpg" if event_id else ""
+                        evts.append({
+                            "id": event_id, "camera": camera, "label": label,
+                            "score": score, "ts": ts, "snapshot_url": snap_url,
+                            "event_id": event_id,
+                        })
+        except Exception as e:
+            log.warning(f"frigate_events fallback: {e}")
+    # Enrich snapshot URLs from image entity if missing
+    for ev in evts:
+        if not ev.get("snapshot_url"):
+            try:
+                img_eid = f"image.{ev['camera']}_{ev['label']}"
+                img_d = await ha_get(f"states/{img_eid}")
+                if img_d:
+                    img_tok = img_d.get("attributes", {}).get("access_token", "")
+                    ev["snapshot_url"] = f"{HA_URL}/api/image_proxy/{img_eid}?token={img_tok}"
+            except Exception:
+                pass
+    return aiohttp_web.Response(text=json.dumps(evts, ensure_ascii=False),
+                                content_type="application/json", headers=_CORS_HEADERS)
+
+
+async def _web_frigate_recordings(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/frigate/recordings?camera=cam_a6810678 — последние 6 записей через media_source."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    camera = request.query.get("camera", "cam_a6810678").replace("camera.", "")
+    recordings: list = []
+    if not HAS_WS:
+        return aiohttp_web.Response(text="[]", content_type="application/json", headers=_CORS_HEADERS)
+    try:
+        ha_ws = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
+        async with websockets.connect(ha_ws, ping_interval=None, open_timeout=15) as ws:
+            await ws.recv()
+            await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
+            msg = json.loads(await asyncio.wait_for(ws.recv(), 10))
+            if msg.get("type") != "auth_ok":
+                raise Exception("auth failed")
+            mid = 1
+            # Browse event clips for this camera
+            await ws.send(json.dumps({
+                "id": mid, "type": "media_source/browse_media",
+                "media_content_id": f"media-source://frigate/frigate/event-search/clips/{camera}/////"
+            }))
+            msg = json.loads(await asyncio.wait_for(ws.recv(), 10))
+            clips = msg.get("result", {}).get("children", [])
+            mid += 1
+            # Take last 6 playable clips (newest first — clips list is already sorted desc)
+            playable = [c for c in clips if c.get("can_play")][:6]
+            for clip in playable:
+                # Extract event_id from media_content_id:
+                # media-source://frigate/frigate/event/clips/cam_a6810678/1773000529.669134-l8kcl8
+                mcid = clip.get("media_content_id", "")
+                event_id = mcid.rsplit("/", 1)[-1] if "/" in mcid else ""
+                # Direct clip and snapshot URLs via Frigate notifications API
+                clip_url  = f"{HA_URL}/api/frigate/notifications/{event_id}/clip.mp4" if event_id else ""
+                snap_url  = f"{HA_URL}/api/frigate/notifications/{event_id}/snapshot.jpg" if event_id else ""
+                thumb = clip.get("thumbnail", "")
+                if thumb and not thumb.startswith("http"):
+                    thumb = HA_URL + thumb
+                # Prefer snapshot as thumbnail if no thumb
+                if not thumb and snap_url:
+                    thumb = snap_url + f"?token={HA_TOKEN}"
+                recordings.append({
+                    "title":    clip.get("title", ""),
+                    "thumbnail": thumb,
+                    "url":       clip_url,   # direct MP4 — для видео-плеера и скачивания
+                    "event_id":  event_id,
+                    "media_content_id": mcid,
+                })
+    except Exception as e:
+        log.warning(f"frigate_recordings: {e}")
+    return aiohttp_web.Response(text=json.dumps(recordings, ensure_ascii=False),
+                                content_type="application/json", headers=_CORS_HEADERS)
+
+
+async def _web_frigate_clip_proxy(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/frigate/clip/{event_id} — proxy Frigate clip from HA with auth.
+    Supports Range requests for video seeking. Uses ?token= so <video src> works on mobile."""
+    if not _check_token_qs(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    event_id = request.match_info.get("event_id", "").strip()
+    if not event_id:
+        return aiohttp_web.Response(status=400, text="event_id required", headers=_CORS_HEADERS)
+    clip_url = f"{HA_URL}/api/frigate/notifications/{event_id}/clip.mp4"
+    req_headers: dict = {"Authorization": f"Bearer {HA_TOKEN}"}
+    if "Range" in request.headers:
+        req_headers["Range"] = request.headers["Range"]
+    try:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(clip_url, headers=req_headers,
+                                timeout=aiohttp.ClientTimeout(total=90),
+                                allow_redirects=True) as resp:
+                data = await resp.read()
+                out_headers = dict(_CORS_HEADERS)
+                out_headers["Content-Type"]  = resp.headers.get("Content-Type", "video/mp4")
+                out_headers["Accept-Ranges"] = "bytes"
+                if "Content-Range" in resp.headers:
+                    out_headers["Content-Range"] = resp.headers["Content-Range"]
+                if "Content-Length" in resp.headers:
+                    out_headers["Content-Length"] = resp.headers["Content-Length"]
+                return aiohttp_web.Response(status=resp.status, body=data, headers=out_headers)
+    except Exception as e:
+        log.warning(f"frigate_clip_proxy: {e}")
+        return aiohttp_web.Response(status=502, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_frigate_thumb_proxy(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/frigate/thumb/{event_id} — proxy Frigate snapshot with auth.
+    Uses ?token= query param so <img src> works without custom headers."""
+    if not _check_token_qs(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    event_id = request.match_info.get("event_id", "").strip()
+    if not event_id:
+        return aiohttp_web.Response(status=400, text="event_id required", headers=_CORS_HEADERS)
+    snap_url = f"{HA_URL}/api/frigate/notifications/{event_id}/snapshot.jpg"
+    try:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(snap_url, headers={"Authorization": f"Bearer {HA_TOKEN}"},
+                                timeout=aiohttp.ClientTimeout(total=15),
+                                allow_redirects=True) as resp:
+                if resp.status == 200:
+                    data = await resp.read()
+                    ct = resp.headers.get("Content-Type", "image/jpeg")
+                    out_headers = dict(_CORS_HEADERS)
+                    out_headers["Cache-Control"] = "max-age=300"
+                    return aiohttp_web.Response(body=data, content_type=ct, headers=out_headers)
+                return aiohttp_web.Response(status=resp.status, headers=_CORS_HEADERS)
+    except Exception as e:
+        log.warning(f"frigate_thumb_proxy: {e}")
+        return aiohttp_web.Response(status=502, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_frigate_send(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/frigate/send — скачать снимок/клип и отправить в Telegram."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body = await request.json()
+        camera = body.get("camera", "cam_a6810678").replace("camera.", "")
+        label  = body.get("label", "person")
+        clip_url = body.get("clip_url", "")  # если передан — отправляем видео
+        label_map = {"person": "👤 Человек", "car": "🚗 Авто", "dog": "🐕 Собака", "cat": "🐱 Кот"}
+        label_str = label_map.get(label, f"📦 {label}")
+        caption = f"📸 <b>Frigate</b> · {label_str}\n📷 {camera}"
+        if clip_url:
+            # Resolve direct MP4 URL: if HLS m3u8 was passed, extract event_id and use notifications API
+            event_id = body.get("event_id", "")
+            if event_id:
+                clip_url = f"{HA_URL}/api/frigate/notifications/{event_id}/clip.mp4"
+            elif "m3u8" in clip_url or "mpegurl" in clip_url.lower():
+                return aiohttp_web.Response(status=415, text="HLS stream not downloadable",
+                                            headers=_CORS_HEADERS)
+            if clip_url.startswith("/"):
+                clip_url = HA_URL + clip_url
+            ha_headers = {"Authorization": f"Bearer {HA_TOKEN}"}
+            log.info(f"frigate_send: downloading {clip_url[:80]}")
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(clip_url, headers=ha_headers,
+                                    timeout=aiohttp.ClientTimeout(total=120)) as resp:
+                    ct = resp.headers.get("Content-Type", "")
+                    log.info(f"frigate_send: status={resp.status} ct={ct}")
+                    if resp.status == 200 and ("video" in ct or ct == ""):
+                        data = await resp.read()
+                        log.info(f"frigate_send: {len(data)} bytes → Telegram")
+                        await bot.send_video(
+                            ADMIN_ID,
+                            BufferedInputFile(data, filename="clip.mp4"),
+                            caption=caption, parse_mode="HTML"
+                        )
+                        return aiohttp_web.Response(
+                            text='{"ok":true,"message":"Видео отправлено"}',
+                            content_type="application/json", headers=_CORS_HEADERS)
+                    body_preview = (await resp.read())[:200]
+                    log.warning(f"frigate_send: unexpected {resp.status} {ct}: {body_preview!r}")
+            return aiohttp_web.Response(status=502, text="Failed to fetch clip", headers=_CORS_HEADERS)
+        # Снимок из image entity
+        img_eid = f"image.{camera}_{label}"
+        img_d = await ha_get(f"states/{img_eid}")
+        if img_d:
+            img_tok = img_d.get("attributes", {}).get("access_token", "")
+            snap_url = f"{HA_URL}/api/image_proxy/{img_eid}?token={img_tok}"
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(snap_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        await bot.send_photo(
+                            ADMIN_ID,
+                            BufferedInputFile(data, filename="snapshot.jpg"),
+                            caption=caption, parse_mode="HTML"
+                        )
+                        return aiohttp_web.Response(
+                            text='{"ok":true,"message":"Фото отправлено"}',
+                            content_type="application/json", headers=_CORS_HEADERS)
+        return aiohttp_web.Response(status=404, text="No media available", headers=_CORS_HEADERS)
+    except Exception as e:
+        log.error(f"frigate_send: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+_notify_cooldown: dict[str, float] = {}  # camera -> last_notify_time
+
+async def _web_frigate_notify_latest(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/frigate/notify-latest — вызывается из HA автоматизации.
+    Дедупликация: одно уведомление на камеру раз в 90 секунд."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    camera = body.get("camera", "cam_a6810678")
+    label  = body.get("label", "person")
+    now = _time.time()
+    if now - _notify_cooldown.get(camera, 0) < 90:
+        return aiohttp_web.Response(
+            text='{"ok":false,"reason":"cooldown"}',
+            content_type="application/json", headers=_CORS_HEADERS)
+    _notify_cooldown[camera] = now
+    asyncio.create_task(_frigate_ha_notify_task(camera, label))
+    return aiohttp_web.Response(
+        text='{"ok":true}', content_type="application/json", headers=_CORS_HEADERS)
+
+
+async def _frigate_ha_notify_task(camera: str, label: str):
+    """Отправить снапшот → ждать 35с → отправить клип."""
+    _LABELS = {"person": "👤 Человек", "car": "🚗 Авто", "dog": "🐕 Собака", "cat": "🐱 Кот"}
+    label_str = _LABELS.get(label, f"📦 {label}")
+    ts_str = datetime.now(MSK).strftime("%H:%M:%S")
+
+    # 1. Снапшот из image entity
+    photo_sent = False
+    try:
+        img_d = await ha_get(f"states/image.{camera}_{label}")
+        if img_d:
+            img_tok = img_d.get("attributes", {}).get("access_token", "")
+            img_url = f"{HA_URL}/api/image_proxy/image.{camera}_{label}?token={img_tok}"
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(img_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        await bot.send_photo(
+                            ADMIN_ID,
+                            BufferedInputFile(data, "snapshot.jpg"),
+                            caption=f"📷 <b>{label_str} у камеры!</b>\n🕐 {ts_str}",
+                            parse_mode="HTML",
+                        )
+                        photo_sent = True
+    except Exception as e:
+        log.error(f"frigate_ha_notify snapshot: {e}")
+    if not photo_sent:
+        try:
+            await bot.send_message(ADMIN_ID,
+                f"📷 <b>{label_str} у камеры!</b> · {ts_str}", parse_mode="HTML")
+        except Exception:
+            pass
+
+    # 2. Подождать: post_capture (30с) + время записи файла на диск
+    await asyncio.sleep(50)
+
+    # 3. Найти latest event через media_source WS
+    try:
+        import re as _re
+        ha_ws = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
+        async with websockets.connect(ha_ws, ping_interval=None, open_timeout=10) as ws:
+            msg = json.loads(await asyncio.wait_for(ws.recv(), 5))
+            if msg.get("type") == "auth_required":
+                await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
+                msg = json.loads(await asyncio.wait_for(ws.recv(), 5))
+            if msg.get("type") != "auth_ok":
+                raise RuntimeError("WS auth failed")
+            await ws.send(json.dumps({
+                "id": 99, "type": "media_source/browse_media",
+                "media_content_id": f"media-source://frigate/frigate/event-search/clips/{camera}////"
+            }))
+            msg = json.loads(await asyncio.wait_for(ws.recv(), 15))
+            clips = msg.get("result", {}).get("children", [])
+            if not clips:
+                return
+            latest_mcid = clips[0].get("media_content_id", "")
+            event_id = latest_mcid.rsplit("/", 1)[-1] if "/" in latest_mcid else ""
+            title = clips[0].get("title", "")  # "2026-03-09 22:19:20 [3s, Person 59%]"
+            if not event_id:
+                return
+
+            # Парсим timestamp из title чтобы взять recording segment
+            event_unix = 0
+            m = _re.match(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', title)
+            if m:
+                try:
+                    event_unix = int(
+                        datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
+                        .replace(tzinfo=MSK).timestamp()
+                    )
+                except Exception:
+                    pass
+
+            clip_data = None
+            # Приоритет 1: recording segment (включает pre/post capture)
+            if event_unix:
+                seg_start = event_unix - 15        # 15с до события
+                seg_end   = event_unix + 60        # 60с после начала
+                for rec_url in [
+                    f"{HA_URL}/api/frigate/api/recording/{camera}/start/{seg_start}/end/{seg_end}/",
+                    f"{HA_URL}/api/frigate/api/recordings/explore/{camera}",
+                ]:
+                    try:
+                        async with aiohttp.ClientSession() as sess:
+                            async with sess.get(rec_url, headers=HA_HEADERS,
+                                                timeout=aiohttp.ClientTimeout(total=120)) as resp:
+                                if resp.status == 200:
+                                    data_candidate = await resp.read()
+                                    if len(data_candidate) > 10_000:  # не пустой файл
+                                        clip_data = data_candidate
+                                        log.info(f"frigate clip from recording segment: {len(clip_data)} bytes")
+                                        break
+                    except Exception:
+                        pass
+
+            # Приоритет 2: прямой Frigate API events endpoint
+            if not clip_data:
+                for clip_url in [
+                    f"{HA_URL}/api/frigate/api/events/{event_id}/clip.mp4",
+                    f"{HA_URL}/api/frigate/notifications/{event_id}/clip.mp4",
+                ]:
+                    try:
+                        async with aiohttp.ClientSession() as sess:
+                            async with sess.get(clip_url, headers=HA_HEADERS,
+                                                timeout=aiohttp.ClientTimeout(total=120)) as resp:
+                                if resp.status == 200:
+                                    clip_data = await resp.read()
+                                    log.info(f"frigate clip from {clip_url}: {len(clip_data)} bytes")
+                                    break
+                    except Exception:
+                        pass
+
+            if clip_data:
+                await bot.send_video(
+                    ADMIN_ID,
+                    BufferedInputFile(clip_data, "clip.mp4"),
+                    caption=f"🎬 <b>Клип</b> · {label_str}\n{title}",
+                    parse_mode="HTML",
+                )
+                _activity_log("frigate_ha_clip_sent", event_id[:20])
+            else:
+                log.warning(f"frigate clip: no data for event {event_id}")
+    except Exception as e:
+        log.error(f"frigate_ha_notify clip: {e}")
+
+
+async def _web_frigate_person_identified(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/frigate/person-identified — Frigate опознал члена семьи.
+    Body: {camera, person, event_id}"""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    camera   = body.get("camera", "cam_a6810678")
+    person   = body.get("person", "").strip()
+    event_id = body.get("event_id", "").strip()
+    if not person:
+        return aiohttp_web.Response(
+            text='{"ok":false,"error":"person required"}',
+            content_type="application/json", headers=_CORS_HEADERS)
+    asyncio.create_task(_frigate_person_identified_task(camera, person, event_id))
+    return aiohttp_web.Response(
+        text='{"ok":true}', content_type="application/json", headers=_CORS_HEADERS)
+
+
+async def _frigate_person_identified_task(camera: str, person: str, event_id: str):
+    """Отправить фото + подпись с именем опознанного человека."""
+    _CAM_NAMES = {"cam_a6810678": "Подъезд"}
+    cam_name = _CAM_NAMES.get(camera, camera)
+    ts_str   = datetime.now(MSK).strftime("%H:%M")
+    caption  = f"👤 <b>{person}</b> у камеры «{cam_name}»\n🕐 {ts_str}"
+
+    photo_sent = False
+    if event_id:
+        try:
+            snap_url = f"{HA_URL}/api/frigate/notifications/{event_id}/snapshot.jpg"
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(snap_url, headers=HA_HEADERS,
+                                    timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        await bot.send_photo(
+                            ADMIN_ID,
+                            BufferedInputFile(data, "snapshot.jpg"),
+                            caption=caption,
+                            parse_mode="HTML",
+                        )
+                        photo_sent = True
+        except Exception as e:
+            log.error(f"person_identified snapshot: {e}")
+
+    if not photo_sent:
+        try:
+            await bot.send_message(ADMIN_ID, caption, parse_mode="HTML")
+        except Exception as e:
+            log.error(f"person_identified message: {e}")
+
+    _faces_log(person, event_id, camera)
+    _activity_log("frigate_person_identified", f"{person}@{camera}")
+
+
+# ── Auth (Telegram WebApp initData) ──────────────────────────────────────────
+async def _web_auth_telegram(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/auth — валидация Telegram WebApp initData."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    init_data = body.get("initData", "")
+    parsed = _validate_tg_initdata(init_data) if init_data else None
+    if not parsed:
+        return aiohttp_web.Response(
+            status=401,
+            text=json.dumps({"ok": False, "error": "invalid"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+    user_raw = parsed.get("user", "{}")
+    user = json.loads(user_raw) if isinstance(user_raw, str) else user_raw
+    user_id = int(user.get("id", 0))
+    allowed = _users_load()
+    allowed_ids = {ADMIN_ID} | {int(uid) for uid in allowed.keys()}
+    if user_id not in allowed_ids:
+        return aiohttp_web.Response(
+            status=403,
+            text=json.dumps({"ok": False, "error": "forbidden"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+    return aiohttp_web.Response(
+        text=json.dumps({"ok": True, "token": WEBAPP_TOKEN}),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+
+# ── История лиц (Faces History) ───────────────────────────────────────────────
+async def _web_frigate_faces_history(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/frigate/faces-history — последние распознавания лиц."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    entries: list = []
+    if FACES_LOG_FILE.exists():
+        try:
+            entries = json.loads(FACES_LOG_FILE.read_text())
+        except Exception:
+            entries = []
+    # Return newest first, add snapshot URL
+    result = []
+    for e in reversed(entries[-50:]):
+        snap = ""
+        if e.get("event_id"):
+            snap = f"{HA_URL}/api/frigate/notifications/{e['event_id']}/snapshot.jpg"
+        result.append({**e, "snapshot_url": snap})
+    return aiohttp_web.Response(
+        text=json.dumps(result, ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+
+# ── Статистика присутствия ────────────────────────────────────────────────────
+async def _web_presence_stats(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/presence-stats — время дома за 7 дней."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    family = {
+        "Хамзат": "person.khamzat",
+        "Айза":   "person.aiza",
+        "Сулим":  "person.sulim",
+        "Камила": "person.kamila",
+    }
+    now   = datetime.now(timezone.utc)
+    start = (now - timedelta(days=7)).isoformat()
+    eids  = ",".join(family.values())
+    data, *live_states = await asyncio.gather(
+        ha_get(f"history/period/{start}?filter_entity_id={eids}&minimal_response=true"),
+        *[ha_get(f"states/{eid}") for eid in family.values()],
+    )
+    live_map = {eid: (d.get("state") if d else None) for eid, d in zip(family.values(), live_states)}
+    result = []
+    for name, eid in family.items():
+        currently_home = live_map.get(eid) == "home"
+        entity_hist = None
+        if data and isinstance(data, list):
+            for hist in data:
+                if hist and hist[0].get("entity_id") == eid:
+                    entity_hist = hist
+                    break
+        # Check if all history states are non-home (no tracker scenario)
+        has_real_data = entity_hist and any(e.get("state") == "home" for e in entity_hist)
+        if not entity_hist or not has_real_data:
+            result.append({
+                "name": name, "home_hours": 0, "home_pct": 0,
+                "last_seen": None, "currently_home": currently_home,
+                "no_tracker": not currently_home,
+            })
+            continue
+        home_secs = 0.0
+        prev_ts   = None
+        prev_state = None
+        for entry in entity_hist:
+            ts_str = entry.get("last_changed") or entry.get("last_updated", "")
+            try:
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            except Exception:
+                continue
+            if prev_ts and prev_state == "home":
+                home_secs += (ts - prev_ts).total_seconds()
+            prev_ts    = ts
+            prev_state = entry.get("state", "")
+        if prev_ts and prev_state == "home":
+            home_secs += (now - prev_ts).total_seconds()
+        total_secs = 7 * 24 * 3600
+        home_pct   = round(home_secs / total_secs * 100)
+        last_seen  = None
+        for entry in reversed(entity_hist):
+            if entry.get("state") == "home":
+                last_seen = entry.get("last_changed") or entry.get("last_updated")
+                break
+        result.append({
+            "name":       name,
+            "home_hours": round(home_secs / 3600, 1),
+            "home_pct":   home_pct,
+            "last_seen":  last_seen,
+            "currently_home": currently_home,
+            "no_tracker": False,
+        })
+    return aiohttp_web.Response(
+        text=json.dumps(result, ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+
+# ── Почасовое потребление энергии ─────────────────────────────────────────────
+async def _web_energy_hourly(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/energy-hourly — среднее потребление по часам за 24ч (МСК)."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    points = await ha_history("sensor.moshchnost_vsego_doma", hours=24, max_points=2000)
+    hourly: dict[int, list] = {h: [] for h in range(24)}
+    for ts, val in points:
+        hourly[ts.hour].append(val)
+    result = []
+    for h in range(24):
+        vals = hourly[h]
+        if vals:
+            result.append({"hour": h, "avg": round(sum(vals) / len(vals)), "max": round(max(vals))})
+        else:
+            result.append({"hour": h, "avg": 0, "max": 0})
+    return aiohttp_web.Response(
+        text=json.dumps(result, ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+
+async def _web_sections_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/sections — список всех секций."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    sections = _sect_load()
+    return aiohttp_web.Response(
+        text=json.dumps(sections, ensure_ascii=False),
+        content_type="application/json",
+        headers=_CORS_HEADERS,
+    )
+
+async def _web_sections_post(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/sections — создать/обновить/удалить секцию.
+    Body: {id, name?, icon?, enabled?, order?, delete?}
+    """
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body    = await request.json()
+        sect_id = body.get("id", "").strip().lower().replace(" ", "_")
+        if not sect_id:
+            return aiohttp_web.Response(status=400, text="id required", headers=_CORS_HEADERS)
+        sections = _sect_load()
+        if body.get("delete"):
+            sections.pop(sect_id, None)
+        else:
+            if sect_id not in sections:
+                max_ord = max((v.get("order", 0) for v in sections.values()), default=9) + 1
+                sections[sect_id] = {"name": body.get("name", sect_id), "icon": body.get("icon", "📦"),
+                                     "enabled": True, "order": max_ord}
+            else:
+                for field in ("name", "icon", "enabled", "order"):
+                    if field in body:
+                        sections[sect_id][field] = body[field]
+        _sect_save(sections)
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    except Exception as e:
+        log.error(f"web_sections_post error: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+async def _web_ha_entities(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/ha_entities — все сущности HA, сгруппированные по домену.
+    Параметр ?exclude_known=1 исключает уже добавленные в devices.json.
+    """
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        states = await ha_get("states")
+        if not states:
+            return aiohttp_web.Response(text='{}', content_type="application/json", headers=_CORS_HEADERS)
+        exclude_known = request.rel_url.query.get("exclude_known", "0") == "1"
+        known = set(_dev_load().keys()) if exclude_known else set()
+        grouped: dict = {}
+        for s in states:
+            eid = s.get("entity_id", "")
+            if not eid or eid in known:
+                continue
+            domain = eid.split(".")[0]
+            attrs  = s.get("attributes", {})
+            fn     = attrs.get("friendly_name", eid)
+            if domain not in grouped:
+                grouped[domain] = []
+            grouped[domain].append({
+                "entity_id": eid,
+                "name":      fn,
+                "state":     s.get("state", ""),
+            })
+        for d in grouped:
+            grouped[d].sort(key=lambda x: x["name"].lower())
+        return aiohttp_web.Response(
+            text=json.dumps(grouped, ensure_ascii=False),
+            content_type="application/json",
+            headers=_CORS_HEADERS,
+        )
+    except Exception as e:
+        log.error(f"web_ha_entities error: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+async def _web_ha_scan(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/ha_scan — запустить сканирование HA, вернуть новые сущности."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        before = set(_dev_load().keys())
+        await _refresh_lights()
+        after = _dev_load()
+        new_eids = [eid for eid in after if eid not in before]
+        result = {eid: after[eid] for eid in new_eids}
+        return aiohttp_web.Response(
+            text=json.dumps({"found": len(new_eids), "devices": result}, ensure_ascii=False),
+            content_type="application/json",
+            headers=_CORS_HEADERS,
+        )
+    except Exception as e:
+        log.error(f"web_ha_scan error: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+async def _frigate_notify(entry: dict):
+    """Отправить уведомление в Telegram о новой детекции Frigate."""
+    label_map = {"person": "👤 Человек", "car": "🚗 Авто", "dog": "🐕 Собака", "cat": "🐱 Кот"}
+    label_str = label_map.get(entry.get("label", ""), f"📦 {entry.get('label', '')}")
+    camera = entry.get("camera", "")
+    score = entry.get("score", 0)
+    ts_str = datetime.fromtimestamp(entry.get("ts", 0), tz=MSK).strftime("%H:%M:%S")
+    caption = (f"🔔 <b>Детекция Frigate</b>\n"
+               f"{label_str} · {score}%\n"
+               f"📷 {camera} · {ts_str}")
+    snap_url = entry.get("snapshot_url", "")
+    if snap_url:
+        try:
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(snap_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        await bot.send_photo(
+                            ADMIN_ID,
+                            BufferedInputFile(data, filename="detection.jpg"),
+                            caption=caption, parse_mode="HTML"
+                        )
+                        return
+        except Exception as e:
+            log.warning(f"Frigate notify photo: {e}")
+    try:
+        await bot.send_message(ADMIN_ID, caption, parse_mode="HTML")
+    except Exception as e:
+        log.warning(f"Frigate notify msg: {e}")
+
+
+async def _frigate_event_loop():
+    """Подписаться на HA события от Frigate через WebSocket и кешировать детекции."""
+    global _frigate_events
+    _frigate_events = _frigate_events_load()
+    if not HAS_WS:
+        return
+    ha_ws = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
+    while True:
+        try:
+            async with websockets.connect(ha_ws, ping_interval=20, open_timeout=15) as ws:
+                await ws.recv()  # hello
+                await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
+                msg = json.loads(await asyncio.wait_for(ws.recv(), 10))
+                if msg.get("type") != "auth_ok":
+                    log.warning("Frigate WS: auth failed")
+                    await asyncio.sleep(30)
+                    continue
+                # Subscribe to frigate events
+                await ws.send(json.dumps({"id": 1, "type": "subscribe_events", "event_type": "frigate.new_tracking_object"}))
+                await ws.recv()
+                await ws.send(json.dumps({"id": 2, "type": "subscribe_events", "event_type": "frigate.tracking_object_update"}))
+                await ws.recv()
+                log.info("Frigate event loop: subscribed to HA events")
+                async for raw in ws:
+                    try:
+                        msg = json.loads(raw)
+                        if msg.get("type") != "event":
+                            continue
+                        evt = msg.get("event", {})
+                        data = evt.get("data", {})
+                        after = data.get("after", data)
+                        eid = after.get("id") or after.get("event_id")
+                        if not eid:
+                            continue
+                        camera  = after.get("camera", "")
+                        label   = after.get("label", "")
+                        score   = after.get("top_score") or after.get("score") or 0
+                        ts      = after.get("start_time") or after.get("frame_time") or _time.time()
+                        # Fix: use image_proxy with correct entity access_token
+                        snapshot_url = ""
+                        try:
+                            img_eid = f"image.{camera}_{label}"
+                            img_d = await ha_get(f"states/{img_eid}")
+                            if img_d:
+                                img_tok = img_d.get("attributes", {}).get("access_token", "")
+                                snapshot_url = f"{HA_URL}/api/image_proxy/{img_eid}?token={img_tok}"
+                        except Exception:
+                            pass
+                        is_new = not any(e.get("id") == eid for e in _frigate_events)
+                        entry = {
+                            "id": eid, "camera": camera, "label": label,
+                            "score": round(float(score) * 100) if score else 0,
+                            "ts": int(ts), "snapshot_url": snapshot_url,
+                        }
+                        # Deduplicate by id
+                        _frigate_events = [e for e in _frigate_events if e.get("id") != eid]
+                        _frigate_events.append(entry)
+                        _frigate_events = _frigate_events[-200:]  # keep last 200
+                        _frigate_events_save(_frigate_events)
+                        # Auto-notify Telegram for new events with high confidence
+                        if is_new and float(score or 0) > 0.5:
+                            asyncio.create_task(_frigate_notify(entry))
+                    except Exception as e:
+                        log.debug(f"Frigate event parse: {e}")
+        except Exception as e:
+            log.warning(f"Frigate event loop reconnect: {e}")
+            await asyncio.sleep(15)
+
+async def _start_web():
+    app = aiohttp_web.Application()
+    app.router.add_get("/ha-app/",                  _web_index)
+    app.router.add_get("/ha-app",                   _web_index)
+    app.router.add_get("/ha-app/api/health",              _web_health)
+    app.router.add_get("/ha-app/api/activity",            _web_activity)
+    app.router.add_post("/ha-app/api/activity/clear",     _web_activity_clear)
+    app.router.add_route("OPTIONS", "/ha-app/api/activity/clear", _web_options)
+    app.router.add_get("/ha-app/api/alerts",              _web_alerts_get)
+    app.router.add_post("/ha-app/api/alerts",             _web_alerts_post)
+    app.router.add_get("/ha-app/api/scenes",              _web_scenes_get)
+    app.router.add_post("/ha-app/api/scenes",             _web_scenes_post)
+    app.router.add_delete("/ha-app/api/scenes/{scene_id}", _web_scenes_delete)
+    app.router.add_post("/ha-app/api/scenes/{scene_id}/run", _web_scenes_run)
+    app.router.add_get("/ha-app/api/events",              _web_sse)
+    app.router.add_get("/ha-app/api/status",        _web_status)
+    app.router.add_post("/ha-app/api/action",       _web_action)
+    app.router.add_get("/ha-app/api/devices",       _web_devices_get)
+    app.router.add_post("/ha-app/api/devices",      _web_devices_post)
+    app.router.add_get("/ha-app/api/ha_scan",       _web_ha_scan)
+    app.router.add_get("/ha-app/api/ha_entities",   _web_ha_entities)
+    app.router.add_get("/ha-app/api/sections",                _web_sections_get)
+    app.router.add_post("/ha-app/api/sections",               _web_sections_post)
+    app.router.add_get("/ha-app/api/camera/{entity_id}",      _web_camera_info)
+    app.router.add_get("/ha-app/api/frigate/events",          _web_frigate_events)
+    app.router.add_get("/ha-app/api/frigate/recordings",          _web_frigate_recordings)
+    app.router.add_get("/ha-app/api/frigate/clip/{event_id}",     _web_frigate_clip_proxy)
+    app.router.add_get("/ha-app/api/frigate/thumb/{event_id}",    _web_frigate_thumb_proxy)
+    app.router.add_post("/ha-app/api/frigate/send",               _web_frigate_send)
+    app.router.add_post("/ha-app/api/frigate/notify-latest",      _web_frigate_notify_latest)
+    app.router.add_post("/ha-app/api/frigate/person-identified",  _web_frigate_person_identified)
+    app.router.add_get("/ha-app/api/frigate/faces-history",       _web_frigate_faces_history)
+    app.router.add_post("/ha-app/api/auth",                       _web_auth_telegram)
+    app.router.add_get("/ha-app/api/presence-stats",              _web_presence_stats)
+    app.router.add_get("/ha-app/api/energy-hourly",               _web_energy_hourly)
+    app.router.add_route("OPTIONS", "/ha-app/api/frigate/notify-latest",     _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/frigate/person-identified", _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/frigate/faces-history",     _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/auth",                      _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/presence-stats",            _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/energy-hourly",             _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/camera/{entity_id}",   _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/frigate/events",       _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/frigate/recordings",       _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/frigate/clip/{event_id}",  _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/frigate/thumb/{event_id}", _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/frigate/send",             _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/status",       _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/action",       _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/devices",      _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/ha_scan",      _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/ha_entities",  _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/sections",     _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/activity",     _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/alerts",       _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/scenes",            _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/scenes/{scene_id}", _web_options)
+    runner = aiohttp_web.AppRunner(app)
+    await runner.setup()
+    site = aiohttp_web.TCPSite(runner, "127.0.0.1", 8766)
+    await site.start()
+    log.info("WebApp server started on 127.0.0.1:8766")
+
+# ── /backup и /restore ────────────────────────────────────────────────────────
+@dp.message(Command("backup"))
+async def cmd_backup(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    files = [DEVICES_FILE, SECTIONS_FILE, ACTIVITY_LOG_FILE]
+    sent = 0
+    for f in files:
+        if f.exists():
+            await msg.answer_document(
+                BufferedInputFile(f.read_bytes(), filename=f.name),
+                caption=f"📦 {f.name}"
+            )
+            sent += 1
+    if sent == 0:
+        await msg.answer("❌ Нет файлов для бекапа")
+    else:
+        _activity_log("backup", f"sent {sent} files")
+
+@dp.message(Command("restore"))
+async def cmd_restore(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    await msg.answer(
+        "📥 Отправь JSON-файл для восстановления.\n"
+        "Поддерживаемые файлы: <code>devices.json</code>, <code>sections.json</code>",
+        parse_mode="HTML"
+    )
+
+@dp.message(F.document)
+async def handle_document(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    doc = msg.document
+    if not doc or not doc.file_name or not doc.file_name.endswith(".json"):
+        return
+    fname = doc.file_name
+    if fname not in ("devices.json", "sections.json"):
+        await msg.answer(f"⚠️ Неизвестный файл: {fname}\nОжидается devices.json или sections.json")
+        return
+    try:
+        file_info = await bot.get_file(doc.file_id)
+        raw = await bot.download_file(file_info.file_path)
+        content = raw.read()
+        data = json.loads(content)  # validate JSON
+        if fname == "devices.json":
+            DEVICES_FILE.write_bytes(content)
+            _dev_init()
+            _activity_log("restore", "devices.json")
+            await msg.answer(f"✅ <b>devices.json</b> восстановлен ({len(data)} устройств)", parse_mode="HTML")
+        elif fname == "sections.json":
+            SECTIONS_FILE.write_bytes(content)
+            _activity_log("restore", "sections.json")
+            await msg.answer(f"✅ <b>sections.json</b> восстановлен ({len(data)} секций)", parse_mode="HTML")
+    except Exception as e:
+        await msg.answer(f"❌ Ошибка восстановления: {e}")
+
+# ── /app command ──────────────────────────────────────────────────────────────
+@dp.message(Command("app"))
+async def cmd_app(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(
+        text="🖥️ Открыть панель", web_app=WebAppInfo(url=WEBAPP_URL)
+    )]], resize_keyboard=True, one_time_keyboard=True)
+    await msg.answer("🖥️ Откройте панель управления:", reply_markup=kb)
+
+# ── Inline кнопки: сцены из алертов ───────────────────────────────────────────
+@dp.callback_query(F.data.startswith("scene:run:"))
+async def cb_scene_run_alert(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id):
+        await cb.answer("⛔ Нет доступа", show_alert=True)
+        return
+    scene_id = cb.data.split(":", 2)[2]
+    scenes = _scenes_load()
+    scene = scenes.get(scene_id)
+    if not scene:
+        await cb.answer(f"❌ Сцена '{scene_id}' не найдена", show_alert=True)
+        return
+    errors = []
+    for action in scene.get("actions", []):
+        eid = action.get("entity_id", "")
+        svc = action.get("service", "")
+        extra = action.get("extra")
+        if not eid or not svc or "." not in svc:
+            continue
+        domain, service = svc.split(".", 1)
+        try:
+            await ha_call(domain, service, eid, extra)
+        except Exception as e:
+            errors.append(str(e))
+    _status_cache["ts"] = 0.0
+    _activity_log("scene_run", scene.get("name", scene_id))
+    name = scene.get("name", scene_id)
+    icon = scene.get("icon", "🎬")
+    if errors:
+        await cb.answer(f"⚠️ {icon} {name}: частично", show_alert=False)
+    else:
+        await cb.answer(f"✅ {icon} {name} — включено!", show_alert=False)
+    try:
+        await cb.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+@dp.callback_query(F.data.startswith("namaz_ok:"))
+async def cb_namaz_ok(cb: CallbackQuery):
+    await cb.answer("✅ Принято!", show_alert=False)
+    try:
+        await cb.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+# ── Запуск ────────────────────────────────────────────────────────────────────
+async def main():
+    log.info(f"HA Bot v{_BOT_VERSION} starting...")
+    _dev_init()            # загрузить devices.json → заполнить LIGHTS/LIGHTS_ICON
+    await _refresh_lights()  # сканировать HA, добавить новые устройства
+    asyncio.create_task(alert_loop())
+    asyncio.create_task(_start_web())
+    asyncio.create_task(_frigate_event_loop())
+    asyncio.create_task(_ha_state_watch_loop())
+    _activity_log("bot_start", f"v{_BOT_VERSION}")
+    await bot.send_message(
+        ADMIN_ID,
+        f"🏠 <b>Home Assistant Bot v{_BOT_VERSION} запущен!</b>\n"
+        "✅ 🕌 Намаз: за 15 мин + за 5 мин\n"
+        "✅ 🌐 Уведомление о падении интернета\n"
+        "✅ 🌅 Утренняя сводка 07:30 МСК\n"
+        "✅ 🏠 Трекинг всей семьи + сцены из алертов\n"
+        "✅ 📊 Графики энергии / еженедельный отчёт\n"
+        "✅ 📹 Frigate детекция + авто-уведомления\n"
+        "✅ 💾 /backup /restore конфигов\n"
+        "✅ 🖥️ Telegram Mini App панель управления",
+        parse_mode="HTML"
+    )
+    _activity_log("bot_ready", f"v{_BOT_VERSION}")
+    log.info("Start polling")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    import urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     asyncio.run(main())
