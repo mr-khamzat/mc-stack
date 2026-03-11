@@ -1631,6 +1631,8 @@ function applyStatus(d) {
 
   // --- Dynamic sections ---
   if (d.sections) renderDynamicSections(d.sections);
+  // --- Видимость встроенных разделов ---
+  if (d.sections_visibility) applyBuiltinSectVisibility(d.sections_visibility);
 
   // Update timestamp
   const now2 = new Date();
@@ -3585,6 +3587,31 @@ async function openFrigateEvents(eid) {
 }
 
 // ── Sections manager ───────────────────────────────────────────────────────
+// Маппинг ID встроенного раздела → ID HTML-элемента section-body (для скрытия/показа)
+const BUILTIN_SECT_ELEM = {
+  'status':   'sec-status-body',   'family':   'sec-family-body',
+  'presence': 'sec-presence-body', 'faces':    'sec-faces-body',
+  'energy':   'sec-energy-body',   'lights':   'sec-lights-body',
+  'climate':  'sec-climate-body',  'tv':       'sec-tv-body',
+  'vacuum':   'sec-vacuum-body',   'prayers':  'sec-prayers-body',
+  'weather':  'sec-weather-body',  'scenes':   'sec-scenes-body',
+  'alerts':   'sec-alerts-body',   'nightmode':'sec-nightmode-body',
+  'server':   'sec-server-body',   'logbook':  'sec-logbook-body',
+  'activity': 'sec-activity-body',
+};
+
+// Применяет флаги hidden ко всем статическим разделам
+function applyBuiltinSectVisibility(vis) {
+  for (const [sectId, cfg] of Object.entries(vis || {})) {
+    const bodyId = BUILTIN_SECT_ELEM[sectId];
+    if (!bodyId) continue;
+    const bodyEl = document.getElementById(bodyId);
+    if (!bodyEl) continue;
+    const sectionEl = bodyEl.closest('.section');
+    if (sectionEl) sectionEl.style.display = cfg.hidden ? 'none' : '';
+  }
+}
+
 let sectsMgr = { sections: {}, devices: {}, currentSect: null };
 
 async function openSectionsManager() {
@@ -3631,34 +3658,59 @@ function _sectsMgrRenderList() {
   }
   const sorted = Object.entries(sections).sort((a,b) => (a[1].order||99)-(b[1].order||99));
   const btnS = 'border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:5px 8px;cursor:pointer;font-size:13px;background:rgba(255,255,255,0.06);color:#a0a0c0;';
-  const listHtml = sorted.length === 0
-    ? '<div style="text-align:center;padding:20px;color:#60608a;font-size:13px">Нет разделов</div>'
-    : sorted.map(([id, cfg], idx) => {
-        const cnt = devCount[id] || 0;
-        const hidden = cfg.hidden || false;
-        const eyeStyle = hidden
-          ? 'background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.3);color:#8080ff;'
-          : 'background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);color:#a0a0c0;';
-        return `<div style="display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.04);${hidden?'opacity:0.55':''}">
-          <div style="display:flex;flex-direction:column;gap:3px;flex-shrink:0">
-            <button onclick="_sectsMgrMove('${escapeAttr(id)}',-1)" ${idx===0?'disabled style="opacity:0.25;cursor:default"':''} style="${btnS}padding:2px 7px;font-size:11px">▲</button>
-            <button onclick="_sectsMgrMove('${escapeAttr(id)}',1)" ${idx===sorted.length-1?'disabled style="opacity:0.25;cursor:default"':''} style="${btnS}padding:2px 7px;font-size:11px">▼</button>
+  // Разбиваем на встроенные и пользовательские
+  const builtinSects  = sorted.filter(([,c]) => c.builtin);
+  const customSects   = sorted.filter(([,c]) => !c.builtin);
+  const customOnlySorted = customSects; // для индексов ▲▼ среди пользовательских
+
+  function renderSectCard([id, cfg], idx, arr, isBuiltin) {
+    const cnt    = devCount[id] || 0;
+    const hidden = cfg.hidden || false;
+    const nameOnly = (cfg.name||id).replace(/^\S+\s/,'') || id;
+    return `<div style="margin:6px 12px;border-radius:12px;border:1px solid rgba(255,255,255,${isBuiltin?'0.06':'0.1'});background:rgba(255,255,255,${isBuiltin?'0.02':'0.04'});${hidden?'opacity:0.55':''}">
+      <div style="display:flex;align-items:center;gap:10px;padding:11px 12px 8px">
+        <span style="font-size:22px;flex-shrink:0">${cfg.icon||'📁'}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:700;color:${isBuiltin?'#b0b0d0':'#d0d0f0'}">
+            ${escapeHtml(nameOnly)}
+            ${isBuiltin?'<span style="font-size:9px;color:#40406a;border:1px solid #30304a;border-radius:4px;padding:1px 4px;margin-left:4px;font-weight:600">встроен</span>':''}
+            ${hidden?'<span style="font-size:10px;color:#6060a0;font-weight:400;margin-left:4px">(скрыт)</span>':''}
           </div>
-          <span style="font-size:20px;width:26px;text-align:center;">${cfg.icon||'📁'}</span>
-          <div style="flex:1;min-width:0;cursor:pointer" onclick="_sectsMgrEditForm('${escapeAttr(id)}')">
-            <div style="font-size:13px;font-weight:600;color:#c0c0e0">${escapeHtml((cfg.name||id).replace(/^\S+\s/,'') || id)}${hidden?' <span style="font-size:10px;color:#6060a0">(скрыт)</span>':''}</div>
-            <div style="font-size:11px;color:#50508a">${cnt} устр. · нажать для редактирования</div>
-          </div>
-          <button onclick="_sectsMgrToggleHidden('${escapeAttr(id)}')" title="${hidden?'Показать':'Скрыть'}" style="${eyeStyle}border-radius:8px;padding:5px 9px;cursor:pointer;font-size:14px">${hidden?'👁‍🗨':'👁'}</button>
-          <button onclick="_sectsMgrDelete('${escapeAttr(id)}')" style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);border-radius:8px;padding:5px 9px;color:#ef4444;cursor:pointer;font-size:14px">🗑️</button>
-        </div>`;
-      }).join('');
+          <div style="font-size:10px;color:#40406a;margin-top:1px">${isBuiltin?'статичный раздел':cnt+' устр.'}</div>
+        </div>
+        ${!isBuiltin ? `<div style="display:flex;gap:3px;flex-shrink:0">
+          <button onclick="_sectsMgrMove('${escapeAttr(id)}',-1)" ${idx===0?'disabled':''} title="Выше"
+            style="width:30px;height:30px;border-radius:7px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.05);color:${idx===0?'#252545':'#a0a0c0'};font-size:12px;cursor:${idx===0?'default':'pointer'}">▲</button>
+          <button onclick="_sectsMgrMove('${escapeAttr(id)}',1)" ${idx===arr.length-1?'disabled':''} title="Ниже"
+            style="width:30px;height:30px;border-radius:7px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.05);color:${idx===arr.length-1?'#252545':'#a0a0c0'};font-size:12px;cursor:${idx===arr.length-1?'default':'pointer'}">▼</button>
+        </div>` : ''}
+      </div>
+      <div style="display:flex;gap:6px;padding:0 12px 10px">
+        ${!isBuiltin ? `<button onclick="_sectsMgrEditForm('${escapeAttr(id)}')"
+          style="flex:1;padding:7px 0;border-radius:8px;border:1px solid rgba(99,102,241,0.35);background:rgba(99,102,241,0.1);color:#a5b4fc;cursor:pointer;font-size:12px;font-weight:600">✏️ Изменить</button>` : ''}
+        <button onclick="_sectsMgrToggleHidden('${escapeAttr(id)}')"
+          style="flex:1;padding:7px 0;border-radius:8px;border:1px solid ${hidden?'rgba(99,102,241,0.4)':'rgba(255,255,255,0.1)'};background:${hidden?'rgba(99,102,241,0.12)':'rgba(255,255,255,0.04)'};color:${hidden?'#8080ff':'#a0a0c0'};cursor:pointer;font-size:12px;font-weight:600">${hidden?'👁 Показать':'🙈 Скрыть'}</button>
+        ${!isBuiltin ? `<button onclick="_sectsMgrDelete('${escapeAttr(id)}')" title="Удалить"
+          style="width:38px;padding:7px 0;border-radius:8px;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.07);color:#f87171;cursor:pointer;font-size:15px">🗑️</button>` : ''}
+      </div>
+    </div>`;
+  }
+
+  const builtinHtml = builtinSects.length ? `
+    <div style="padding:6px 12px 2px;font-size:10px;color:#40406a;text-transform:uppercase;letter-spacing:0.5px;font-weight:700">Встроенные разделы (можно скрыть)</div>
+    ${builtinSects.map(e => renderSectCard(e, 0, [], true)).join('')}` : '';
+  const customHtml = customSects.length ? `
+    <div style="padding:8px 12px 2px;font-size:10px;color:#40406a;text-transform:uppercase;letter-spacing:0.5px;font-weight:700">Разделы устройств (полное управление)</div>
+    ${customOnlySorted.map((e, i) => renderSectCard(e, i, customOnlySorted, false)).join('')}` : '';
+
+  const listHtml = (builtinHtml + customHtml) || '<div style="text-align:center;padding:20px;color:#60608a;font-size:13px">Нет разделов</div>';
 
   _sectsMgrSetInner(`
-    <div style="padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.05)">
+    <div style="padding:10px 12px 6px;border-bottom:1px solid rgba(255,255,255,0.05)">
       <button onclick="_sectsMgrCreateForm()" class="btn btn-neutral" style="width:100%;border-style:dashed">➕ Создать раздел</button>
     </div>
-    ${listHtml}`, '📂 Разделы');
+    ${listHtml}
+    <div style="height:16px"></div>`, '📂 Разделы');
 }
 
 async function _sectsMgrMove(sectId, dir) {
@@ -3691,7 +3743,15 @@ async function _sectsMgrToggleHidden(sectId) {
     sectsMgr.sections[sectId] = { ...cfg, hidden: newHidden };
     showToast(newHidden ? '🙈 Раздел скрыт' : '👁 Раздел виден');
     _sectsMgrRenderList();
-    setTimeout(loadStatus, 600);
+    // Для встроенных разделов — сразу применяем видимость к HTML элементу
+    const bodyId = BUILTIN_SECT_ELEM[sectId];
+    if (bodyId) {
+      const bodyEl = document.getElementById(bodyId);
+      const sectionEl = bodyEl && bodyEl.closest('.section');
+      if (sectionEl) sectionEl.style.display = newHidden ? 'none' : '';
+    }
+    // Сбрасываем кеш статуса чтобы при следующем обновлении применилось
+    setTimeout(() => { loadStatus(); }, 800);
   } catch(e) { showToast('❌ ' + e.message); }
 }
 
@@ -4195,7 +4255,11 @@ function renderServerStats(d) {
       ${ha.cpu_percent!=null?`<div class="srv-progress-row"><div class="srv-progress-label"><span>CPU</span><span>${ha.cpu_percent}%</span></div><div class="srv-progress-bg">${bar(ha.cpu_percent)}</div></div>`:''}
       ${ha.ram_percent!=null?`<div class="srv-progress-row"><div class="srv-progress-label"><span>RAM</span><span>${ha.ram_percent}%</span></div><div class="srv-progress-bg">${bar(ha.ram_percent)}</div></div>`:''}
       ${ha.disk_percent!=null?`<div class="srv-progress-row"><div class="srv-progress-label"><span>Диск</span><span>${ha.disk_percent}%</span></div><div class="srv-progress-bg">${bar(ha.disk_percent)}</div></div>`:''}
-      ` : `<div style="font-size:12px;color:#60608a;text-align:center;padding:8px 0">Нет данных — добавьте интеграцию System Monitor в HA</div>`}
+      ` : `<div style="font-size:12px;color:#60608a;text-align:center;padding:8px 4px;line-height:1.6">
+        📡 Нет данных системного мониторинга<br>
+        <span style="font-size:11px">Добавьте интеграцию <b style="color:#a0a0e0">System Monitor</b> в HA:<br>
+        Настройки → Устройства и службы → Добавить интеграцию → System Monitor</span>
+      </div>`}
     </div>
     <div style="font-size:11px;color:rgba(110,110,158,0.65);text-transform:uppercase;letter-spacing:0.5px;font-weight:700;margin-bottom:7px">Сервисы</div>
     <div class="srv-svc-grid">${svcsHtml}</div>

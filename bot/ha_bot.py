@@ -178,19 +178,47 @@ _status_cache: dict = {"ts": 0.0, "data": None}
 _STATUS_CACHE_TTL   = 5
 
 _SECTIONS_DEFAULTS: dict = {
-    "cameras":     {"name": "📹 Камеры",      "icon": "📹", "enabled": False, "order": 10},
-    "automations": {"name": "🤖 Автоматизации","icon": "🤖", "enabled": False, "order": 11},
-    "sensors":     {"name": "📊 Сенсоры",      "icon": "📊", "enabled": False, "order": 12},
-    "media":       {"name": "📺 Медиа",        "icon": "📺", "enabled": False, "order": 13},
+    # Встроенные разделы — можно скрыть, нельзя удалить или переименовать
+    "status":     {"name": "🔔 Статус",       "icon": "🔔",  "enabled": True,  "order": 1,  "builtin": True},
+    "family":     {"name": "👨‍👩‍👧 Семья",      "icon": "👨‍👩‍👧", "enabled": True,  "order": 2,  "builtin": True},
+    "presence":   {"name": "🏠 Присутствие",  "icon": "🏠",  "enabled": True,  "order": 3,  "builtin": True},
+    "faces":      {"name": "🙂 Лица",         "icon": "🙂",  "enabled": True,  "order": 4,  "builtin": True},
+    "energy":     {"name": "⚡ Энергия",      "icon": "⚡",  "enabled": True,  "order": 5,  "builtin": True},
+    "lights":     {"name": "💡 Свет",         "icon": "💡",  "enabled": True,  "order": 6,  "builtin": True},
+    "climate":    {"name": "🌡️ Климат",       "icon": "🌡️", "enabled": True,  "order": 7,  "builtin": True},
+    "tv":         {"name": "📺 TV",           "icon": "📺",  "enabled": True,  "order": 8,  "builtin": True},
+    "vacuum":     {"name": "🤖 Пылесос",      "icon": "🤖",  "enabled": True,  "order": 9,  "builtin": True},
+    "prayers":    {"name": "🕌 Намаз",        "icon": "🕌",  "enabled": True,  "order": 10, "builtin": True},
+    "weather":    {"name": "🌤️ Погода",       "icon": "🌤️", "enabled": True,  "order": 11, "builtin": True},
+    "scenes":     {"name": "🎬 Сцены",        "icon": "🎬",  "enabled": True,  "order": 12, "builtin": True},
+    "alerts":     {"name": "🔔 Алерты",       "icon": "🔔",  "enabled": True,  "order": 13, "builtin": True},
+    "nightmode":  {"name": "🌙 Ночной режим", "icon": "🌙",  "enabled": True,  "order": 14, "builtin": True},
+    "server":     {"name": "🖥️ Сервер",       "icon": "🖥️", "enabled": True,  "order": 15, "builtin": True},
+    "logbook":    {"name": "📋 История HA",   "icon": "📋",  "enabled": True,  "order": 16, "builtin": True},
+    "activity":   {"name": "📊 Активность",   "icon": "📊",  "enabled": True,  "order": 17, "builtin": True},
+    # Динамические разделы — полное редактирование (добавлять устройства, менять иконку и название)
+    "cameras":    {"name": "📹 Камеры",        "icon": "📹", "enabled": True,  "order": 20},
+    "automations":{"name": "🤖 Автоматизации", "icon": "🤖", "enabled": False, "order": 21},
+    "sensors":    {"name": "📊 Сенсоры",       "icon": "📊", "enabled": False, "order": 22},
+    "media":      {"name": "📺 Медиа",         "icon": "📺", "enabled": False, "order": 23},
 }
 
 def _sect_load() -> dict:
+    saved: dict = {}
     if SECTIONS_FILE.exists():
         try:
-            return json.loads(SECTIONS_FILE.read_text())
+            saved = json.loads(SECTIONS_FILE.read_text())
         except Exception as e:
             log.error(f"sections_load: {e}")
-    return dict(_SECTIONS_DEFAULTS)
+    # Мёрдж: дефолты дают структуру, сохранённые значения имеют приоритет
+    result: dict = {}
+    for k, v in _SECTIONS_DEFAULTS.items():
+        result[k] = {**v, **saved.get(k, {})}
+    # Добавляем пользовательские разделы которых нет в дефолтах
+    for k, v in saved.items():
+        if k not in result:
+            result[k] = dict(v)
+    return result
 
 def _sect_save(d: dict):
     try:
@@ -3723,6 +3751,11 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
             "family":        family_data,
             "lights":        lights_data,
             "sections":      active_sects,
+            # Видимость ВСЕХ разделов (встроенных и динамических) для фронтенда
+            "sections_visibility": {
+                k: {"hidden": bool(v.get("hidden", False))}
+                for k, v in sections_cfg.items()
+            },
             "phases":        phases_data,
             "tv": {
                 "state":  st(tv_d),
@@ -4485,6 +4518,10 @@ async def _web_sections_post(request: aiohttp_web.Request) -> aiohttp_web.Respon
             return aiohttp_web.Response(status=400, text="id required", headers=_CORS_HEADERS)
         sections = _sect_load()
         if body.get("delete"):
+            # Встроенные разделы удалять запрещено
+            if sections.get(sect_id, {}).get("builtin"):
+                return aiohttp_web.Response(status=403, text="Cannot delete builtin section",
+                                            headers=_CORS_HEADERS)
             sections.pop(sect_id, None)
         else:
             if sect_id not in sections:
@@ -4706,13 +4743,13 @@ async def _web_server_stats(request: aiohttp_web.Request) -> aiohttp_web.Respons
             ha_info["online"] = False
         try:
             (s_cpu, s_ram, s_disk, s_boot) = await asyncio.gather(
-                ha_get("states/sensor.processor_use"),
-                ha_get("states/sensor.memory_use_percent"),
-                ha_get("states/sensor.disk_use_percent_/"),
-                ha_get("states/sensor.last_boot"),
+                ha_get("states/sensor.system_monitor_processor_use"),
+                ha_get("states/sensor.system_monitor_memory_usage"),
+                ha_get("states/sensor.system_monitor_disk_usage"),
+                ha_get("states/sensor.system_monitor_last_boot"),
             )
             def _fv(d):
-                try: return float(d["state"])
+                try: return round(float(d["state"]), 1)
                 except Exception: return None
             ha_info["cpu_percent"]  = _fv(s_cpu)
             ha_info["ram_percent"]  = _fv(s_ram)
