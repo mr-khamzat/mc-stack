@@ -1,7 +1,29 @@
 #!/usr/bin/env python3
 """
-Home Assistant Telegram Bot — управление умным домом.
-Версия 3.0: Намаз, TV, Семья, Покупки, Автоматизации (toggle), Inline режим.
+Home Assistant Telegram Bot + Mini App (Telegram WebApp)
+=========================================================
+Бэкенд управляет двумя вещами одновременно:
+
+1. TELEGRAM BOT (aiogram) — обычный бот с командами и кнопками
+   Команды: /start, /status, /energy, /climate, /namaz, /scenes и др.
+   Уведомления: детекция движения, потребление энергии, обновление сертификатов
+
+2. WEB-СЕРВЕР (aiohttp) — обслуживает Mini App
+   GET  /ha-app/              → отдаёт webapp/index.html с вшитым токеном
+   GET  /ha-app/api/status    → текущее состояние всего умного дома
+   POST /ha-app/api/devices   → изменение устройств (иконка, название, раздел)
+   GET  /ha-app/api/sections  → управление разделами (скрыть/показать/порядок)
+   GET  /ha-app/api/scenes    → список сцен + создание и запуск
+   GET  /ha-app/api/frigate/* → проксирование камер Frigate с авторизацией
+   GET  /ha-app/api/server-stats → CPU/RAM/Disk/Uptime VPS и HA-сервера
+
+КОНФИГУРАЦИЯ (из .env файла):
+   BOT_TOKEN     — токен бота от @BotFather
+   HA_URL        — внешний URL Home Assistant (https://...)
+   HA_TOKEN      — long-lived токен HA (в профиле HA → Долгосрочные токены)
+   ADMIN_CHAT_ID — Telegram ID администратора
+   WEBAPP_TOKEN  — секретный токен для авторизации запросов Mini App
+   WEBAPP_DOMAIN — домен VPS где развёрнут бот (https://...)
 """
 import asyncio
 import hashlib
@@ -45,6 +67,7 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
 
+# ── Загрузка конфигурации из .env ─────────────────────────────────────────────
 load_dotenv("/opt/ha-bot/.env")
 
 BOT_TOKEN  = os.environ["BOT_TOKEN"]
@@ -58,8 +81,9 @@ WEBAPP_URL   = "https://hub.office.mooo.com/ha-app/"
 WEBAPP_DIR   = Path("/opt/ha-bot/webapp")
 
 FAMILY_USERS_FILE  = Path("/opt/ha-bot/family_users.json")
-DEVICES_FILE       = Path("/opt/ha-bot/devices.json")
-SECTIONS_FILE      = Path("/opt/ha-bot/sections.json")
+# ── Пути к файлам данных (создаются автоматически при первом запуске) ─────────
+DEVICES_FILE       = Path("/opt/ha-bot/devices.json")   # устройства пользователя
+SECTIONS_FILE      = Path("/opt/ha-bot/sections.json")  # разделы и их настройки
 ACTIVITY_LOG_FILE  = Path("/opt/ha-bot/activity_log.json")
 ALERTS_CONFIG_FILE = Path("/opt/ha-bot/alerts_config.json")
 SCENES_FILE        = Path("/opt/ha-bot/scenes.json")
@@ -3744,8 +3768,8 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
             "floor_temp":    str(floor_attrs.get("current_temperature", "?")),
             "cost_day":      cost_day_val,
             "cost_month":    st(cost_month_d),
-            "cost_week":     (lambda: (lambda cm, dn: f"{float(cm)/max(dn,1)*7:.0f}"
-                              if cm and dn > 0 else None)(
+            "cost_week":     (lambda: (lambda cm, dn: (f"{float(cm)/max(dn,1)*7:.0f}"
+                              if dn > 0 else None) if cm and cm != "?" else None)(
                               st(cost_month_d), datetime.now(MSK).day))(),
             "outdoor_temp":  outdoor_temp,
             "family":        family_data,
