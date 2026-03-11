@@ -596,6 +596,155 @@ body::before {
   font-family: inherit;
 }
 .alerts-section-title { font-size: 11px; color: rgba(110,110,158,0.65); text-transform: uppercase; letter-spacing: 0.7px; font-weight: 700; margin: 14px 0 7px; }
+
+/* ── Quick Actions ── */
+.quick-actions-wrap {
+  margin-bottom: 12px;
+  position: relative;
+}
+.quick-actions-scroll {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 2px 6px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.quick-actions-scroll::-webkit-scrollbar { display: none; }
+.qa-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  min-width: 70px;
+  padding: 10px 8px;
+  background: linear-gradient(145deg, rgba(99,102,241,0.16) 0%, rgba(139,92,246,0.09) 100%);
+  border: 0.5px solid rgba(139,92,246,0.28);
+  border-radius: 14px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: all 0.18s cubic-bezier(0.34,1.56,0.64,1);
+  user-select: none;
+  flex-shrink: 0;
+  position: relative;
+}
+.qa-btn:active { transform: scale(0.9); }
+.qa-btn .qa-icon { font-size: 22px; }
+.qa-btn .qa-name { font-size: 10px; font-weight: 700; color: rgba(200,200,245,0.9); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 64px; }
+.qa-btn.qa-edit-mode { border-color: rgba(248,113,113,0.4); }
+.qa-remove { position: absolute; top: -6px; right: -6px; background: #ef4444; color: white; border: none; border-radius: 50%; width: 18px; height: 18px; font-size: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 1; }
+.qa-add-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  min-width: 60px; padding: 10px 8px;
+  background: rgba(255,255,255,0.05);
+  border: 0.5px dashed rgba(255,255,255,0.2);
+  border-radius: 14px; cursor: pointer; flex-shrink: 0;
+}
+.qa-add-btn .qa-icon { font-size: 22px; color: rgba(100,100,170,0.7); }
+.qa-add-btn .qa-name { font-size: 10px; color: rgba(100,100,170,0.6); font-weight: 600; }
+.qa-settings-btn {
+  position: absolute; top: 2px; right: 0;
+  background: rgba(255,255,255,0.06); border: 0.5px solid rgba(255,255,255,0.12);
+  border-radius: 8px; width: 26px; height: 26px; font-size: 13px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── Server Stats ── */
+.srvstat-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+.srvstat-card {
+  background: linear-gradient(145deg, rgba(255,255,255,0.065) 0%, rgba(255,255,255,0.025) 100%);
+  border: 0.5px solid rgba(255,255,255,0.1);
+  border-top-color: rgba(255,255,255,0.16);
+  border-radius: var(--r-md);
+  padding: 10px 8px;
+  text-align: center;
+}
+.srvstat-val { font-size: 18px; font-weight: 700; color: #eaeaf8; letter-spacing: -0.3px; }
+.srvstat-label { font-size: 10px; color: rgba(120,120,168,0.7); margin-top: 3px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
+.srv-progress-row { margin-bottom: 9px; }
+.srv-progress-label { display: flex; justify-content: space-between; font-size: 12px; color: rgba(165,165,212,0.8); margin-bottom: 4px; font-weight: 500; }
+.srv-progress-bg { background: rgba(255,255,255,0.07); border-radius: 6px; height: 8px; overflow: hidden; }
+.srv-progress-fill { height: 100%; border-radius: 6px; transition: width 0.5s ease; }
+.srv-svc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.srv-svc-item { display: flex; align-items: center; gap: 7px; padding: 7px 10px; background: rgba(255,255,255,0.05); border-radius: 9px; font-size: 12px; }
+.srv-svc-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.srv-svc-dot.active { background: #34d399; box-shadow: 0 0 6px rgba(52,211,153,0.6); }
+.srv-svc-dot.inactive { background: #f87171; }
+
+/* ── Logbook / History ── */
+.logbook-filters { display: flex; gap: 6px; margin-bottom: 10px; overflow-x: auto; padding-bottom: 2px; }
+.logbook-filter { padding: 5px 12px; border-radius: 20px; border: 0.5px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); font-size: 12px; font-weight: 600; color: rgba(160,160,210,0.8); cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
+.logbook-filter.active { background: rgba(99,102,241,0.22); border-color: rgba(99,102,241,0.45); color: #a5b4fc; }
+.logbook-item { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 0.5px solid rgba(255,255,255,0.05); }
+.logbook-item:last-child { border-bottom: none; }
+.logbook-icon { font-size: 16px; width: 24px; text-align: center; flex-shrink: 0; }
+.logbook-info { flex: 1; min-width: 0; }
+.logbook-name { font-size: 12px; font-weight: 600; color: rgba(200,200,242,0.9); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.logbook-state { font-size: 11px; color: rgba(120,120,168,0.7); }
+.logbook-time { font-size: 11px; color: rgba(100,100,150,0.65); flex-shrink: 0; }
+
+/* ── Namaz Widget ── */
+.namaz-widget {
+  background: linear-gradient(135deg, rgba(99,102,241,0.14) 0%, rgba(139,92,246,0.08) 100%);
+  border: 0.5px solid rgba(139,92,246,0.3);
+  border-radius: var(--r-md);
+  padding: 14px 16px;
+  margin-top: 10px;
+}
+.namaz-widget-label { font-size: 11px; color: rgba(165,150,230,0.8); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+.namaz-countdown { font-size: 28px; font-weight: 700; color: #c4b5fd; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
+.namaz-progress-bg { background: rgba(255,255,255,0.07); border-radius: 4px; height: 4px; overflow: hidden; margin-top: 8px; }
+.namaz-progress-fill { height: 100%; background: linear-gradient(90deg, #6366f1, #8b5cf6); border-radius: 4px; transition: width 1s linear; }
+
+/* ── Night Mode ── */
+.night-mode-card {
+  background: linear-gradient(135deg, rgba(30,20,60,0.6) 0%, rgba(20,15,40,0.5) 100%);
+  border: 0.5px solid rgba(139,92,246,0.25);
+  border-radius: var(--r-md);
+  padding: 14px;
+  margin-top: 12px;
+}
+.nm-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 0.5px solid rgba(255,255,255,0.05); }
+.nm-row:last-child { border-bottom: none; }
+.nm-label { flex: 1; font-size: 13px; color: rgba(195,195,238,0.9); font-weight: 500; }
+.nm-select {
+  background: rgba(255,255,255,0.08); border: 0.5px solid rgba(255,255,255,0.14);
+  border-radius: 9px; color: #eaeaf8; font-size: 13px; padding: 5px 8px;
+  font-family: inherit; max-width: 140px;
+}
+.nm-time { background: rgba(255,255,255,0.08); border: 0.5px solid rgba(255,255,255,0.14);
+  border-radius: 9px; color: #eaeaf8; font-size: 13px; padding: 5px 8px; font-family: inherit; width: 90px; }
+
+/* ── Home Away button ── */
+.home-away-wrap {
+  margin-bottom: 10px;
+}
+.home-away-btn {
+  width: 100%;
+  background: linear-gradient(135deg, rgba(248,113,113,0.18) 0%, rgba(239,68,68,0.10) 100%);
+  border: 0.5px solid rgba(248,113,113,0.38);
+  border-top-color: rgba(248,113,113,0.52);
+  border-radius: var(--r-lg);
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: all 0.18s ease;
+}
+.home-away-btn:active { transform: scale(0.97); opacity: 0.88; }
+.home-away-left { display: flex; align-items: center; gap: 12px; }
+.home-away-icon { font-size: 26px; }
+.home-away-title { font-size: 15px; font-weight: 700; color: #fca5a5; }
+.home-away-sub { font-size: 11px; color: rgba(200,150,150,0.7); margin-top: 2px; }
+.home-away-edit { background: rgba(255,255,255,0.1); border: 0.5px solid rgba(255,255,255,0.18); border-radius: 10px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 14px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+
+/* ── Schedule tab in scene editor ── */
+.se-tabs { display: flex; gap: 2px; margin-bottom: 12px; background: rgba(255,255,255,0.05); border-radius: 10px; padding: 3px; }
+.se-tab { flex: 1; padding: 7px; text-align: center; border-radius: 8px; font-size: 12px; font-weight: 600; color: rgba(140,140,190,0.7); cursor: pointer; transition: all 0.15s ease; }
+.se-tab.active { background: rgba(99,102,241,0.3); color: #a5b4fc; }
 </style>
 <!-- Inline failsafe: remove loading after 5s even without JS -->
 <script>
@@ -621,6 +770,28 @@ body::before {
   <div class="app-header">
     <h1>🏠 Умный Дом</h1>
     <span class="last-updated" id="last-updated">—</span>
+  </div>
+
+  <!-- QUICK ACTIONS -->
+  <div class="quick-actions-wrap" id="quick-actions-wrap">
+    <div class="quick-actions-scroll" id="qa-scroll">
+      <div style="color:rgba(100,100,150,0.5);font-size:12px;padding:10px 4px;white-space:nowrap">Нажмите ⚙️ для настройки</div>
+    </div>
+    <button class="qa-settings-btn" onclick="qaToggleEdit()" title="Настроить">⚙️</button>
+  </div>
+
+  <!-- HOME AWAY -->
+  <div class="home-away-wrap" id="home-away-wrap">
+    <div class="home-away-btn" onclick="homeAwayTap()">
+      <div class="home-away-left">
+        <span class="home-away-icon">🚪</span>
+        <div>
+          <div class="home-away-title">Ухожу из дома</div>
+          <div class="home-away-sub" id="home-away-sub">Нажмите для выполнения</div>
+        </div>
+      </div>
+      <div class="home-away-edit" onclick="event.stopPropagation(); homeAwayEdit()">✏️</div>
+    </div>
   </div>
 
   <!-- 1. STATUS -->
@@ -661,6 +832,13 @@ body::before {
             <div class="stat-label">⚡ Нагрузка по фазам</div>
             <div id="phases-bars" style="margin-top:6px"></div>
           </div>
+        </div>
+        <!-- Namaz Widget -->
+        <div class="namaz-widget" id="namaz-widget" style="display:none">
+          <div class="namaz-widget-label">🕌 Следующий намаз</div>
+          <div class="namaz-countdown" id="namaz-countdown">—</div>
+          <div style="font-size:11px;color:rgba(160,140,220,0.65);margin-top:3px" id="namaz-prayer-name"></div>
+          <div class="namaz-progress-bg"><div class="namaz-progress-fill" id="namaz-progress" style="width:0%"></div></div>
         </div>
       </div>
     </div>
@@ -899,6 +1077,51 @@ body::before {
       <div class="section-content">
         <div id="alerts-content">
           <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Откройте для настройки</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- NIGHT MODE -->
+  <div class="section">
+    <div class="section-header" onclick="toggleSection('sec-nightmode-body'); if(!_nightModeLoaded) loadNightMode()">
+      <span>🌙 Ночной режим</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body" id="sec-nightmode-body">
+      <div class="section-content">
+        <div id="nightmode-content">
+          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Откройте для настройки</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SERVER STATS -->
+  <div class="section">
+    <div class="section-header" onclick="toggleSection('sec-server-body'); if(!_serverStatsLoaded) loadServerStats()">
+      <span>🖥️ Сервер</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body" id="sec-server-body">
+      <div class="section-content">
+        <div id="server-stats-content">
+          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Откройте для загрузки</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HA LOGBOOK -->
+  <div class="section">
+    <div class="section-header" onclick="toggleSection('sec-logbook-body'); if(!_logbookLoaded) loadLogbook()">
+      <span>📋 История HA</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body" id="sec-logbook-body">
+      <div class="section-content">
+        <div id="logbook-content">
+          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Откройте для загрузки</div>
         </div>
       </div>
     </div>
@@ -1322,6 +1545,11 @@ function applyStatus(d) {
       ${forecastHtml}`;
   }
 
+  // --- Namaz widget ---
+  if (d.namaz_timer !== undefined) {
+    applyNamazWidget(d.namaz_timer);
+  }
+
   // --- Dynamic sections ---
   if (d.sections) renderDynamicSections(d.sections);
 
@@ -1439,10 +1667,17 @@ async function ensureAuth() {
 
 async function init() {
   const timer = setTimeout(hideLoading, 3000);
+  // Init quick actions from localStorage immediately
+  qaRender();
   try {
     const authOk = await ensureAuth();
     if (!authOk) { clearTimeout(timer); return; }
     await loadStatus();
+    // Update home-away subtitle
+    try {
+      const scenes = await api('/scenes');
+      homeAwayUpdateSub(scenes);
+    } catch(_) {}
   } catch(e) {
     // already handled
   } finally {
@@ -1723,13 +1958,16 @@ async function loadScenes() {
   try {
     const scenes = await api('/scenes');
     _scenesLoaded = true;
+    homeAwayUpdateSub(scenes);
     const entries = Object.entries(scenes);
-    if (!entries.length) {
+    // Filter out __home_away__ from regular scenes grid
+    const visibleEntries = entries.filter(([id]) => id !== '__home_away__');
+    if (!visibleEntries.length) {
       grid.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px;grid-column:span 2">Нет сцен</div>';
       return;
     }
     grid.innerHTML = '';
-    entries.forEach(([id, sc]) => {
+    visibleEntries.forEach(([id, sc]) => {
       const d = document.createElement('div');
       d.className = 'scene-btn';
       d.innerHTML = `<span class="scene-icon">${escapeHtml(sc.icon||'🎬')}</span><span class="scene-name">${escapeHtml(sc.name||id)}</span><span class="scene-desc">${escapeHtml(sc.description||'')}</span>`;
@@ -1781,8 +2019,20 @@ function openSceneEditor(id, sc) {
   const autoTime = auto.trigger_time || '07:00';
   const autoEntity = auto.trigger_entity || '';
   const autoState = auto.trigger_state || 'on';
+  // Schedule fields
+  const sched = sc.schedule || {};
+  const schedEnabled = sched.enabled ? 'checked' : '';
+  const schedTime = sched.time || '07:00';
+  const days = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+  const schedDays = sched.days || [0,1,2,3,4,5,6];
   const deleteBtn = _seIsNew ? '' : `<button class="btn btn-danger" style="flex:0 0 auto;padding:10px 14px;" onclick="seDeleteScene('${escapeAttr(id)}')">🗑️</button>`;
   const title = _seIsNew ? '➕ Новая сцена' : '✏️ Редактировать сцену';
+  const dayCheckboxes = days.map((d, i) =>
+    `<label style="display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;padding:4px 6px;border-radius:8px;background:${schedDays.includes(i)?'rgba(99,102,241,0.22)':'rgba(255,255,255,0.05)'};border:0.5px solid ${schedDays.includes(i)?'rgba(99,102,241,0.4)':'rgba(255,255,255,0.08)'}">
+      <input type="checkbox" name="sched-day" value="${i}" ${schedDays.includes(i)?'checked':''} style="display:none">
+      <span style="font-size:11px;font-weight:700;color:${schedDays.includes(i)?'#a5b4fc':'rgba(120,120,168,0.6)'}">${d}</span>
+    </label>`
+  ).join('');
   modal.innerHTML = `<div id="se-sheet" style="background:linear-gradient(155deg,rgba(18,18,40,0.99),rgba(10,10,26,0.99));border:0.5px solid rgba(255,255,255,0.13);border-radius:20px 20px 0 0;padding:20px 20px 36px;width:100%;max-width:480px;box-shadow:0 -24px 64px rgba(0,0,0,0.8);max-height:92vh;overflow-y:auto;-webkit-overflow-scrolling:touch;">
     <div style="width:36px;height:4px;background:rgba(255,255,255,0.18);border-radius:2px;margin:0 auto 18px;"></div>
     <div style="font-size:16px;font-weight:700;color:#eaeaf8;margin-bottom:16px;letter-spacing:-0.3px;">${title}</div>
@@ -1797,8 +2047,13 @@ function openSceneEditor(id, sc) {
     </div>
     <div id="se-actions-list" style="margin-bottom:8px;"></div>
     <div id="se-add-panel" style="display:none;border:0.5px solid rgba(99,102,241,0.22);border-radius:12px;padding:12px;margin-bottom:12px;background:rgba(30,30,60,0.5);"></div>
-    <!-- Automation section -->
-    <div style="border:0.5px solid rgba(255,255,255,0.1);border-radius:12px;padding:12px;margin-bottom:12px;background:rgba(20,20,45,0.6);">
+    <!-- Tabs: Automation | Schedule -->
+    <div class="se-tabs">
+      <div class="se-tab active" id="se-tab-auto" onclick="seSelectTab('auto')">🤖 Автоматизация</div>
+      <div class="se-tab" id="se-tab-sched" onclick="seSelectTab('sched')">📅 Расписание</div>
+    </div>
+    <!-- Automation tab -->
+    <div id="se-tab-auto-body" style="border:0.5px solid rgba(255,255,255,0.1);border-radius:12px;padding:12px;margin-bottom:12px;background:rgba(20,20,45,0.6);">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0;">
         <span style="${LS}margin-bottom:0;">🤖 Автоматизация в HA</span>
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
@@ -1837,6 +2092,26 @@ function openSceneEditor(id, sc) {
         </div>
       </div>
     </div>
+    <!-- Schedule tab -->
+    <div id="se-tab-sched-body" style="display:none;border:0.5px solid rgba(255,255,255,0.1);border-radius:12px;padding:12px;margin-bottom:12px;background:rgba(20,20,45,0.6);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <span style="${LS}margin-bottom:0;">📅 Расписание запуска</span>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" id="se-sched-enabled" ${schedEnabled} onchange="seToggleSchedSection(this.checked)" style="width:16px;height:16px;accent-color:#6366f1;">
+          <span style="font-size:12px;color:rgba(160,160,210,0.7);">Включить</span>
+        </label>
+      </div>
+      <div id="se-sched-body" style="display:${sched.enabled?'block':'none'}">
+        <div style="margin-bottom:10px;">
+          <label style="${LS}">Время запуска</label>
+          <input id="se-sched-time" type="time" value="${escapeHtml(schedTime)}" style="${IS}">
+        </div>
+        <div>
+          <label style="${LS}">Дни недели</label>
+          <div id="se-sched-days" style="display:flex;gap:5px;flex-wrap:wrap;">${dayCheckboxes}</div>
+        </div>
+      </div>
+    </div>
     <div style="display:flex;gap:8px;margin-top:10px;">
       ${deleteBtn}
       <button class="btn btn-neutral" style="flex:1;" onclick="document.getElementById('scene-editor-modal').remove(); _seIsNew=false;">Отмена</button>
@@ -1848,9 +2123,34 @@ function openSceneEditor(id, sc) {
   renderSeActions();
 }
 
+function seSelectTab(tab) {
+  document.getElementById('se-tab-auto').className = 'se-tab' + (tab === 'auto' ? ' active' : '');
+  document.getElementById('se-tab-sched').className = 'se-tab' + (tab === 'sched' ? ' active' : '');
+  document.getElementById('se-tab-auto-body').style.display = tab === 'auto' ? 'block' : 'none';
+  document.getElementById('se-tab-sched-body').style.display = tab === 'sched' ? 'block' : 'none';
+}
+
 function seToggleAutoSection(checked) {
   document.getElementById('se-auto-body').style.display = checked ? 'block' : 'none';
 }
+
+function seToggleSchedSection(checked) {
+  document.getElementById('se-sched-body').style.display = checked ? 'block' : 'none';
+}
+
+// Toggle day checkbox styling when user clicks day label
+document.addEventListener('change', function(e) {
+  if (e.target && e.target.name === 'sched-day') {
+    const label = e.target.closest('label');
+    if (label) {
+      const on = e.target.checked;
+      label.style.background = on ? 'rgba(99,102,241,0.22)' : 'rgba(255,255,255,0.05)';
+      label.style.borderColor = on ? 'rgba(99,102,241,0.4)' : 'rgba(255,255,255,0.08)';
+      const span = label.querySelector('span');
+      if (span) span.style.color = on ? '#a5b4fc' : 'rgba(120,120,168,0.6)';
+    }
+  }
+});
 
 function seToggleAutoTrigger(type) {
   document.getElementById('se-auto-time-row').style.display = type === 'time' ? 'block' : 'none';
@@ -1996,12 +2296,22 @@ async function saveSceneEdit(id) {
       automation.trigger_state  = document.getElementById('se-auto-state').value;
     }
   }
+  // Read schedule config
+  const schedEnabled = document.getElementById('se-sched-enabled').checked;
+  const schedule = { enabled: schedEnabled };
+  if (schedEnabled) {
+    schedule.time = document.getElementById('se-sched-time').value || '07:00';
+    const dayBoxes = document.querySelectorAll('#se-sched-days input[name="sched-day"]');
+    schedule.days = Array.from(dayBoxes).filter(cb => cb.checked).map(cb => parseInt(cb.value));
+    if (!schedule.days.length) schedule.days = [0,1,2,3,4,5,6];
+  }
   const wasNew = _seIsNew;
   try {
-    await api('/scenes', 'POST', {id, icon, name, description, actions: _seActions, automation});
+    await api('/scenes', 'POST', {id, icon, name, description, actions: _seActions, automation, schedule});
     document.getElementById('scene-editor-modal').remove();
     _seIsNew = false;
-    showToast(wasNew ? '✅ Сцена создана' + (autoEnabled ? ' + автоматизация' : '') : '✅ Сцена обновлена' + (autoEnabled ? ' + автоматизация' : ''));
+    const extras = [autoEnabled ? 'автоматизация' : '', schedEnabled ? 'расписание' : ''].filter(Boolean).join('+');
+    showToast(wasNew ? '✅ Сцена создана' + (extras ? ' + ' + extras : '') : '✅ Сцена обновлена' + (extras ? ' + ' + extras : ''));
     _scenesLoaded = false;
     loadScenes();
   } catch(e) {
@@ -3089,6 +3399,437 @@ async function _sectsMgrConfirmCreate() {
     showToast('✅ Раздел «' + name + '» создан');
     _sectsMgrRenderList();
   } catch(e) { showToast('❌ ' + e.message); }
+}
+
+// ── Quick Actions ──────────────────────────────────────────────────────────
+let _qaEditMode = false;
+let _qaEntities = null;
+
+function qaLoad() {
+  try {
+    return JSON.parse(localStorage.getItem('ha_quick_actions') || '[]');
+  } catch(_) { return []; }
+}
+function qaSave(actions) {
+  localStorage.setItem('ha_quick_actions', JSON.stringify(actions));
+}
+
+function qaRender() {
+  const actions = qaLoad();
+  const scroll = document.getElementById('qa-scroll');
+  if (!scroll) return;
+  if (actions.length === 0 && !_qaEditMode) {
+    scroll.innerHTML = '<div style="color:rgba(100,100,150,0.5);font-size:12px;padding:10px 4px;white-space:nowrap">Нажмите ⚙️ для настройки</div>';
+    return;
+  }
+  scroll.innerHTML = '';
+  actions.forEach((a, i) => {
+    const btn = document.createElement('div');
+    btn.className = 'qa-btn' + (_qaEditMode ? ' qa-edit-mode' : '');
+    btn.innerHTML = `<span class="qa-icon">${escapeHtml(a.icon||'⚡')}</span><span class="qa-name">${escapeHtml(a.name||a.entity_id)}</span>`;
+    if (!_qaEditMode) {
+      btn.onclick = () => qaExecute(a, btn);
+    }
+    if (_qaEditMode) {
+      const rm = document.createElement('button');
+      rm.className = 'qa-remove';
+      rm.textContent = '✕';
+      rm.onclick = () => { const arr = qaLoad(); arr.splice(i,1); qaSave(arr); qaRender(); };
+      btn.appendChild(rm);
+    }
+    scroll.appendChild(btn);
+  });
+  if (_qaEditMode) {
+    const addBtn = document.createElement('div');
+    addBtn.className = 'qa-add-btn';
+    addBtn.innerHTML = '<span class="qa-icon">➕</span><span class="qa-name">Добавить</span>';
+    addBtn.onclick = qaOpenPicker;
+    scroll.appendChild(addBtn);
+  }
+}
+
+async function qaExecute(action, btnEl) {
+  if (btnEl) btnEl.style.opacity = '0.5';
+  try {
+    await api('/action', 'POST', { service: action.service, entity_id: action.entity_id, extra: {} });
+    showToast('✅ ' + (action.name || action.entity_id));
+    setTimeout(loadStatus, 800);
+  } catch(e) { showToast('❌ ' + e.message); }
+  finally { if (btnEl) btnEl.style.opacity = ''; }
+}
+
+function qaToggleEdit() {
+  _qaEditMode = !_qaEditMode;
+  qaRender();
+}
+
+async function qaOpenPicker() {
+  if (!_qaEntities) {
+    try {
+      const raw = await api('/ha_entities');
+      const useful = ['light', 'switch', 'media_player', 'input_boolean', 'fan', 'cover'];
+      _qaEntities = [];
+      for (const domain of useful) {
+        if (raw[domain]) for (const e of raw[domain]) _qaEntities.push({entity_id: e.entity_id, name: e.name||e.entity_id, domain});
+      }
+    } catch(e) { showToast('❌ ' + e.message); return; }
+  }
+  // Show picker overlay
+  const old = document.getElementById('qa-picker-overlay');
+  if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'qa-picker-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.72);backdrop-filter:blur(8px);z-index:3000;display:flex;align-items:flex-end;justify-content:center;';
+  ov.innerHTML = `<div style="background:linear-gradient(155deg,rgba(18,18,40,0.99),rgba(10,10,26,0.99));border-radius:20px 20px 0 0;padding:20px;width:100%;max-width:480px;max-height:80vh;display:flex;flex-direction:column;">
+    <div style="font-size:15px;font-weight:700;color:#eaeaf8;margin-bottom:12px;">➕ Быстрое действие</div>
+    <input id="qa-search" type="text" placeholder="Поиск устройства..." oninput="qaRenderPickerList(this.value)"
+      style="width:100%;background:rgba(255,255,255,0.08);border:0.5px solid rgba(255,255,255,0.14);border-radius:10px;color:#eaeaf8;font-size:13px;padding:9px 12px;font-family:inherit;margin-bottom:8px;">
+    <div id="qa-picker-list" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:4px;"></div>
+    <button class="btn btn-neutral" style="margin-top:10px;width:100%;" onclick="document.getElementById('qa-picker-overlay').remove()">Отмена</button>
+  </div>`;
+  ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+  document.body.appendChild(ov);
+  qaRenderPickerList('');
+  setTimeout(() => document.getElementById('qa-search')?.focus(), 50);
+}
+
+function qaRenderPickerList(q) {
+  const el = document.getElementById('qa-picker-list');
+  if (!el || !_qaEntities) return;
+  const filtered = q ? _qaEntities.filter(e => e.name.toLowerCase().includes(q.toLowerCase()) || e.entity_id.toLowerCase().includes(q.toLowerCase())) : _qaEntities;
+  el.innerHTML = filtered.slice(0,40).map(e =>
+    `<div onclick="qaPickEntity('${escapeAttr(e.entity_id)}','${escapeAttr(e.name)}','${escapeAttr(e.domain)}')"
+      style="padding:8px 12px;background:rgba(255,255,255,0.055);border-radius:9px;cursor:pointer;font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <span style="color:#c8c8e8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(e.name)}</span>
+      <span style="color:rgba(120,120,168,0.55);flex-shrink:0;font-size:10px;">${escapeHtml(e.domain)}</span>
+    </div>`
+  ).join('') + (filtered.length===0 ? '<div style="text-align:center;color:#50508a;font-size:12px;padding:10px;">Ничего не найдено</div>' : '');
+}
+
+function qaPickEntity(entityId, name, domain) {
+  const DOMAIN_ICONS = {light:'💡',switch:'🔌',media_player:'📺',fan:'💨',cover:'🪟',input_boolean:'☑️'};
+  const icon = DOMAIN_ICONS[domain] || '⚡';
+  const svc = domain + '.toggle';
+  const actions = qaLoad();
+  if (actions.length >= 8) { showToast('⚠️ Максимум 8 быстрых действий'); return; }
+  actions.push({entity_id: entityId, service: svc, icon, name: name.length > 10 ? name.slice(0,9)+'…' : name});
+  qaSave(actions);
+  document.getElementById('qa-picker-overlay')?.remove();
+  qaRender();
+}
+
+// ── Home Away ─────────────────────────────────────────────────────────────
+async function homeAwayTap() {
+  const scenes = (await api('/scenes').catch(()=>null)) || {};
+  const sc = scenes['__home_away__'];
+  if (!sc || !(sc.actions||[]).length) {
+    showToast('⚠️ Настройте сцену «Ухожу из дома» через ✏️');
+    return;
+  }
+  // Show preview bottom sheet
+  const old = document.getElementById('home-away-sheet');
+  if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'home-away-sheet';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(6px);z-index:3000;display:flex;align-items:flex-end;justify-content:center;';
+  const actionsHtml = sc.actions.map(a => {
+    const svcRaw = (a.service||'').split('.').pop();
+    const icon = svcRaw==='turn_on'?'💡':svcRaw==='turn_off'?'🌑':'⚡';
+    const n = (a.entity_id||'').split('.').slice(1).join('.');
+    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:rgba(200,200,242,0.9)">
+      <span>${icon}</span><span>${escapeHtml(n)}</span><span style="margin-left:auto;font-size:11px;color:rgba(120,120,168,0.65)">${escapeHtml(svcRaw)}</span>
+    </div>`;
+  }).join('');
+  ov.innerHTML = `<div style="background:linear-gradient(155deg,rgba(20,10,30,0.99),rgba(10,5,20,0.99));border:0.5px solid rgba(248,113,113,0.3);border-radius:20px 20px 0 0;padding:20px 20px 36px;width:100%;max-width:480px;box-shadow:0 -24px 64px rgba(0,0,0,0.8);">
+    <div style="width:36px;height:4px;background:rgba(255,255,255,0.18);border-radius:2px;margin:0 auto 16px;"></div>
+    <div style="font-size:16px;font-weight:700;color:#fca5a5;margin-bottom:4px;">🚪 Ухожу из дома</div>
+    <div style="font-size:12px;color:rgba(200,150,150,0.6);margin-bottom:14px;">Будут выполнены следующие действия:</div>
+    <div style="border:0.5px solid rgba(255,255,255,0.08);border-radius:12px;padding:10px 14px;margin-bottom:16px;background:rgba(255,255,255,0.03);">${actionsHtml}</div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-neutral" style="flex:1" onclick="document.getElementById('home-away-sheet').remove()">Отмена</button>
+      <button class="btn btn-danger" style="flex:1" onclick="homeAwayConfirm()">🚪 Подтвердить</button>
+    </div>
+  </div>`;
+  ov.addEventListener('click', e => { if (e.target===ov) ov.remove(); });
+  document.body.appendChild(ov);
+}
+
+async function homeAwayConfirm() {
+  document.getElementById('home-away-sheet')?.remove();
+  try {
+    const res = await api('/scenes/__home_away__/run', 'POST', {});
+    showToast('✅ Выхожу из дома... (' + (res.actions||0) + ' действий)');
+    setTimeout(loadStatus, 1500);
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+function homeAwayEdit() {
+  const sc = {name:'Ухожу из дома', icon:'🚪', description:'Режим ухода из дома', actions:[], automation:{}};
+  api('/scenes').then(scenes => {
+    const existing = scenes && scenes['__home_away__'];
+    _seIsNew = !existing;
+    openSceneEditor('__home_away__', existing || sc);
+  }).catch(() => { _seIsNew = true; openSceneEditor('__home_away__', sc); });
+}
+
+function homeAwayUpdateSub(scenes) {
+  const sc = scenes && scenes['__home_away__'];
+  const subEl = document.getElementById('home-away-sub');
+  if (!subEl) return;
+  if (sc && sc.actions && sc.actions.length) {
+    subEl.textContent = sc.actions.length + ' действий';
+  } else {
+    subEl.textContent = 'Нажмите ✏️ для настройки';
+  }
+}
+
+// ── Server Stats ───────────────────────────────────────────────────────────
+let _serverStatsLoaded = false;
+
+async function loadServerStats() {
+  _serverStatsLoaded = true;
+  const el = document.getElementById('server-stats-content');
+  el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div>';
+  try {
+    const d = await api('/server-stats');
+    renderServerStats(d);
+  } catch(e) {
+    el.innerHTML = '<div style="color:#ef4444;font-size:13px;text-align:center;padding:10px">Ошибка: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function srvProgressColor(pct) {
+  if (pct < 70) return '#34d399';
+  if (pct < 85) return '#fbbf24';
+  return '#f87171';
+}
+
+function renderServerStats(d) {
+  const el = document.getElementById('server-stats-content');
+  const bar = (pct) => `<div class="srv-progress-fill" style="width:${pct}%;background:${srvProgressColor(pct)}"></div>`;
+  const svcsHtml = Object.entries(d.services||{}).map(([name,status]) => {
+    const isActive = status === 'active' || status === 'running';
+    return `<div class="srv-svc-item">
+      <div class="srv-svc-dot ${isActive?'active':'inactive'}"></div>
+      <span style="font-size:12px;color:rgba(190,190,240,0.9);font-weight:500;">${escapeHtml(name)}</span>
+      <span style="margin-left:auto;font-size:10px;color:rgba(120,120,168,0.6)">${escapeHtml(status)}</span>
+    </div>`;
+  }).join('');
+  const ha = d.ha || {};
+  el.innerHTML = `
+    <div class="srvstat-grid">
+      <div class="srvstat-card"><div class="srvstat-val">${d.cpu_percent||0}%</div><div class="srvstat-label">CPU</div></div>
+      <div class="srvstat-card"><div class="srvstat-val">${d.ram_percent||0}%</div><div class="srvstat-label">RAM</div></div>
+      <div class="srvstat-card"><div class="srvstat-val">${d.uptime_days||0} дн</div><div class="srvstat-label">Uptime</div></div>
+    </div>
+    <div class="srv-progress-row">
+      <div class="srv-progress-label"><span>CPU</span><span>${d.cpu_percent||0}%</span></div>
+      <div class="srv-progress-bg">${bar(d.cpu_percent||0)}</div>
+    </div>
+    <div class="srv-progress-row">
+      <div class="srv-progress-label"><span>RAM (${d.ram_used_gb||0}/${d.ram_total_gb||0} ГБ)</span><span>${d.ram_percent||0}%</span></div>
+      <div class="srv-progress-bg">${bar(d.ram_percent||0)}</div>
+    </div>
+    <div class="srv-progress-row">
+      <div class="srv-progress-label"><span>Диск (${d.disk_used_gb||0}/${d.disk_total_gb||0} ГБ)</span><span>${d.disk_percent||0}%</span></div>
+      <div class="srv-progress-bg">${bar(d.disk_percent||0)}</div>
+    </div>
+    ${ha.version ? `<div style="font-size:12px;color:rgba(140,140,190,0.8);margin-bottom:8px;">🏠 HA ${escapeHtml(ha.version)} · ${ha.entities_count||'?'} сущностей · ${ha.automations_count||'?'} автоматизаций</div>` : ''}
+    <div style="font-size:11px;color:rgba(110,110,158,0.65);text-transform:uppercase;letter-spacing:0.5px;font-weight:700;margin-bottom:7px">Сервисы</div>
+    <div class="srv-svc-grid">${svcsHtml}</div>
+    <div style="margin-top:10px"><button class="btn btn-neutral" style="width:100%" onclick="_serverStatsLoaded=false;loadServerStats()">🔄 Обновить</button></div>`;
+}
+
+// ── HA Logbook ─────────────────────────────────────────────────────────────
+let _logbookLoaded = false;
+let _logbookFilter = 'all';
+let _logbookData = [];
+
+async function loadLogbook(hours) {
+  _logbookLoaded = true;
+  const h = hours || 24;
+  const el = document.getElementById('logbook-content');
+  el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div>';
+  try {
+    _logbookData = await api('/logbook?hours=' + h);
+    renderLogbook();
+  } catch(e) {
+    el.innerHTML = '<div style="color:#ef4444;font-size:13px;text-align:center;padding:10px">Ошибка: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function setLogbookFilter(f) {
+  _logbookFilter = f;
+  document.querySelectorAll('.logbook-filter').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById('logbook-filter-' + f);
+  if (btn) btn.classList.add('active');
+  renderLogbook();
+}
+
+function renderLogbook() {
+  const el = document.getElementById('logbook-content');
+  const filterDomains = {
+    light: ['light','switch'], climate: ['climate','fan'], cameras: ['camera','binary_sensor'],
+    person: ['person'], all: null
+  };
+  let data = _logbookData || [];
+  const fd = filterDomains[_logbookFilter];
+  if (fd) data = data.filter(e => fd.includes(e.domain));
+
+  const filtersHtml = `<div class="logbook-filters">
+    ${['all','light','climate','cameras','person'].map(f => {
+      const labels = {all:'Всё',light:'💡 Свет',climate:'🌡️ Климат',cameras:'📹 Камеры',person:'👤 Люди'};
+      return `<div id="logbook-filter-${f}" class="logbook-filter${_logbookFilter===f?' active':''}" onclick="setLogbookFilter('${f}')">${labels[f]||f}</div>`;
+    }).join('')}
+  </div>`;
+
+  if (!data.length) {
+    el.innerHTML = filtersHtml + '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Нет событий</div>';
+    return;
+  }
+
+  function relTime(isoStr) {
+    if (!isoStr) return '';
+    try {
+      const diff = Math.round((Date.now() - new Date(isoStr).getTime()) / 1000);
+      if (diff < 60) return diff + 'с назад';
+      if (diff < 3600) return Math.floor(diff/60) + 'м назад';
+      if (diff < 86400) return Math.floor(diff/3600) + 'ч назад';
+      return Math.floor(diff/86400) + 'д назад';
+    } catch(_) { return ''; }
+  }
+
+  const itemsHtml = data.slice(0,50).map(e => `
+    <div class="logbook-item">
+      <span class="logbook-icon">${e.icon||'📌'}</span>
+      <div class="logbook-info">
+        <div class="logbook-name">${escapeHtml(e.name||e.entity_id)}</div>
+        <div class="logbook-state">${escapeHtml(e.state)}</div>
+      </div>
+      <span class="logbook-time">${relTime(e.when_iso)||escapeHtml(e.when)}</span>
+    </div>`).join('');
+
+  el.innerHTML = filtersHtml +
+    `<div style="display:flex;gap:6px;margin-bottom:8px;">
+      <button class="btn btn-neutral" style="flex:1;font-size:12px" onclick="_logbookLoaded=false;loadLogbook(24)">🔄 24ч</button>
+      <button class="btn btn-neutral" style="flex:1;font-size:12px" onclick="_logbookLoaded=false;loadLogbook(48)">48ч</button>
+    </div>` + itemsHtml;
+}
+
+// ── Night Mode ─────────────────────────────────────────────────────────────
+let _nightModeLoaded = false;
+let _nightModeCfg = null;
+
+async function loadNightMode() {
+  _nightModeLoaded = true;
+  const el = document.getElementById('nightmode-content');
+  el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div>';
+  try {
+    _nightModeCfg = await api('/night-mode');
+    // Also load scenes for dropdown
+    const scenes = await api('/scenes');
+    renderNightMode(scenes);
+  } catch(e) {
+    el.innerHTML = '<div style="color:#ef4444;font-size:13px;text-align:center;padding:10px">Ошибка: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function renderNightMode(scenes) {
+  const el = document.getElementById('nightmode-content');
+  const c = _nightModeCfg || {};
+  const sceneOptions = Object.entries(scenes||{}).map(([id,sc]) =>
+    `<option value="${escapeAttr(id)}" ${c.scene_id===id?'selected':''}>${escapeHtml(sc.icon||'🎬')} ${escapeHtml(sc.name||id)}</option>`
+  ).join('');
+  el.innerHTML = `<div class="night-mode-card">
+    <div class="nm-row">
+      <span class="nm-label">🌙 Включить ночной режим</span>
+      <label class="dev-toggle"><input type="checkbox" id="nm-enabled" ${c.enabled?'checked':''}>
+        <span class="dev-toggle-slider"></span></label>
+    </div>
+    <div class="nm-row">
+      <span class="nm-label">⏰ Время активации</span>
+      <input type="time" class="nm-time" id="nm-time" value="${escapeHtml(c.time||'22:00')}">
+    </div>
+    <div class="nm-row">
+      <span class="nm-label">🏠 Только когда дома (Хамзат)</span>
+      <label class="dev-toggle"><input type="checkbox" id="nm-presence" ${c.check_presence!==false?'checked':''}>
+        <span class="dev-toggle-slider"></span></label>
+    </div>
+    <div class="nm-row">
+      <span class="nm-label">🎭 Сцена</span>
+      <select class="nm-select" id="nm-scene"><option value="">— не выбрана —</option>${sceneOptions}</select>
+    </div>
+    <div style="margin-top:12px">
+      <button class="btn btn-primary" style="width:100%" onclick="saveNightMode()">💾 Сохранить</button>
+    </div>
+  </div>`;
+}
+
+async function saveNightMode() {
+  const body = {
+    enabled:        document.getElementById('nm-enabled').checked,
+    time:           document.getElementById('nm-time').value || '22:00',
+    check_presence: document.getElementById('nm-presence').checked,
+    scene_id:       document.getElementById('nm-scene').value,
+  };
+  try {
+    await api('/night-mode', 'POST', body);
+    _nightModeCfg = body;
+    showToast('✅ Ночной режим сохранён' + (body.enabled ? ' — автоматизация создана в HA' : ''));
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+// ── Namaz Widget (countdown) ───────────────────────────────────────────────
+let _namazInterval = null;
+let _namazFinishesAt = null;
+let _namazDurationSec = 0;
+
+function applyNamazWidget(timerData) {
+  const widget = document.getElementById('namaz-widget');
+  if (!widget) return;
+  if (!timerData || timerData.state !== 'active' || !timerData.finishes_at) {
+    widget.style.display = 'none';
+    if (_namazInterval) { clearInterval(_namazInterval); _namazInterval = null; }
+    return;
+  }
+  widget.style.display = 'block';
+  _namazFinishesAt = timerData.finishes_at;
+  // Parse duration for progress bar
+  try {
+    const parts = (timerData.duration||'0:00:00').split(':').map(Number);
+    _namazDurationSec = (parts[0]||0)*3600 + (parts[1]||0)*60 + (parts[2]||0);
+  } catch(_) { _namazDurationSec = 0; }
+  if (!_namazInterval) {
+    _namazInterval = setInterval(namazTick, 1000);
+  }
+  namazTick();
+}
+
+function namazTick() {
+  if (!_namazFinishesAt) return;
+  const countdown = document.getElementById('namaz-countdown');
+  const progress = document.getElementById('namaz-progress');
+  if (!countdown) { clearInterval(_namazInterval); _namazInterval = null; return; }
+  try {
+    const finDt = new Date(_namazFinishesAt);
+    const secs = Math.max(0, Math.round((finDt - Date.now()) / 1000));
+    if (secs === 0) {
+      countdown.textContent = '00:00:00';
+      if (progress) progress.style.width = '100%';
+      clearInterval(_namazInterval); _namazInterval = null;
+      setTimeout(loadStatus, 2000);
+      return;
+    }
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = secs % 60;
+    countdown.textContent = (h>0?h.toString().padStart(2,'0')+':':'') +
+      m.toString().padStart(2,'0') + ':' + s.toString().padStart(2,'0');
+    if (progress && _namazDurationSec > 0) {
+      const elapsed = _namazDurationSec - secs;
+      progress.style.width = Math.min(100, Math.round(elapsed/_namazDurationSec*100)) + '%';
+    }
+  } catch(_) {}
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
