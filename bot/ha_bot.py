@@ -32,9 +32,11 @@ import io
 import os
 import json
 import logging
+import sqlite3
 import ssl as _ssl
 import subprocess
 import time as _time
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib import parse as urlparse
@@ -81,14 +83,183 @@ WEBAPP_URL   = "https://hub.office.mooo.com/ha-app/"
 WEBAPP_DIR   = Path("/opt/ha-bot/webapp")
 
 FAMILY_USERS_FILE  = Path("/opt/ha-bot/family_users.json")
-# ── Пути к файлам данных (создаются автоматически при первом запуске) ─────────
-DEVICES_FILE       = Path("/opt/ha-bot/devices.json")   # устройства пользователя
-SECTIONS_FILE      = Path("/opt/ha-bot/sections.json")  # разделы и их настройки
+# ── Пути к файлам данных ───────────────────────────────────────────────────────
+DB_FILE            = Path("/opt/ha-bot/ha_bot.db")      # SQLite (основное хранилище)
+# Legacy JSON пути — используются только для первичной миграции в SQLite
+DEVICES_FILE       = Path("/opt/ha-bot/devices.json")
+SECTIONS_FILE      = Path("/opt/ha-bot/sections.json")
 ACTIVITY_LOG_FILE  = Path("/opt/ha-bot/activity_log.json")
 ALERTS_CONFIG_FILE = Path("/opt/ha-bot/alerts_config.json")
 SCENES_FILE        = Path("/opt/ha-bot/scenes.json")
 FACES_LOG_FILE     = Path("/opt/ha-bot/faces_log.json")
 NIGHT_MODE_FILE    = Path("/opt/ha-bot/night_mode.json")
+
+# ── SQLite: глобальное подключение + блокировка для записи ────────────────────
+_DB: sqlite3.Connection | None = None
+_DB_LOCK = threading.Lock()
+
+def _db() -> sqlite3.Connection:
+    global _DB
+    if _DB is None:
+        _DB = sqlite3.connect(str(DB_FILE), check_same_thread=False)
+        _DB.row_factory = sqlite3.Row
+        _DB.execute("PRAGMA journal_mode=WAL")
+        _DB.execute("PRAGMA synchronous=NORMAL")
+        _DB.execute("PRAGMA foreign_keys=ON")
+    return _DB
+
+def _db_init():
+    """Создать таблицы и выполнить однократную миграцию из JSON."""
+    c = _db()
+    c.executescript("""
+        CREATE TABLE IF NOT EXISTS devices (
+            entity_id TEXT PRIMARY KEY,
+            name      TEXT NOT NULL DEFAULT '',
+            icon      TEXT NOT NULL DEFAULT '📦',
+            section   TEXT NOT NULL DEFAULT 'lights',
+            enabled   INTEGER NOT NULL DEFAULT 1,
+            ord       INTEGER NOT NULL DEFAULT 99
+        );
+        CREATE TABLE IF NOT EXISTS sections (
+            id      TEXT PRIMARY KEY,
+            name    TEXT NOT NULL DEFAULT '',
+            icon    TEXT NOT NULL DEFAULT '📦',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            ord     INTEGER NOT NULL DEFAULT 99,
+            hidden  INTEGER NOT NULL DEFAULT 0,
+            builtin INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS scenes (
+            id         TEXT PRIMARY KEY,
+            name       TEXT NOT NULL DEFAULT '',
+            icon       TEXT NOT NULL DEFAULT '🎬',
+            entities   TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS config (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE TABLE IF NOT EXISTS activity_log (
+            id     INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts     TEXT NOT NULL,
+            action TEXT NOT NULL,
+            detail TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS faces_log (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts       TEXT NOT NULL,
+            person   TEXT NOT NULL,
+            event_id TEXT NOT NULL,
+            camera   TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS family_users (
+            user_id TEXT PRIMARY KEY,
+            data    TEXT NOT NULL DEFAULT '{}'
+        );
+    """)
+    c.commit()
+    _db_migrate()
+
+def _db_migrate():
+    """Однократная миграция данных из JSON файлов в SQLite."""
+    c = _db()
+    # devices.json
+    if c.execute("SELECT COUNT(*) FROM devices").fetchone()[0] == 0 and DEVICES_FILE.exists():
+        try:
+            data = json.loads(DEVICES_FILE.read_text())
+            for eid, cfg in data.items():
+                c.execute("INSERT OR IGNORE INTO devices VALUES (?,?,?,?,?,?)",
+                    (eid, cfg.get("name",""), cfg.get("icon","📦"),
+                     cfg.get("section","lights"), int(cfg.get("enabled",True)),
+                     cfg.get("order",99)))
+            c.commit()
+            log.info(f"DB migrate: {len(data)} devices from JSON")
+        except Exception as e:
+            log.error(f"DB migrate devices: {e}")
+    # sections.json
+    if c.execute("SELECT COUNT(*) FROM sections").fetchone()[0] == 0 and SECTIONS_FILE.exists():
+        try:
+            data = json.loads(SECTIONS_FILE.read_text())
+            for sid, cfg in data.items():
+                c.execute("INSERT OR IGNORE INTO sections VALUES (?,?,?,?,?,?,?)",
+                    (sid, cfg.get("name",""), cfg.get("icon","📦"),
+                     int(cfg.get("enabled",True)), cfg.get("order",99),
+                     int(cfg.get("hidden",False)), int(cfg.get("builtin",False))))
+            c.commit()
+            log.info(f"DB migrate: {len(data)} sections from JSON")
+        except Exception as e:
+            log.error(f"DB migrate sections: {e}")
+    # alerts_config.json
+    if c.execute("SELECT COUNT(*) FROM config WHERE key='alerts'").fetchone()[0] == 0 \
+            and ALERTS_CONFIG_FILE.exists():
+        try:
+            c.execute("INSERT OR IGNORE INTO config VALUES ('alerts',?)",
+                      (ALERTS_CONFIG_FILE.read_text(),))
+            c.commit()
+            log.info("DB migrate: alerts config from JSON")
+        except Exception as e:
+            log.error(f"DB migrate alerts: {e}")
+    # activity_log.json
+    if c.execute("SELECT COUNT(*) FROM activity_log").fetchone()[0] == 0 \
+            and ACTIVITY_LOG_FILE.exists():
+        try:
+            data = json.loads(ACTIVITY_LOG_FILE.read_text())
+            for entry in data:
+                c.execute("INSERT INTO activity_log (ts,action,detail) VALUES (?,?,?)",
+                    (entry.get("ts",""), entry.get("action",""), entry.get("detail","")))
+            c.commit()
+            log.info(f"DB migrate: {len(data)} activity entries from JSON")
+        except Exception as e:
+            log.error(f"DB migrate activity_log: {e}")
+    # faces_log.json
+    if c.execute("SELECT COUNT(*) FROM faces_log").fetchone()[0] == 0 \
+            and FACES_LOG_FILE.exists():
+        try:
+            data = json.loads(FACES_LOG_FILE.read_text())
+            for entry in data:
+                c.execute("INSERT INTO faces_log (ts,person,event_id,camera) VALUES (?,?,?,?)",
+                    (entry.get("ts",""), entry.get("person",""),
+                     entry.get("event_id",""), entry.get("camera","")))
+            c.commit()
+            log.info(f"DB migrate: {len(data)} face entries from JSON")
+        except Exception as e:
+            log.error(f"DB migrate faces_log: {e}")
+    # scenes.json
+    if c.execute("SELECT COUNT(*) FROM scenes").fetchone()[0] == 0 and SCENES_FILE.exists():
+        try:
+            data = json.loads(SCENES_FILE.read_text())
+            for sid, cfg in data.items():
+                c.execute("INSERT OR IGNORE INTO scenes VALUES (?,?,?,?,?)",
+                    (sid, cfg.get("name",""), cfg.get("icon","🎬"),
+                     json.dumps(cfg.get("entities",{}), ensure_ascii=False),
+                     cfg.get("created_at","")))
+            c.commit()
+            log.info(f"DB migrate: {len(data)} scenes from JSON")
+        except Exception as e:
+            log.error(f"DB migrate scenes: {e}")
+    # family_users.json
+    if c.execute("SELECT COUNT(*) FROM family_users").fetchone()[0] == 0 \
+            and FAMILY_USERS_FILE.exists():
+        try:
+            data = json.loads(FAMILY_USERS_FILE.read_text())
+            for uid, udata in data.items():
+                c.execute("INSERT OR IGNORE INTO family_users VALUES (?,?)",
+                    (str(uid), json.dumps(udata, ensure_ascii=False)))
+            c.commit()
+            log.info(f"DB migrate: {len(data)} family users from JSON")
+        except Exception as e:
+            log.error(f"DB migrate family_users: {e}")
+    # night_mode.json
+    if c.execute("SELECT COUNT(*) FROM config WHERE key='night_mode'").fetchone()[0] == 0 \
+            and NIGHT_MODE_FILE.exists():
+        try:
+            c.execute("INSERT OR IGNORE INTO config VALUES ('night_mode',?)",
+                      (NIGHT_MODE_FILE.read_text(),))
+            c.commit()
+            log.info("DB migrate: night_mode from JSON")
+        except Exception as e:
+            log.error(f"DB migrate night_mode: {e}")
 
 _ALERTS_DEFAULTS = {
     "power_threshold":   3000,
@@ -108,21 +279,25 @@ _ALERTS_DEFAULTS = {
 }
 
 def _alerts_load() -> dict:
-    if ALERTS_CONFIG_FILE.exists():
-        try:
-            data = json.loads(ALERTS_CONFIG_FILE.read_text())
-            # merge with defaults for missing keys
+    try:
+        row = _db().execute("SELECT value FROM config WHERE key='alerts'").fetchone()
+        if row:
+            data = json.loads(row[0])
             cfg = dict(_ALERTS_DEFAULTS)
             cfg.update(data)
             cfg["enabled"] = {**_ALERTS_DEFAULTS["enabled"], **data.get("enabled", {})}
             return cfg
-        except Exception:
-            pass
+    except Exception as e:
+        log.error(f"alerts_load: {e}")
     return dict(_ALERTS_DEFAULTS)
 
 def _alerts_save(cfg: dict):
     try:
-        ALERTS_CONFIG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
+        with _DB_LOCK:
+            c = _db()
+            c.execute("INSERT OR REPLACE INTO config VALUES ('alerts',?)",
+                      (json.dumps(cfg, ensure_ascii=False),))
+            c.commit()
     except Exception as e:
         log.error(f"alerts_save: {e}")
 
@@ -181,16 +356,27 @@ _SCENES_DEFAULTS = {
 }
 
 def _scenes_load() -> dict:
-    if SCENES_FILE.exists():
-        try:
-            return json.loads(SCENES_FILE.read_text())
-        except Exception:
-            pass
+    try:
+        rows = _db().execute("SELECT id,name,icon,entities,created_at FROM scenes").fetchall()
+        if rows:
+            return {r["id"]: {"name": r["name"], "icon": r["icon"],
+                              "entities": json.loads(r["entities"] or "{}"),
+                              "created_at": r["created_at"]} for r in rows}
+    except Exception as e:
+        log.error(f"scenes_load: {e}")
     return dict(_SCENES_DEFAULTS)
 
 def _scenes_save(scenes: dict):
     try:
-        SCENES_FILE.write_text(json.dumps(scenes, ensure_ascii=False, indent=2))
+        with _DB_LOCK:
+            c = _db()
+            c.execute("DELETE FROM scenes")
+            for sid, cfg in scenes.items():
+                c.execute("INSERT INTO scenes VALUES (?,?,?,?,?)",
+                    (sid, cfg.get("name",""), cfg.get("icon","🎬"),
+                     json.dumps(cfg.get("entities",{}), ensure_ascii=False),
+                     cfg.get("created_at","")))
+            c.commit()
     except Exception as e:
         log.error(f"scenes_save: {e}")
 
@@ -229,11 +415,14 @@ _SECTIONS_DEFAULTS: dict = {
 
 def _sect_load() -> dict:
     saved: dict = {}
-    if SECTIONS_FILE.exists():
-        try:
-            saved = json.loads(SECTIONS_FILE.read_text())
-        except Exception as e:
-            log.error(f"sections_load: {e}")
+    try:
+        rows = _db().execute("SELECT id,name,icon,enabled,ord,hidden,builtin FROM sections").fetchall()
+        for r in rows:
+            saved[r["id"]] = {"name": r["name"], "icon": r["icon"],
+                              "enabled": bool(r["enabled"]), "order": r["ord"],
+                              "hidden": bool(r["hidden"]), "builtin": bool(r["builtin"])}
+    except Exception as e:
+        log.error(f"sections_load: {e}")
     # Мёрдж: дефолты дают структуру, сохранённые значения имеют приоритет
     result: dict = {}
     for k, v in _SECTIONS_DEFAULTS.items():
@@ -246,7 +435,15 @@ def _sect_load() -> dict:
 
 def _sect_save(d: dict):
     try:
-        SECTIONS_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2))
+        with _DB_LOCK:
+            c = _db()
+            c.execute("DELETE FROM sections")
+            for sid, cfg in d.items():
+                c.execute("INSERT INTO sections VALUES (?,?,?,?,?,?,?)",
+                    (sid, cfg.get("name",""), cfg.get("icon","📦"),
+                     int(cfg.get("enabled",True)), cfg.get("order",99),
+                     int(cfg.get("hidden",False)), int(cfg.get("builtin",False))))
+            c.commit()
     except Exception as e:
         log.error(f"sections_save: {e}")
 
@@ -463,14 +660,23 @@ def is_viewer(uid: int) -> bool:
 
 def _load_family_users() -> dict:
     try:
-        if FAMILY_USERS_FILE.exists():
-            return json.loads(FAMILY_USERS_FILE.read_text())
-    except Exception:
-        pass
+        rows = _db().execute("SELECT user_id, data FROM family_users").fetchall()
+        return {r["user_id"]: json.loads(r["data"]) for r in rows}
+    except Exception as e:
+        log.error(f"load_family_users: {e}")
     return {}
 
 def _save_family_users(data: dict):
-    FAMILY_USERS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    try:
+        with _DB_LOCK:
+            c = _db()
+            c.execute("DELETE FROM family_users")
+            for uid, udata in data.items():
+                c.execute("INSERT INTO family_users VALUES (?,?)",
+                    (str(uid), json.dumps(udata, ensure_ascii=False)))
+            c.commit()
+    except Exception as e:
+        log.error(f"save_family_users: {e}")
 
 def is_family(uid: int) -> bool:
     return str(uid) in _load_family_users()
@@ -626,42 +832,29 @@ _prayer_cache: dict = {"date": None, "timings": None}
 
 # ── Журнал активности ─────────────────────────────────────────────────────────
 def _activity_log(action: str, detail: str = ""):
-    """Append event to activity_log.json, keep last 200 entries."""
+    """Append event to activity_log table, keep last 200 entries."""
     try:
-        entries: list = []
-        if ACTIVITY_LOG_FILE.exists():
-            try:
-                entries = json.loads(ACTIVITY_LOG_FILE.read_text())
-            except Exception:
-                entries = []
-        entries.append({
-            "ts":     datetime.now(MSK).strftime("%Y-%m-%d %H:%M:%S"),
-            "action": action,
-            "detail": detail,
-        })
-        entries = entries[-200:]
-        ACTIVITY_LOG_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2))
+        with _DB_LOCK:
+            c = _db()
+            c.execute("INSERT INTO activity_log (ts,action,detail) VALUES (?,?,?)",
+                (datetime.now(MSK).strftime("%Y-%m-%d %H:%M:%S"), action, detail))
+            c.execute("DELETE FROM activity_log WHERE id NOT IN "
+                      "(SELECT id FROM activity_log ORDER BY id DESC LIMIT 200)")
+            c.commit()
     except Exception as e:
         log.error(f"activity_log: {e}")
 
 
 def _faces_log(person: str, event_id: str, camera: str):
-    """Append face detection to faces_log.json, keep last 200 entries."""
+    """Append face detection to faces_log table, keep last 200 entries."""
     try:
-        entries: list = []
-        if FACES_LOG_FILE.exists():
-            try:
-                entries = json.loads(FACES_LOG_FILE.read_text())
-            except Exception:
-                entries = []
-        entries.append({
-            "ts":       datetime.now(MSK).isoformat(),
-            "person":   person,
-            "event_id": event_id,
-            "camera":   camera,
-        })
-        entries = entries[-200:]
-        FACES_LOG_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2))
+        with _DB_LOCK:
+            c = _db()
+            c.execute("INSERT INTO faces_log (ts,person,event_id,camera) VALUES (?,?,?,?)",
+                (datetime.now(MSK).isoformat(), person, event_id, camera))
+            c.execute("DELETE FROM faces_log WHERE id NOT IN "
+                      "(SELECT id FROM faces_log ORDER BY id DESC LIMIT 200)")
+            c.commit()
     except Exception as e:
         log.error(f"faces_log: {e}")
 
@@ -1188,17 +1381,27 @@ LIGHTS_ICON: dict = {}  # {entity_id: icon}                   — пересоб
 # ── devices.json helpers ──────────────────────────────────────────────────────
 
 def _dev_load() -> dict:
-    """Загрузить devices.json → dict {entity_id: {name,icon,section,enabled,order}}."""
-    if DEVICES_FILE.exists():
-        try:
-            return json.loads(DEVICES_FILE.read_text())
-        except Exception as e:
-            log.error(f"devices_load: {e}")
+    """Загрузить устройства из SQLite → dict {entity_id: {name,icon,section,enabled,order}}."""
+    try:
+        rows = _db().execute("SELECT entity_id,name,icon,section,enabled,ord FROM devices").fetchall()
+        return {r["entity_id"]: {"name": r["name"], "icon": r["icon"],
+                                  "section": r["section"], "enabled": bool(r["enabled"]),
+                                  "order": r["ord"]} for r in rows}
+    except Exception as e:
+        log.error(f"devices_load: {e}")
     return {}
 
 def _dev_save(d: dict):
     try:
-        DEVICES_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2))
+        with _DB_LOCK:
+            c = _db()
+            c.execute("DELETE FROM devices")
+            for eid, cfg in d.items():
+                c.execute("INSERT INTO devices VALUES (?,?,?,?,?,?)",
+                    (eid, cfg.get("name",""), cfg.get("icon","📦"),
+                     cfg.get("section","lights"), int(cfg.get("enabled",True)),
+                     cfg.get("order",99)))
+            c.commit()
     except Exception as e:
         log.error(f"devices_save: {e}")
 
@@ -3416,18 +3619,16 @@ async def _web_alerts_post(request: aiohttp_web.Request) -> aiohttp_web.Response
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
 async def _web_activity(request: aiohttp_web.Request) -> aiohttp_web.Response:
-    """GET /ha-app/api/activity — последние 50 событий из activity_log.json."""
+    """GET /ha-app/api/activity — последние 50 событий из SQLite."""
     if not _check_token(request):
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
     try:
-        entries: list = []
-        if ACTIVITY_LOG_FILE.exists():
-            try:
-                entries = json.loads(ACTIVITY_LOG_FILE.read_text())
-            except Exception:
-                entries = []
+        rows = _db().execute(
+            "SELECT ts,action,detail FROM activity_log ORDER BY id DESC LIMIT 50"
+        ).fetchall()
+        entries = [{"ts": r["ts"], "action": r["action"], "detail": r["detail"]} for r in rows]
         return aiohttp_web.Response(
-            text=json.dumps(entries[-50:][::-1], ensure_ascii=False),
+            text=json.dumps(entries, ensure_ascii=False),
             content_type="application/json",
             headers=_CORS_HEADERS,
         )
@@ -3439,7 +3640,10 @@ async def _web_activity_clear(request: aiohttp_web.Request) -> aiohttp_web.Respo
     if not _check_token(request):
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
     try:
-        ACTIVITY_LOG_FILE.write_text("[]")
+        with _DB_LOCK:
+            c = _db()
+            c.execute("DELETE FROM activity_log")
+            c.commit()
         return aiohttp_web.Response(
             text=json.dumps({"ok": True}),
             content_type="application/json",
@@ -4869,16 +5073,21 @@ async def _web_logbook(request: aiohttp_web.Request) -> aiohttp_web.Response:
 
 # ── Night Mode (/ha-app/api/night-mode) ───────────────────────────────────────
 def _night_mode_load() -> dict:
-    if NIGHT_MODE_FILE.exists():
-        try:
-            return json.loads(NIGHT_MODE_FILE.read_text())
-        except Exception:
-            pass
+    try:
+        row = _db().execute("SELECT value FROM config WHERE key='night_mode'").fetchone()
+        if row:
+            return json.loads(row[0])
+    except Exception as e:
+        log.error(f"night_mode_load: {e}")
     return {"enabled": False, "time": "22:00", "check_presence": True, "scene_id": ""}
 
 def _night_mode_save(cfg: dict):
     try:
-        NIGHT_MODE_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
+        with _DB_LOCK:
+            c = _db()
+            c.execute("INSERT OR REPLACE INTO config VALUES ('night_mode',?)",
+                      (json.dumps(cfg, ensure_ascii=False),))
+            c.commit()
     except Exception as e:
         log.error(f"night_mode_save: {e}")
 
@@ -5031,17 +5240,24 @@ async def _start_web():
 @dp.message(Command("backup"))
 async def cmd_backup(msg: Message):
     if not is_admin(msg.from_user.id): return
-    files = [DEVICES_FILE, SECTIONS_FILE, ACTIVITY_LOG_FILE]
     sent = 0
-    for f in files:
-        if f.exists():
-            await msg.answer_document(
-                BufferedInputFile(f.read_bytes(), filename=f.name),
-                caption=f"📦 {f.name}"
-            )
-            sent += 1
+    # Экспорт devices из SQLite → JSON
+    devices = _dev_load()
+    if devices:
+        content = json.dumps(devices, ensure_ascii=False, indent=2).encode()
+        await msg.answer_document(BufferedInputFile(content, filename="devices.json"),
+                                  caption="📦 devices.json")
+        sent += 1
+    # Экспорт activity_log из SQLite → JSON
+    rows = _db().execute("SELECT ts,action,detail FROM activity_log ORDER BY id").fetchall()
+    if rows:
+        entries = [{"ts": r["ts"], "action": r["action"], "detail": r["detail"]} for r in rows]
+        content = json.dumps(entries, ensure_ascii=False, indent=2).encode()
+        await msg.answer_document(BufferedInputFile(content, filename="activity_log.json"),
+                                  caption="📦 activity_log.json")
+        sent += 1
     if sent == 0:
-        await msg.answer("❌ Нет файлов для бекапа")
+        await msg.answer("❌ Нет данных для бекапа")
     else:
         _activity_log("backup", f"sent {sent} files")
 
@@ -5067,15 +5283,14 @@ async def handle_document(msg: Message):
     try:
         file_info = await bot.get_file(doc.file_id)
         raw = await bot.download_file(file_info.file_path)
-        content = raw.read()
-        data = json.loads(content)  # validate JSON
+        data = json.loads(raw.read())  # validate JSON
         if fname == "devices.json":
-            DEVICES_FILE.write_bytes(content)
+            _dev_save(data)
             _dev_init()
             _activity_log("restore", "devices.json")
             await msg.answer(f"✅ <b>devices.json</b> восстановлен ({len(data)} устройств)", parse_mode="HTML")
         elif fname == "sections.json":
-            SECTIONS_FILE.write_bytes(content)
+            _sect_save(data)
             _activity_log("restore", "sections.json")
             await msg.answer(f"✅ <b>sections.json</b> восстановлен ({len(data)} секций)", parse_mode="HTML")
     except Exception as e:
@@ -5138,7 +5353,8 @@ async def cb_namaz_ok(cb: CallbackQuery):
 # ── Запуск ────────────────────────────────────────────────────────────────────
 async def main():
     log.info(f"HA Bot v{_BOT_VERSION} starting...")
-    _dev_init()            # загрузить devices.json → заполнить LIGHTS/LIGHTS_ICON
+    _db_init()             # создать таблицы SQLite + однократная миграция из JSON
+    _dev_init()            # загрузить devices из DB → заполнить LIGHTS/LIGHTS_ICON
     await _refresh_lights()  # сканировать HA, добавить новые устройства
     asyncio.create_task(alert_loop())
     asyncio.create_task(_start_web())
