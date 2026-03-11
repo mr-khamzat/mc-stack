@@ -745,6 +745,85 @@ body::before {
 .se-tabs { display: flex; gap: 2px; margin-bottom: 12px; background: rgba(255,255,255,0.05); border-radius: 10px; padding: 3px; }
 .se-tab { flex: 1; padding: 7px; text-align: center; border-radius: 8px; font-size: 12px; font-weight: 600; color: rgba(140,140,190,0.7); cursor: pointer; transition: all 0.15s ease; }
 .se-tab.active { background: rgba(99,102,241,0.3); color: #a5b4fc; }
+
+/* ── Sections Edit Mode ── */
+.sect-edit-btn {
+  background: rgba(255,255,255,0.06);
+  border: 0.5px solid rgba(255,255,255,0.12);
+  border-radius: 10px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(160,160,210,0.8);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  font-family: inherit;
+}
+.sect-edit-btn:active { background: rgba(99,102,241,0.2); }
+body.sections-edit-mode .sect-edit-btn {
+  background: rgba(99,102,241,0.2);
+  border-color: rgba(99,102,241,0.45);
+  color: #a5b4fc;
+}
+.sect-edit-bar {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, rgba(99,102,241,0.18) 0%, rgba(139,92,246,0.12) 100%);
+  border: 0.5px solid rgba(139,92,246,0.35);
+  border-radius: var(--r-lg);
+  margin-bottom: 10px;
+}
+body.sections-edit-mode .sect-edit-bar { display: flex; }
+.sect-edit-bar-label { font-size: 13px; font-weight: 600; color: #c4b5fd; }
+.sect-edit-done-btn {
+  background: linear-gradient(135deg, #6366f1, #7c3aed);
+  border: none;
+  border-radius: 9px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  color: white;
+  cursor: pointer;
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Section controls row — only visible in edit mode */
+.sect-edit-controls {
+  display: none;
+  gap: 4px;
+  align-items: center;
+  flex-shrink: 0;
+}
+body.sections-edit-mode .sect-edit-controls { display: flex; }
+body.sections-edit-mode .dyn-sect-chevron { display: none; }
+.sect-ctrl-btn {
+  background: rgba(255,255,255,0.07);
+  border: 0.5px solid rgba(255,255,255,0.14);
+  border-radius: 8px;
+  width: 30px;
+  height: 30px;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+  transition: all 0.15s ease;
+  font-family: inherit;
+  padding: 0;
+  color: rgba(180,180,220,0.9);
+}
+.sect-ctrl-btn:active { background: rgba(99,102,241,0.25); transform: scale(0.88); }
+.sect-ctrl-btn.danger { border-color: rgba(248,113,113,0.3); }
+.sect-ctrl-btn.danger:active { background: rgba(248,113,113,0.2); }
+/* Hidden section styling in edit mode */
+body.sections-edit-mode .dyn-section.sect-hidden-section { opacity: 0.5; }
+/* Prevent header tap from toggling when in edit mode */
+body.sections-edit-mode .dyn-section-header { cursor: default; }
 </style>
 <!-- Inline failsafe: remove loading after 5s even without JS -->
 <script>
@@ -769,7 +848,10 @@ body::before {
 <div id="app">
   <div class="app-header">
     <h1>🏠 Умный Дом</h1>
-    <span class="last-updated" id="last-updated">—</span>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <button class="sect-edit-btn" onclick="sectEditToggle()" id="sect-edit-toggle-btn">⚙️ Разделы</button>
+      <span class="last-updated" id="last-updated">—</span>
+    </div>
   </div>
 
   <!-- QUICK ACTIONS -->
@@ -1047,6 +1129,12 @@ body::before {
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- Sections edit mode bar -->
+  <div class="sect-edit-bar" id="sect-edit-bar">
+    <span class="sect-edit-bar-label">✏️ Режим редактирования</span>
+    <button class="sect-edit-done-btn" onclick="sectEditToggle()">✅ Готово</button>
   </div>
 
   <!-- dynamic sections rendered by JS -->
@@ -2869,11 +2957,18 @@ function renderDynamicSections(sections) {
   if (!container) return;
   if (!sections || sections.length === 0) { container.innerHTML = ''; return; }
 
-  container.innerHTML = sections.map(sect => {
+  // Store sections data for edit mode operations
+  window._dynSections = sections;
+
+  container.innerHTML = sections.map((sect, idx) => {
     const sid = 'dyn-' + sect.id.replace(/[^a-z0-9]/g, '_');
     const devices = sect.devices || {};
     const devCount = Object.keys(devices).length;
-    if (devCount === 0) return '';
+    const isHidden = sect.hidden === true;
+
+    // In normal mode, skip hidden sections entirely; in edit mode they're shown faded
+    if (isHidden && !_sectEditMode) return '';
+    if (devCount === 0 && !_sectEditMode) return '';
 
     const devHtml = Object.entries(devices).map(([eid, info]) => {
       const domain = info.domain || eid.split('.')[0];
@@ -2919,16 +3014,289 @@ function renderDynamicSections(sections) {
       </div>`;
     }).join('');
 
-    return `<div class="section" style="margin-bottom:10px">
-      <div class="section-header" onclick="toggleSection('${sid}-body')">
-        <span>${escapeHtml(sect.name || sect.id)}</span>
-        <span class="chevron">▾</span>
+    const sectionsArr = window._dynSections || [];
+    const isFirst = idx === 0;
+    const isLast = idx === sectionsArr.length - 1;
+
+    const hiddenBadge = isHidden
+      ? `<span style="font-size:10px;background:rgba(248,113,113,0.18);border:0.5px solid rgba(248,113,113,0.3);border-radius:6px;padding:2px 6px;color:#f87171;font-weight:600;margin-left:6px">скрыт</span>`
+      : '';
+
+    return `<div class="section dyn-section${isHidden ? ' sect-hidden-section' : ''}" style="margin-bottom:10px" id="dyn-sect-el-${escapeAttr(sect.id)}">
+      <div class="section-header dyn-section-header" onclick="dynSectHeaderClick(event,'${sid}-body')">
+        <span style="display:flex;align-items:center;gap:4px">${escapeHtml(sect.icon || '')} ${escapeHtml(sect.name || sect.id)}${hiddenBadge}</span>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div class="sect-edit-controls">
+            <button class="sect-ctrl-btn" onclick="event.stopPropagation();sectMoveUp('${escapeAttr(sect.id)}')" title="Выше" ${isFirst ? 'style="opacity:0.3;pointer-events:none"' : ''}>▲</button>
+            <button class="sect-ctrl-btn" onclick="event.stopPropagation();sectMoveDown('${escapeAttr(sect.id)}')" title="Ниже" ${isLast ? 'style="opacity:0.3;pointer-events:none"' : ''}>▼</button>
+            <button class="sect-ctrl-btn" onclick="event.stopPropagation();sectToggleHidden('${escapeAttr(sect.id)}')" title="${isHidden ? 'Показать' : 'Скрыть'}" style="${isHidden ? 'border-color:rgba(248,113,113,0.3);' : ''}">${isHidden ? '🚫' : '👁'}</button>
+            <button class="sect-ctrl-btn" onclick="event.stopPropagation();openSectEditor('${escapeAttr(sect.id)}')" title="Редактировать">✏️</button>
+            <button class="sect-ctrl-btn danger" onclick="event.stopPropagation();sectDelete('${escapeAttr(sect.id)}')" title="Удалить">🗑️</button>
+          </div>
+          <span class="chevron dyn-sect-chevron">▾</span>
+        </div>
       </div>
       <div class="section-body" id="${sid}-body">
-        <div class="section-content">${devHtml}</div>
+        <div class="section-content">${devHtml || '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Нет устройств</div>'}</div>
       </div>
     </div>`;
   }).join('');
+}
+
+// ── Dynamic section header click (respects edit mode) ──────────────────────
+function dynSectHeaderClick(event, bodyId) {
+  if (document.body.classList.contains('sections-edit-mode')) return;
+  toggleSection(bodyId);
+}
+
+// ── Sections edit mode ──────────────────────────────────────────────────────
+let _sectEditMode = false;
+
+function sectEditToggle() {
+  _sectEditMode = !_sectEditMode;
+  document.body.classList.toggle('sections-edit-mode', _sectEditMode);
+  // Re-render to update ▲▼ button disabled states and badges
+  if (window._statusData && window._statusData.sections) {
+    renderDynamicSections(window._statusData.sections);
+  }
+}
+
+async function sectMoveUp(sectId) {
+  const sections = window._dynSections;
+  if (!sections) return;
+  const idx = sections.findIndex(s => s.id === sectId);
+  if (idx <= 0) return;
+  await _sectSwapOrder(sections[idx].id, sections[idx-1].id);
+}
+
+async function sectMoveDown(sectId) {
+  const sections = window._dynSections;
+  if (!sections) return;
+  const idx = sections.findIndex(s => s.id === sectId);
+  if (idx < 0 || idx >= sections.length - 1) return;
+  await _sectSwapOrder(sections[idx].id, sections[idx+1].id);
+}
+
+async function _sectSwapOrder(idA, idB) {
+  const sections = window._dynSections;
+  const a = sections.find(s => s.id === idA);
+  const b = sections.find(s => s.id === idB);
+  if (!a || !b) return;
+  const orderA = a.order != null ? a.order : 99;
+  const orderB = b.order != null ? b.order : 99;
+  try {
+    await Promise.all([
+      api('/sections', 'POST', { id: idA, order: orderB }),
+      api('/sections', 'POST', { id: idB, order: orderA }),
+    ]);
+    // Update local data and re-render
+    a.order = orderB;
+    b.order = orderA;
+    window._dynSections = [...sections].sort((x, y) => (x.order || 99) - (y.order || 99));
+    if (window._statusData) window._statusData.sections = window._dynSections;
+    renderDynamicSections(window._dynSections);
+    showToast('✅ Порядок обновлён');
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+async function sectToggleHidden(sectId) {
+  const sections = window._dynSections;
+  const sect = sections && sections.find(s => s.id === sectId);
+  if (!sect) return;
+  const newHidden = !sect.hidden;
+  try {
+    await api('/sections', 'POST', { id: sectId, hidden: newHidden });
+    sect.hidden = newHidden;
+    renderDynamicSections(window._dynSections);
+    showToast(newHidden ? '🙈 Раздел скрыт' : '👁 Раздел показан');
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+async function sectDelete(sectId) {
+  const sections = window._dynSections;
+  const sect = sections && sections.find(s => s.id === sectId);
+  const name = sect ? (sect.name || sectId) : sectId;
+  if (!confirm('Удалить раздел «' + name + '»?')) return;
+  try {
+    await api('/sections', 'POST', { id: sectId, delete: true });
+    if (window._dynSections) {
+      window._dynSections = window._dynSections.filter(s => s.id !== sectId);
+      if (window._statusData) window._statusData.sections = window._dynSections;
+      renderDynamicSections(window._dynSections);
+    }
+    showToast('🗑️ Раздел удалён');
+    setTimeout(loadStatus, 800);
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+// ── Section editor (bottomsheet) ─────────────────────────────────────────────
+let _sectEditorEntities = null;
+
+async function openSectEditor(sectId) {
+  const sections = window._dynSections;
+  const sect = sections && sections.find(s => s.id === sectId);
+  if (!sect) return;
+
+  document.getElementById('sect-editor-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'sect-editor-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.72);backdrop-filter:blur(8px);z-index:3000;display:flex;align-items:flex-end;justify-content:center;';
+
+  const IS = 'width:100%;background:rgba(255,255,255,0.08);border:0.5px solid rgba(255,255,255,0.15);border-radius:10px;color:#eaeaf8;font-size:14px;padding:9px 12px;font-family:inherit;';
+  const LS = 'font-size:11px;color:rgba(120,120,168,0.8);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;';
+
+  const devices = sect.devices || {};
+  const devListHtml = Object.entries(devices).map(([eid, info]) =>
+    `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:rgba(255,255,255,0.055);border:0.5px solid rgba(255,255,255,0.08);border-radius:10px;margin-bottom:5px;" id="sedev-${sanitizeId(eid)}">
+      <span style="font-size:16px;flex-shrink:0;">${info.icon || '📦'}</span>
+      <span style="flex:1;font-size:12px;color:#c8c8e8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(info.name || eid)}</span>
+      <span style="font-size:10px;color:rgba(120,120,168,0.55);flex-shrink:0;margin-right:4px;">${escapeHtml(eid.split('.')[0])}</span>
+      <button onclick="sectEditorRemoveDev('${escapeAttr(eid)}','${escapeAttr(sectId)}')" style="background:rgba(248,113,113,0.14);border:0.5px solid rgba(248,113,113,0.28);border-radius:7px;color:#f87171;font-size:11px;width:24px;height:24px;flex-shrink:0;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>
+    </div>`
+  ).join('') || '<div style="color:#50508a;font-size:12px;text-align:center;padding:8px 0;">Нет устройств</div>';
+
+  modal.innerHTML = `<div id="se2-sheet" style="background:linear-gradient(155deg,rgba(18,18,40,0.99),rgba(10,10,26,0.99));border:0.5px solid rgba(255,255,255,0.13);border-radius:20px 20px 0 0;padding:20px 20px 36px;width:100%;max-width:480px;box-shadow:0 -24px 64px rgba(0,0,0,0.8);max-height:92vh;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+    <div style="width:36px;height:4px;background:rgba(255,255,255,0.18);border-radius:2px;margin:0 auto 18px;"></div>
+    <div style="font-size:16px;font-weight:700;color:#eaeaf8;margin-bottom:16px;letter-spacing:-0.3px;">✏️ ${escapeHtml(sect.name || sectId)}</div>
+    <div style="display:grid;grid-template-columns:72px 1fr;gap:10px;margin-bottom:12px;">
+      <div><label style="${LS}">Иконка</label><input id="se2-icon" type="text" value="${escapeHtml(sect.icon||'📁')}" style="${IS}font-size:22px;text-align:center;padding:7px 6px;"></div>
+      <div><label style="${LS}">Название</label><input id="se2-name" type="text" value="${escapeHtml((sect.name||'').replace(/^\S+\s/, ''))}" placeholder="Название раздела" style="${IS}"></div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <label style="${LS}margin-bottom:0;">📱 Устройства в разделе</label>
+      <button onclick="sectEditorAddDev('${escapeAttr(sectId)}')" style="background:rgba(99,102,241,0.18);border:0.5px solid rgba(99,102,241,0.35);border-radius:8px;color:#a5b4fc;font-size:12px;padding:4px 10px;cursor:pointer;font-family:inherit;">➕ Добавить</button>
+    </div>
+    <div id="se2-dev-list" style="margin-bottom:12px;">${devListHtml}</div>
+    <div id="se2-add-panel" style="display:none;border:0.5px solid rgba(99,102,241,0.22);border-radius:12px;padding:12px;margin-bottom:12px;background:rgba(30,30,60,0.5);"></div>
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <button class="btn btn-neutral" style="flex:1;" onclick="document.getElementById('sect-editor-modal').remove()">Отмена</button>
+      <button class="btn btn-primary" style="flex:1;" onclick="sectEditorSave('${escapeAttr(sectId)}')">💾 Сохранить</button>
+    </div>
+  </div>`;
+
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  setTimeout(() => document.getElementById('se2-name')?.focus(), 50);
+}
+
+async function sectEditorSave(sectId) {
+  const icon = (document.getElementById('se2-icon')?.value || '📁').trim();
+  const namePart = (document.getElementById('se2-name')?.value || '').trim();
+  if (!namePart) { showToast('❌ Введите название'); return; }
+  const fullName = icon + ' ' + namePart;
+  try {
+    await api('/sections', 'POST', { id: sectId, name: fullName, icon });
+    // Update local cache
+    const sect = window._dynSections && window._dynSections.find(s => s.id === sectId);
+    if (sect) { sect.name = fullName; sect.icon = icon; }
+    if (window._statusData && window._statusData.sections) {
+      const s2 = window._statusData.sections.find(s => s.id === sectId);
+      if (s2) { s2.name = fullName; s2.icon = icon; }
+    }
+    document.getElementById('sect-editor-modal')?.remove();
+    renderDynamicSections(window._dynSections);
+    showToast('✅ Раздел обновлён');
+    setTimeout(loadStatus, 800);
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+async function sectEditorRemoveDev(eid, sectId) {
+  try {
+    await api('/devices', 'POST', { entity_id: eid, section: 'hidden', enabled: false });
+    // Update local section devices
+    const sect = window._dynSections && window._dynSections.find(s => s.id === sectId);
+    if (sect && sect.devices) delete sect.devices[eid];
+    if (window._statusData && window._statusData.sections) {
+      const s2 = window._statusData.sections.find(s => s.id === sectId);
+      if (s2 && s2.devices) delete s2.devices[eid];
+    }
+    // Remove row from UI
+    const row = document.getElementById('sedev-' + sanitizeId(eid));
+    if (row) row.remove();
+    showToast('🙈 Убрано из раздела');
+    setTimeout(loadStatus, 800);
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+async function sectEditorAddDev(sectId) {
+  const panel = document.getElementById('se2-add-panel');
+  if (!panel) return;
+  panel.style.display = 'block';
+  if (!_sectEditorEntities) {
+    panel.innerHTML = '<div style="color:#60608a;font-size:12px;text-align:center;padding:10px;">Загрузка устройств...</div>';
+    try {
+      const raw = await api('/ha_entities');
+      _sectEditorEntities = [];
+      const useful = ['light', 'switch', 'media_player', 'input_boolean', 'camera', 'sensor', 'binary_sensor', 'climate', 'fan'];
+      for (const domain of useful) {
+        if (raw[domain]) {
+          for (const e of raw[domain]) {
+            _sectEditorEntities.push({entity_id: e.entity_id, name: e.name || e.entity_id, domain});
+          }
+        }
+      }
+    } catch(err) {
+      panel.innerHTML = `<div style="color:#ef4444;font-size:12px;padding:8px;">Ошибка: ${escapeHtml(err.message)}</div>`;
+      return;
+    }
+  }
+  sectEditorRenderPicker('', sectId);
+}
+
+function sectEditorRenderPicker(filter, sectId) {
+  const panel = document.getElementById('se2-add-panel');
+  if (!panel) return;
+  const q = filter.toLowerCase();
+  const filtered = q
+    ? _sectEditorEntities.filter(e => e.name.toLowerCase().includes(q) || e.entity_id.toLowerCase().includes(q))
+    : _sectEditorEntities;
+  const rows = filtered.slice(0, 40).map(e =>
+    `<div onclick="sectEditorPickDev('${escapeAttr(e.entity_id)}','${escapeAttr(e.name)}','${escapeAttr(e.domain)}','${escapeAttr(sectId)}')"
+      style="padding:7px 10px;background:rgba(255,255,255,0.055);border-radius:9px;cursor:pointer;font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px;">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c8c8e8;">${escapeHtml(e.name)}</span>
+      <span style="font-size:10px;color:rgba(120,120,168,0.55);flex-shrink:0;">${escapeHtml(e.domain)}</span>
+    </div>`
+  ).join('');
+  panel.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <span style="font-size:12px;font-weight:600;color:rgba(140,140,190,0.85);">Добавить устройство</span>
+      <button onclick="document.getElementById('se2-add-panel').style.display='none'" style="background:none;border:none;color:#f87171;font-size:15px;cursor:pointer;line-height:1;">✕</button>
+    </div>
+    <input type="text" placeholder="Поиск..." value="${escapeHtml(filter)}" oninput="sectEditorRenderPicker(this.value,'${escapeAttr(sectId)}')"
+      style="width:100%;background:rgba(255,255,255,0.08);border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;color:#eaeaf8;font-size:12px;padding:7px 10px;font-family:inherit;margin-bottom:8px;">
+    <div style="max-height:180px;overflow-y:auto;">
+      ${rows}
+      ${filtered.length > 40 ? `<div style="text-align:center;color:#50508a;font-size:11px;padding:4px;">ещё ${filtered.length - 40}... уточни поиск</div>` : ''}
+      ${filtered.length === 0 ? '<div style="text-align:center;color:#50508a;font-size:12px;padding:8px;">Ничего не найдено</div>' : ''}
+    </div>`;
+}
+
+async function sectEditorPickDev(entityId, name, domain, sectId) {
+  const icon = DOMAIN_DEFAULT_ICON[domain] || '📦';
+  try {
+    await api('/devices', 'POST', { entity_id: entityId, name, icon, section: sectId, enabled: true });
+    // Update local cache
+    const sect = window._dynSections && window._dynSections.find(s => s.id === sectId);
+    if (sect) {
+      if (!sect.devices) sect.devices = {};
+      sect.devices[entityId] = { name, icon, domain, state: '—' };
+    }
+    document.getElementById('se2-add-panel').style.display = 'none';
+    // Refresh the device list in editor
+    const devList = document.getElementById('se2-dev-list');
+    if (devList && sect && sect.devices) {
+      const devices = sect.devices;
+      devList.innerHTML = Object.entries(devices).map(([eid, info]) =>
+        `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:rgba(255,255,255,0.055);border:0.5px solid rgba(255,255,255,0.08);border-radius:10px;margin-bottom:5px;" id="sedev-${sanitizeId(eid)}">
+          <span style="font-size:16px;flex-shrink:0;">${info.icon || '📦'}</span>
+          <span style="flex:1;font-size:12px;color:#c8c8e8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(info.name || eid)}</span>
+          <span style="font-size:10px;color:rgba(120,120,168,0.55);flex-shrink:0;margin-right:4px;">${escapeHtml(eid.split('.')[0])}</span>
+          <button onclick="sectEditorRemoveDev('${escapeAttr(eid)}','${escapeAttr(sectId)}')" style="background:rgba(248,113,113,0.14);border:0.5px solid rgba(248,113,113,0.28);border-radius:7px;color:#f87171;font-size:11px;width:24px;height:24px;flex-shrink:0;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>
+        </div>`
+      ).join('') || '<div style="color:#50508a;font-size:12px;text-align:center;padding:8px 0;">Нет устройств</div>';
+    }
+    showToast('✅ Добавлено: ' + name);
+    setTimeout(loadStatus, 1000);
+  } catch(e) { showToast('❌ ' + e.message); }
 }
 
 async function openCameraModal(eid) {

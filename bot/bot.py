@@ -3660,6 +3660,8 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
                     "id":      sect_id,
                     "name":    sect_cfg.get("name", sect_id),
                     "icon":    sect_cfg.get("icon", "📦"),
+                    "order":   sect_cfg.get("order", 99),
+                    "hidden":  sect_cfg.get("hidden", False),
                     "devices": custom_sections.get(sect_id, {}),
                 })
 
@@ -4484,7 +4486,7 @@ async def _web_sections_post(request: aiohttp_web.Request) -> aiohttp_web.Respon
                 sections[sect_id] = {"name": body.get("name", sect_id), "icon": body.get("icon", "📦"),
                                      "enabled": True, "order": max_ord}
             else:
-                for field in ("name", "icon", "enabled", "order"):
+                for field in ("name", "icon", "enabled", "order", "hidden"):
                     if field in body:
                         sections[sect_id][field] = body[field]
         _sect_save(sections)
