@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib import parse as urlparse
 
+import psutil
 import aiohttp
 from aiohttp import web as aiohttp_web
 try:
@@ -63,6 +64,7 @@ ACTIVITY_LOG_FILE  = Path("/opt/ha-bot/activity_log.json")
 ALERTS_CONFIG_FILE = Path("/opt/ha-bot/alerts_config.json")
 SCENES_FILE        = Path("/opt/ha-bot/scenes.json")
 FACES_LOG_FILE     = Path("/opt/ha-bot/faces_log.json")
+NIGHT_MODE_FILE    = Path("/opt/ha-bot/night_mode.json")
 
 _ALERTS_DEFAULTS = {
     "power_threshold":   3000,
@@ -3078,8 +3080,10 @@ async def _web_index(request: aiohttp_web.Request) -> aiohttp_web.Response:
     path = WEBAPP_DIR / "index.html"
     if not path.exists():
         return aiohttp_web.Response(status=404, text="Not found")
+    # Inject real WEBAPP_TOKEN so the placeholder is never committed to git
+    html = path.read_text(encoding="utf-8").replace("__WEBAPP_TOKEN__", WEBAPP_TOKEN)
     return aiohttp_web.Response(
-        body=path.read_bytes(),
+        text=html,
         content_type="text/html",
         headers={"Cache-Control": "no-cache"},
     )
@@ -3122,6 +3126,78 @@ async def _web_health(request: aiohttp_web.Request) -> aiohttp_web.Response:
         headers=_CORS_HEADERS,
     )
 
+async def _create_ha_automation(scene_id: str, scene: dict, trigger_override: dict | None = None) -> dict:
+    """Create or update a HA automation for the given scene. Returns status dict.
+    trigger_override: if provided, use this trigger (for schedule mode).
+    """
+    auto = scene.get("automation", {})
+    name = scene.get("name", scene_id)
+    actions = scene.get("actions", [])
+    trigger_type = auto.get("trigger_type", "time")
+
+    # Build trigger
+    if trigger_override:
+        trigger = [trigger_override]
+    elif trigger_type == "time":
+        trigger_time = auto.get("trigger_time", "07:00")
+        # HA wants HH:MM:SS
+        if len(trigger_time) == 5:
+            trigger_time += ":00"
+        trigger = [{"platform": "time", "at": trigger_time}]
+    else:
+        entity = auto.get("trigger_entity", "")
+        state = auto.get("trigger_state", "on")
+        if not entity:
+            return {"error": "trigger_entity required for state trigger"}
+        trigger = [{"platform": "state", "entity_id": entity, "to": state}]
+
+    # Build HA action list from scene actions
+    ha_actions = []
+    for a in actions:
+        eid = a.get("entity_id", "")
+        svc = a.get("service", "")
+        if not eid or not svc or "." not in svc:
+            continue
+        domain, service = svc.split(".", 1)
+        action_body: dict = {"service": f"{domain}.{service}", "target": {"entity_id": eid}}
+        if a.get("extra"):
+            action_body["data"] = a["extra"]
+        ha_actions.append(action_body)
+
+    if not ha_actions:
+        return {"error": "no valid actions"}
+
+    automation_id = f"miniapp_scene_{scene_id}"
+    payload = {
+        "alias": f"Сцена: {name}",
+        "description": f"Создана через Mini App (сцена: {scene_id})",
+        "trigger": trigger,
+        "condition": [],
+        "action": ha_actions,
+        "mode": "single",
+    }
+
+    try:
+        url = f"{HA_URL}/api/config/automation/config/{automation_id}"
+        async with aiohttp.ClientSession() as sess:
+            async with sess.post(url, headers=HA_HEADERS, json=payload,
+                                 timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                body = await resp.text()
+                if resp.status in (200, 201):
+                    # Reload automations so HA picks up the change
+                    try:
+                        await ha_call("automation", "reload", "")
+                    except Exception:
+                        pass
+                    log.info(f"HA automation created: {automation_id}")
+                    return {"ok": True, "id": automation_id}
+                log.warning(f"HA automation create failed {resp.status}: {body[:200]}")
+                return {"error": f"HA returned {resp.status}", "detail": body[:200]}
+    except Exception as e:
+        log.warning(f"_create_ha_automation: {e}")
+        return {"error": str(e)}
+
+
 async def _web_scenes_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/api/scenes — список сцен."""
     if not _check_token(request):
@@ -3141,15 +3217,78 @@ async def _web_scenes_post(request: aiohttp_web.Request) -> aiohttp_web.Response
         if not scene_id:
             return aiohttp_web.Response(status=400, text="id required", headers=_CORS_HEADERS)
         scenes = _scenes_load()
+        auto_cfg = body.get("automation", {})
+        sched_cfg = body.get("schedule", {})
         scenes[scene_id] = {
             "name":        body.get("name", scene_id),
             "icon":        body.get("icon", "⭐"),
             "description": body.get("description", ""),
             "actions":     body.get("actions", []),
+            "automation":  auto_cfg,
+            "schedule":    sched_cfg,
         }
         _scenes_save(scenes)
         _activity_log("scene_saved", scene_id)
-        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+        # Optionally create/update HA automation
+        auto_result = None
+        if auto_cfg.get("enabled"):
+            auto_result = await _create_ha_automation(scene_id, scenes[scene_id])
+        # Optionally create schedule automation
+        sched_result = None
+        if sched_cfg.get("enabled"):
+            sched_time = sched_cfg.get("time", "07:00")
+            if len(sched_time) == 5:
+                sched_time += ":00"
+            days_of_week = sched_cfg.get("days", [0,1,2,3,4,5,6])
+            # Map 0-6 (Mon-Sun) to HA weekday names
+            HA_DAYS = ["mon","tue","wed","thu","fri","sat","sun"]
+            ha_days = [HA_DAYS[d] for d in days_of_week if 0 <= d <= 6]
+            trigger_ov = {"platform": "time", "at": sched_time}
+            sched_scene = dict(scenes[scene_id])
+            # Create schedule automation with weekday condition
+            # We'll inline a custom create here to pass condition
+            sched_ha_actions = []
+            for a in sched_scene.get("actions", []):
+                eid = a.get("entity_id", "")
+                svc = a.get("service", "")
+                if not eid or not svc or "." not in svc:
+                    continue
+                domain, service = svc.split(".", 1)
+                ab: dict = {"service": f"{domain}.{service}", "target": {"entity_id": eid}}
+                if a.get("extra"):
+                    ab["data"] = a["extra"]
+                sched_ha_actions.append(ab)
+            if sched_ha_actions and ha_days:
+                sched_payload = {
+                    "alias": f"Расписание: {sched_scene.get('name', scene_id)}",
+                    "description": f"Расписание сцены {scene_id} (Mini App)",
+                    "trigger": [{"platform": "time", "at": sched_time}],
+                    "condition": [{"condition": "time", "weekday": ha_days}],
+                    "action": sched_ha_actions,
+                    "mode": "single",
+                }
+                try:
+                    sched_auto_id = f"miniapp_sched_{scene_id}"
+                    url = f"{HA_URL}/api/config/automation/config/{sched_auto_id}"
+                    async with aiohttp.ClientSession() as sess:
+                        async with sess.post(url, headers=HA_HEADERS, json=sched_payload,
+                                             timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                            if resp.status in (200, 201):
+                                try:
+                                    await ha_call("automation", "reload", "")
+                                except Exception:
+                                    pass
+                                sched_result = {"ok": True, "id": sched_auto_id}
+                            else:
+                                sched_result = {"error": f"HA returned {resp.status}"}
+                except Exception as e:
+                    sched_result = {"error": str(e)}
+        result = {"ok": True}
+        if auto_result:
+            result["automation"] = auto_result
+        if sched_result:
+            result["schedule_automation"] = sched_result
+        return aiohttp_web.Response(text=json.dumps(result), content_type="application/json",
                                     headers=_CORS_HEADERS)
     except Exception as e:
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
@@ -3521,6 +3660,8 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
                     "id":      sect_id,
                     "name":    sect_cfg.get("name", sect_id),
                     "icon":    sect_cfg.get("icon", "📦"),
+                    "order":   sect_cfg.get("order", 99),
+                    "hidden":  sect_cfg.get("hidden", False),
                     "devices": custom_sections.get(sect_id, {}),
                 })
 
@@ -3549,6 +3690,21 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
             {"name": "Фаза 2", "power": st(vvod2_d)},
             {"name": "Фаза 3", "power": st(vvod3_d)},
         ]
+
+        # Namaz timer
+        namaz_timer_data = None
+        try:
+            namaz_d2 = await ha_get(f"states/{NAMAZ_EID}")
+            if namaz_d2:
+                nattrs = namaz_d2.get("attributes", {})
+                namaz_timer_data = {
+                    "state":       namaz_d2.get("state", "idle"),
+                    "remaining":   nattrs.get("remaining", ""),
+                    "duration":    nattrs.get("duration", ""),
+                    "finishes_at": nattrs.get("finishes_at", ""),
+                }
+        except Exception:
+            pass
 
         payload = {
             "power":         st(power_d),
@@ -3582,6 +3738,7 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
             "last_face": _alert_state.get("last_recognized_face") or "",
             "cam_person_count": cam_person_cnt,
             "cam_all_count":    cam_all_cnt,
+            "namaz_timer":      namaz_timer_data,
         }
         payload_json = json.dumps(payload, ensure_ascii=False)
         _status_cache["ts"]   = _time.time()
@@ -3808,7 +3965,7 @@ async def _web_frigate_recordings(request: aiohttp_web.Request) -> aiohttp_web.R
                     thumb = HA_URL + thumb
                 # Prefer snapshot as thumbnail if no thumb
                 if not thumb and snap_url:
-                    thumb = snap_url + f"&token={HA_TOKEN}"
+                    thumb = snap_url + f"?token={HA_TOKEN}"
                 recordings.append({
                     "title":    clip.get("title", ""),
                     "thumbnail": thumb,
@@ -3830,26 +3987,58 @@ async def _web_frigate_clip_proxy(request: aiohttp_web.Request) -> aiohttp_web.R
     event_id = request.match_info.get("event_id", "").strip()
     if not event_id:
         return aiohttp_web.Response(status=400, text="event_id required", headers=_CORS_HEADERS)
-    clip_url = f"{HA_URL}/api/frigate/notifications/{event_id}/clip.mp4"
+    candidate_urls = [
+        f"{HA_URL}/api/frigate/notifications/{event_id}/clip.mp4",
+        f"{HA_URL}/api/frigate/api/events/{event_id}/clip.mp4",
+    ]
     req_headers: dict = {"Authorization": f"Bearer {HA_TOKEN}"}
     if "Range" in request.headers:
         req_headers["Range"] = request.headers["Range"]
     try:
         async with aiohttp.ClientSession() as sess:
-            async with sess.get(clip_url, headers=req_headers,
-                                timeout=aiohttp.ClientTimeout(total=90),
-                                allow_redirects=True) as resp:
-                data = await resp.read()
-                out_headers = dict(_CORS_HEADERS)
-                out_headers["Content-Type"]  = resp.headers.get("Content-Type", "video/mp4")
-                out_headers["Accept-Ranges"] = "bytes"
-                if "Content-Range" in resp.headers:
-                    out_headers["Content-Range"] = resp.headers["Content-Range"]
-                if "Content-Length" in resp.headers:
-                    out_headers["Content-Length"] = resp.headers["Content-Length"]
-                return aiohttp_web.Response(status=resp.status, body=data, headers=out_headers)
+            for clip_url in candidate_urls:
+                async with sess.get(clip_url, headers=req_headers,
+                                    timeout=aiohttp.ClientTimeout(total=90),
+                                    allow_redirects=True) as resp:
+                    if resp.status == 404 and clip_url != candidate_urls[-1]:
+                        continue
+                    data = await resp.read()
+                    out_headers = dict(_CORS_HEADERS)
+                    out_headers["Content-Type"]  = resp.headers.get("Content-Type", "video/mp4")
+                    out_headers["Accept-Ranges"] = "bytes"
+                    if "Content-Range" in resp.headers:
+                        out_headers["Content-Range"] = resp.headers["Content-Range"]
+                    if "Content-Length" in resp.headers:
+                        out_headers["Content-Length"] = resp.headers["Content-Length"]
+                    return aiohttp_web.Response(status=resp.status, body=data, headers=out_headers)
     except Exception as e:
         log.warning(f"frigate_clip_proxy: {e}")
+        return aiohttp_web.Response(status=502, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_frigate_thumb_proxy(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/frigate/thumb/{event_id} — proxy Frigate snapshot with auth.
+    Uses ?token= query param so <img src> works without custom headers."""
+    if not _check_token_qs(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    event_id = request.match_info.get("event_id", "").strip()
+    if not event_id:
+        return aiohttp_web.Response(status=400, text="event_id required", headers=_CORS_HEADERS)
+    snap_url = f"{HA_URL}/api/frigate/notifications/{event_id}/snapshot.jpg"
+    try:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(snap_url, headers={"Authorization": f"Bearer {HA_TOKEN}"},
+                                timeout=aiohttp.ClientTimeout(total=15),
+                                allow_redirects=True) as resp:
+                if resp.status == 200:
+                    data = await resp.read()
+                    ct = resp.headers.get("Content-Type", "image/jpeg")
+                    out_headers = dict(_CORS_HEADERS)
+                    out_headers["Cache-Control"] = "max-age=300"
+                    return aiohttp_web.Response(body=data, content_type=ct, headers=out_headers)
+                return aiohttp_web.Response(status=resp.status, headers=_CORS_HEADERS)
+    except Exception as e:
+        log.warning(f"frigate_thumb_proxy: {e}")
         return aiohttp_web.Response(status=502, text=str(e), headers=_CORS_HEADERS)
 
 
@@ -4303,7 +4492,7 @@ async def _web_sections_post(request: aiohttp_web.Request) -> aiohttp_web.Respon
                 sections[sect_id] = {"name": body.get("name", sect_id), "icon": body.get("icon", "📦"),
                                      "enabled": True, "order": max_ord}
             else:
-                for field in ("name", "icon", "enabled", "order"):
+                for field in ("name", "icon", "enabled", "order", "hidden"):
                     if field in body:
                         sections[sect_id][field] = body[field]
         _sect_save(sections)
@@ -4469,6 +4658,244 @@ async def _frigate_event_loop():
             log.warning(f"Frigate event loop reconnect: {e}")
             await asyncio.sleep(15)
 
+# ── Server Stats (/ha-app/api/server-stats) ───────────────────────────────────
+async def _web_server_stats(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/server-stats — CPU/RAM/Disk/uptime + service statuses."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        cpu = psutil.cpu_percent(interval=0.5)
+        ram = psutil.virtual_memory()
+        disk = psutil.disk_usage("/")
+        boot_ts = psutil.boot_time()
+        uptime_sec = _time.time() - boot_ts
+        uptime_days = int(uptime_sec // 86400)
+        load_avg = list(psutil.getloadavg()) if hasattr(psutil, "getloadavg") else [0, 0, 0]
+
+        def svc_status(name: str) -> str:
+            try:
+                r = subprocess.run(["systemctl", "is-active", name],
+                                   capture_output=True, text=True, timeout=3)
+                return r.stdout.strip() or "unknown"
+            except Exception:
+                return "unknown"
+
+        def docker_status(container: str) -> str:
+            try:
+                r = subprocess.run(["docker", "inspect", "--format={{.State.Status}}", container],
+                                   capture_output=True, text=True, timeout=5)
+                return r.stdout.strip() or "unknown"
+            except Exception:
+                return "unknown"
+
+        services = {
+            "nginx":       svc_status("nginx"),
+            "meshcentral": svc_status("meshcentral"),
+            "ha-bot":      svc_status("ha-bot"),
+            "awg-bot":     svc_status("awg-bot"),
+            "remnawave":   docker_status("remnawave"),
+            "awg":         docker_status("amnezia-awg"),
+        }
+
+        # HA hardware stats via system_monitor sensors
+        ha_info: dict = {}
+        try:
+            ha_root = await ha_get("")
+            ha_info["online"] = bool(ha_root)
+        except Exception:
+            ha_info["online"] = False
+        try:
+            (s_cpu, s_ram, s_disk, s_boot) = await asyncio.gather(
+                ha_get("states/sensor.processor_use"),
+                ha_get("states/sensor.memory_use_percent"),
+                ha_get("states/sensor.disk_use_percent_/"),
+                ha_get("states/sensor.last_boot"),
+            )
+            def _fv(d):
+                try: return float(d["state"])
+                except Exception: return None
+            ha_info["cpu_percent"]  = _fv(s_cpu)
+            ha_info["ram_percent"]  = _fv(s_ram)
+            ha_info["disk_percent"] = _fv(s_disk)
+            # compute uptime from last_boot timestamp
+            if s_boot and s_boot.get("state") not in (None, "unknown", "unavailable"):
+                from dateutil import parser as dtparser
+                boot_dt = dtparser.parse(s_boot["state"])
+                import datetime as _dt
+                now_utc = _dt.datetime.now(_dt.timezone.utc)
+                boot_dt = boot_dt.astimezone(_dt.timezone.utc) if boot_dt.tzinfo else boot_dt.replace(tzinfo=_dt.timezone.utc)
+                uptime_sec_ha = (now_utc - boot_dt).total_seconds()
+                ha_info["uptime_days"] = int(uptime_sec_ha // 86400)
+        except Exception:
+            pass
+
+        payload = {
+            "cpu_percent":  round(cpu, 1),
+            "ram_percent":  round(ram.percent, 1),
+            "ram_used_gb":  round(ram.used / 1024**3, 2),
+            "ram_total_gb": round(ram.total / 1024**3, 2),
+            "disk_percent": round(disk.percent, 1),
+            "disk_used_gb": round(disk.used / 1024**3, 2),
+            "disk_total_gb": round(disk.total / 1024**3, 2),
+            "uptime_days":  uptime_days,
+            "load_avg":     [round(x, 2) for x in load_avg],
+            "services":     services,
+            "ha":           ha_info,
+        }
+        return aiohttp_web.Response(
+            text=json.dumps(payload, ensure_ascii=False),
+            content_type="application/json", headers=_CORS_HEADERS,
+        )
+    except Exception as e:
+        log.error(f"server_stats: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+# ── HA Logbook (/ha-app/api/logbook) ─────────────────────────────────────────
+async def _web_logbook(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/logbook?hours=24 — HA logbook events, last 50."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        hours = int(request.query.get("hours", "24"))
+        hours = max(1, min(hours, 168))
+        start_dt = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        # Domain filter icons
+        domain_icons = {
+            "light": "💡", "switch": "🔌", "climate": "🌡️",
+            "media_player": "📺", "person": "👤", "camera": "📹",
+            "vacuum": "🤖", "automation": "🤖", "script": "📜",
+            "cover": "🪟", "lock": "🔒", "input_boolean": "☑️",
+        }
+        _skip_states = {"unavailable", "unknown", "none", ""}
+        raw = await ha_get(f"logbook/{start_dt}?entity_id=&limit=200")
+        if not isinstance(raw, list):
+            raw = []
+        events = []
+        for entry in raw:
+            state = entry.get("state", "")
+            if state in _skip_states:
+                continue
+            eid = entry.get("entity_id", "")
+            domain = eid.split(".")[0] if "." in eid else ""
+            icon = domain_icons.get(domain, "📌")
+            name = entry.get("name") or entry.get("entity_id", "")
+            when_raw = entry.get("when", "")
+            try:
+                when_dt = datetime.fromisoformat(when_raw.replace("Z", "+00:00")).astimezone(MSK)
+                when_str = when_dt.strftime("%H:%M")
+            except Exception:
+                when_str = when_raw[:5] if when_raw else "?"
+            events.append({
+                "entity_id": eid,
+                "name": name,
+                "state": state,
+                "when": when_str,
+                "when_iso": when_raw,
+                "icon": icon,
+                "domain": domain,
+            })
+        # newest first, limit 50
+        events = list(reversed(events))[:50]
+        return aiohttp_web.Response(
+            text=json.dumps(events, ensure_ascii=False),
+            content_type="application/json", headers=_CORS_HEADERS,
+        )
+    except Exception as e:
+        log.error(f"logbook: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+# ── Night Mode (/ha-app/api/night-mode) ───────────────────────────────────────
+def _night_mode_load() -> dict:
+    if NIGHT_MODE_FILE.exists():
+        try:
+            return json.loads(NIGHT_MODE_FILE.read_text())
+        except Exception:
+            pass
+    return {"enabled": False, "time": "22:00", "check_presence": True, "scene_id": ""}
+
+def _night_mode_save(cfg: dict):
+    try:
+        NIGHT_MODE_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
+    except Exception as e:
+        log.error(f"night_mode_save: {e}")
+
+async def _web_night_mode_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    cfg = _night_mode_load()
+    return aiohttp_web.Response(
+        text=json.dumps(cfg, ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS,
+    )
+
+async def _web_night_mode_post(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body = await request.json()
+        cfg = _night_mode_load()
+        for k in ("enabled", "time", "check_presence", "scene_id"):
+            if k in body:
+                cfg[k] = body[k]
+        _night_mode_save(cfg)
+
+        # Create HA automation if enabled and scene_id provided
+        if cfg.get("enabled") and cfg.get("scene_id"):
+            scenes = _scenes_load()
+            scene_id = cfg["scene_id"]
+            scene = scenes.get(scene_id, {"name": scene_id, "actions": []})
+            # Build night mode automation
+            nm_time = cfg.get("time", "22:00")
+            if len(nm_time) == 5:
+                nm_time += ":00"
+            trigger = [{"platform": "time", "at": nm_time}]
+            conditions = []
+            if cfg.get("check_presence"):
+                conditions = [{"condition": "state", "entity_id": "person.khamzat", "state": "home"}]
+            ha_actions = []
+            for a in scene.get("actions", []):
+                eid = a.get("entity_id", "")
+                svc = a.get("service", "")
+                if not eid or not svc or "." not in svc:
+                    continue
+                domain, service = svc.split(".", 1)
+                ab: dict = {"service": f"{domain}.{service}", "target": {"entity_id": eid}}
+                if a.get("extra"):
+                    ab["data"] = a["extra"]
+                ha_actions.append(ab)
+            if ha_actions:
+                payload = {
+                    "alias": "Ночной режим (Mini App)",
+                    "description": "Автоматизация ночного режима, создана через Mini App",
+                    "trigger": trigger,
+                    "condition": conditions,
+                    "action": ha_actions,
+                    "mode": "single",
+                }
+                try:
+                    url = f"{HA_URL}/api/config/automation/config/miniapp_night_mode"
+                    async with aiohttp.ClientSession() as sess:
+                        async with sess.post(url, headers=HA_HEADERS, json=payload,
+                                             timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                            if resp.status in (200, 201):
+                                try:
+                                    await ha_call("automation", "reload", "")
+                                except Exception:
+                                    pass
+                except Exception as e:
+                    log.warning(f"night_mode_automation: {e}")
+
+        _activity_log("night_mode_saved", str(cfg.get("enabled")))
+        return aiohttp_web.Response(
+            text='{"ok":true}', content_type="application/json", headers=_CORS_HEADERS,
+        )
+    except Exception as e:
+        log.error(f"night_mode_post: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
 async def _start_web():
     app = aiohttp_web.Application()
     app.router.add_get("/ha-app/",                  _web_index)
@@ -4496,6 +4923,7 @@ async def _start_web():
     app.router.add_get("/ha-app/api/frigate/events",          _web_frigate_events)
     app.router.add_get("/ha-app/api/frigate/recordings",          _web_frigate_recordings)
     app.router.add_get("/ha-app/api/frigate/clip/{event_id}",     _web_frigate_clip_proxy)
+    app.router.add_get("/ha-app/api/frigate/thumb/{event_id}",    _web_frigate_thumb_proxy)
     app.router.add_post("/ha-app/api/frigate/send",               _web_frigate_send)
     app.router.add_post("/ha-app/api/frigate/notify-latest",      _web_frigate_notify_latest)
     app.router.add_post("/ha-app/api/frigate/person-identified",  _web_frigate_person_identified)
@@ -4503,6 +4931,13 @@ async def _start_web():
     app.router.add_post("/ha-app/api/auth",                       _web_auth_telegram)
     app.router.add_get("/ha-app/api/presence-stats",              _web_presence_stats)
     app.router.add_get("/ha-app/api/energy-hourly",               _web_energy_hourly)
+    app.router.add_get("/ha-app/api/server-stats",                _web_server_stats)
+    app.router.add_get("/ha-app/api/logbook",                     _web_logbook)
+    app.router.add_get("/ha-app/api/night-mode",                  _web_night_mode_get)
+    app.router.add_post("/ha-app/api/night-mode",                 _web_night_mode_post)
+    app.router.add_route("OPTIONS", "/ha-app/api/server-stats",  _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/logbook",       _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/night-mode",    _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/frigate/notify-latest",     _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/frigate/person-identified", _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/frigate/faces-history",     _web_options)
@@ -4512,7 +4947,8 @@ async def _start_web():
     app.router.add_route("OPTIONS", "/ha-app/api/camera/{entity_id}",   _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/frigate/events",       _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/frigate/recordings",       _web_options)
-    app.router.add_route("OPTIONS", "/ha-app/api/frigate/clip/{event_id}", _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/frigate/clip/{event_id}",  _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/frigate/thumb/{event_id}", _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/frigate/send",             _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/status",       _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/action",       _web_options)

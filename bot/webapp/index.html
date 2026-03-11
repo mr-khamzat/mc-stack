@@ -2664,6 +2664,31 @@ function editDevIcon(eid) {
 }
 
 const COMMON_ICONS = ['💡','🛏️','🍳','🖥️','🚪','🛋️','🏠','🌙','☀️','🔆','🕯️','🔦','💫','⚡','🌟','🎮','📺','🎵','❄️','🔥','🌡️','🛁','🚿','🪴','🪞','🔌'];
+const SECTION_ICONS = ['📁','💡','📹','🤖','📺','📊','🔌','🌡️','🔘','🏠','⚙️','🛋️','🚪','🧹','🎬','🛑','🌿','💧','🔒','🎵','📡','☀️','❄️','🌙','👤','🔔','📂','⚡','🎮','🖥️'];
+
+function showSectIconPicker(inputId, current) {
+  const old = document.getElementById('sect-icon-picker-overlay');
+  if (old) old.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'sect-icon-picker-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:4000;display:flex;align-items:flex-end;justify-content:center';
+  overlay.innerHTML = `
+    <div style="background:#1a1a2e;border-radius:18px 18px 0 0;padding:16px;width:100%;max-width:480px;max-height:50vh;overflow-y:auto">
+      <div style="font-size:13px;color:#a0a0c0;margin-bottom:10px;font-weight:600">Выберите иконку раздела</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
+        ${SECTION_ICONS.map(ic => `<button onclick="document.getElementById('${inputId}').value='${ic}';document.getElementById('sect-icon-picker-overlay').remove()"
+          style="font-size:24px;background:${ic===current ? 'rgba(99,102,241,0.3)' : 'rgba(255,255,255,0.06)'};border:1px solid rgba(255,255,255,0.1);border-radius:10px;width:44px;height:44px;cursor:pointer;">${ic}</button>`).join('')}
+      </div>
+      <div style="display:flex;gap:8px">
+        <input id="sect-custom-icon-input" type="text" placeholder="Свой emoji..." value="${escapeAttr(current)}"
+          style="flex:1;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:8px 10px;color:#e0e0f0;font-size:16px;font-family:inherit;outline:none;">
+        <button onclick="const v=(document.getElementById('sect-custom-icon-input').value||'').trim();if(v){document.getElementById('${inputId}').value=v;document.getElementById('sect-icon-picker-overlay').remove()}" class="btn btn-primary" style="padding:8px 14px">✓</button>
+        <button onclick="document.getElementById('sect-icon-picker-overlay').remove()" class="btn btn-neutral" style="padding:8px 14px">✕</button>
+      </div>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
 
 function showIconPicker(eid, current) {
   // Remove any existing picker
@@ -3015,7 +3040,7 @@ function renderDynamicSections(sections) {
 
     return `<div class="section dyn-section${isHidden ? ' sect-hidden-section' : ''}" style="margin-bottom:10px" id="dyn-sect-el-${escapeAttr(sect.id)}">
       <div class="section-header dyn-section-header" onclick="dynSectHeaderClick(event,'${sid}-body')">
-        <span style="display:flex;align-items:center;gap:4px">${escapeHtml(sect.icon || '')} ${escapeHtml(sect.name || sect.id)}${hiddenBadge}</span>
+        <span style="display:flex;align-items:center;gap:4px">${escapeHtml(sect.name || sect.id)}${hiddenBadge}</span>
         <div style="display:flex;align-items:center;gap:6px">
           <div class="sect-edit-controls">
             <button class="sect-ctrl-btn" onclick="event.stopPropagation();sectMoveUp('${escapeAttr(sect.id)}')" title="Выше" ${isFirst ? 'style="opacity:0.3;pointer-events:none"' : ''}>▲</button>
@@ -3584,7 +3609,7 @@ function _sectsMgrShow(innerHtml) {
       <button onclick="document.getElementById('sects-mgr-overlay').remove()"
         style="background:rgba(255,255,255,0.08);border:none;border-radius:8px;width:30px;height:30px;color:#a0a0c0;font-size:16px;cursor:pointer">✕</button>
     </div>
-    <div id="sects-mgr-inner" style="flex:1;overflow-y:auto;overscroll-behavior:contain">${innerHtml}</div>
+    <div id="sects-mgr-inner" style="flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch">${innerHtml}</div>
   </div>`;
   ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
   document.body.appendChild(ov);
@@ -3621,7 +3646,7 @@ function _sectsMgrRenderList() {
           </div>
           <span style="font-size:20px;width:26px;text-align:center;">${cfg.icon||'📁'}</span>
           <div style="flex:1;min-width:0;cursor:pointer" onclick="_sectsMgrEditForm('${escapeAttr(id)}')">
-            <div style="font-size:13px;font-weight:600;color:#c0c0e0">${escapeHtml(cfg.name||id)}${hidden?' <span style="font-size:10px;color:#6060a0">(скрыт)</span>':''}</div>
+            <div style="font-size:13px;font-weight:600;color:#c0c0e0">${escapeHtml((cfg.name||id).replace(/^\S+\s/,'') || id)}${hidden?' <span style="font-size:10px;color:#6060a0">(скрыт)</span>':''}</div>
             <div style="font-size:11px;color:#50508a">${cnt} устр. · нажать для редактирования</div>
           </div>
           <button onclick="_sectsMgrToggleHidden('${escapeAttr(id)}')" title="${hidden?'Показать':'Скрыть'}" style="${eyeStyle}border-radius:8px;padding:5px 9px;cursor:pointer;font-size:14px">${hidden?'👁‍🗨':'👁'}</button>
@@ -3827,8 +3852,12 @@ function _sectsMgrRenderEditForm(sectId, iconVal, nameVal) {
       <button onclick="_sectsMgrRenderList()" style="background:none;border:none;color:#6060a0;font-size:13px;cursor:pointer;padding:0 0 12px;font-family:inherit">← Назад</button>
       <div style="font-size:11px;color:#60608a;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Иконка и название</div>
       <div style="display:flex;gap:8px;margin-bottom:14px">
-        <input id="es-icon" type="text" value="${escapeAttr(iconVal)}" maxlength="4"
-          style="${IS}width:52px;padding:9px;font-size:18px;text-align:center">
+        <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">
+          <input id="es-icon" type="text" value="${escapeAttr(iconVal)}" maxlength="4"
+            style="${IS}width:52px;padding:9px;font-size:18px;text-align:center">
+          <button onclick="showSectIconPicker('es-icon',document.getElementById('es-icon').value)"
+            style="background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.28);border-radius:7px;padding:3px 0;color:#a5b4fc;cursor:pointer;font-size:10px;width:52px">выбрать</button>
+        </div>
         <input id="es-name" type="text" value="${escapeAttr(nameVal)}" placeholder="Название раздела"
           style="${IS}flex:1;padding:9px 12px;font-size:14px">
       </div>
@@ -3886,8 +3915,12 @@ function _sectsMgrCreateForm() {
       <div style="margin-bottom:12px">
         <div style="font-size:11px;color:#60608a;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.5px">Иконка и название</div>
         <div style="display:flex;gap:8px">
-          <input id="ns-icon" type="text" placeholder="📁" maxlength="4" value="📁"
-            style="width:52px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px;color:#e0e0f0;font-size:18px;font-family:inherit;outline:none;text-align:center">
+          <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">
+            <input id="ns-icon" type="text" placeholder="📁" maxlength="4" value="📁"
+              style="width:52px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px;color:#e0e0f0;font-size:18px;font-family:inherit;outline:none;text-align:center">
+            <button onclick="showSectIconPicker('ns-icon',document.getElementById('ns-icon').value)"
+              style="background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.28);border-radius:7px;padding:3px 0;color:#a5b4fc;cursor:pointer;font-size:10px;width:52px">выбрать</button>
+          </div>
           <input id="ns-name" type="text" placeholder="Например: Климат"
             style="flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 12px;color:#e0e0f0;font-size:14px;font-family:inherit;outline:none">
         </div>
@@ -4149,24 +4182,20 @@ function renderServerStats(d) {
       <div class="srv-progress-bg">${bar(d.disk_percent||0)}</div>
     </div>
     <div style="border:0.5px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px;margin-bottom:12px;background:rgba(15,15,35,0.5)">
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
         <span style="font-size:13px;font-weight:700;color:#c0c0e0">🏠 Home Assistant</span>
         <span style="font-size:10px;padding:2px 7px;border-radius:8px;font-weight:600;${ha.online!==false?'background:rgba(52,211,153,0.15);color:#34d399':'background:rgba(248,113,113,0.15);color:#f87171'}">${ha.online!==false?'online':'offline'}</span>
       </div>
-      ${ha.version ? `<div style="font-size:12px;color:rgba(160,160,210,0.85);margin-bottom:6px">Версия: <b>${escapeHtml(ha.version)}</b>${ha.location ? ' · ' + escapeHtml(ha.location) : ''}${ha.timezone ? ' · ' + escapeHtml(ha.timezone) : ''}</div>` : ''}
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:6px">
-        ${[
-          ['📊',ha.entities_count||0,'сущностей'],
-          ['🤖',ha.automations_count||0,'автоматизаций'],
-          ['💡',ha.lights_count||0,'освещение'],
-          ['🔌',ha.switches_count||0,'выключателей'],
-          ['📡',ha.sensors_count||0,'сенсоров'],
-          ['🔧',ha.components||0,'компонентов'],
-        ].map(([ic,v,lbl])=>`<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:7px 6px;text-align:center">
-          <div style="font-size:15px;font-weight:700;color:#c4b5fd">${ic} ${v}</div>
-          <div style="font-size:9px;color:#50508a;margin-top:2px">${lbl}</div>
-        </div>`).join('')}
+      ${(ha.cpu_percent!=null||ha.ram_percent!=null||ha.disk_percent!=null||ha.uptime_days!=null) ? `
+      <div class="srvstat-grid" style="margin-bottom:10px">
+        <div class="srvstat-card"><div class="srvstat-val">${ha.cpu_percent!=null?ha.cpu_percent+'%':'—'}</div><div class="srvstat-label">CPU</div></div>
+        <div class="srvstat-card"><div class="srvstat-val">${ha.ram_percent!=null?ha.ram_percent+'%':'—'}</div><div class="srvstat-label">RAM</div></div>
+        <div class="srvstat-card"><div class="srvstat-val">${ha.uptime_days!=null?ha.uptime_days+' дн':'—'}</div><div class="srvstat-label">Uptime</div></div>
       </div>
+      ${ha.cpu_percent!=null?`<div class="srv-progress-row"><div class="srv-progress-label"><span>CPU</span><span>${ha.cpu_percent}%</span></div><div class="srv-progress-bg">${bar(ha.cpu_percent)}</div></div>`:''}
+      ${ha.ram_percent!=null?`<div class="srv-progress-row"><div class="srv-progress-label"><span>RAM</span><span>${ha.ram_percent}%</span></div><div class="srv-progress-bg">${bar(ha.ram_percent)}</div></div>`:''}
+      ${ha.disk_percent!=null?`<div class="srv-progress-row"><div class="srv-progress-label"><span>Диск</span><span>${ha.disk_percent}%</span></div><div class="srv-progress-bg">${bar(ha.disk_percent)}</div></div>`:''}
+      ` : `<div style="font-size:12px;color:#60608a;text-align:center;padding:8px 0">Нет данных — добавьте интеграцию System Monitor в HA</div>`}
     </div>
     <div style="font-size:11px;color:rgba(110,110,158,0.65);text-transform:uppercase;letter-spacing:0.5px;font-weight:700;margin-bottom:7px">Сервисы</div>
     <div class="srv-svc-grid">${svcsHtml}</div>
