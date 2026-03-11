@@ -848,10 +848,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
 <div id="app">
   <div class="app-header">
     <h1>🏠 Умный Дом</h1>
-    <div style="display:flex;align-items:center;gap:8px;">
-      <button class="sect-edit-btn" onclick="sectEditToggle()" id="sect-edit-toggle-btn">⚙️ Разделы</button>
-      <span class="last-updated" id="last-updated">—</span>
-    </div>
+    <span class="last-updated" id="last-updated">—</span>
   </div>
 
   <!-- QUICK ACTIONS -->
@@ -1129,12 +1126,6 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
         </div>
       </div>
     </div>
-  </div>
-
-  <!-- Sections edit mode bar -->
-  <div class="sect-edit-bar" id="sect-edit-bar">
-    <span class="sect-edit-bar-label">✏️ Режим редактирования</span>
-    <button class="sect-edit-done-btn" onclick="sectEditToggle()">✅ Готово</button>
   </div>
 
   <!-- dynamic sections rendered by JS -->
@@ -3614,28 +3605,69 @@ function _sectsMgrRenderList() {
     devCount[s] = (devCount[s]||0) + 1;
   }
   const sorted = Object.entries(sections).sort((a,b) => (a[1].order||99)-(b[1].order||99));
+  const btnS = 'border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:5px 8px;cursor:pointer;font-size:13px;background:rgba(255,255,255,0.06);color:#a0a0c0;';
   const listHtml = sorted.length === 0
     ? '<div style="text-align:center;padding:20px;color:#60608a;font-size:13px">Нет разделов</div>'
-    : sorted.map(([id, cfg]) => {
+    : sorted.map(([id, cfg], idx) => {
         const cnt = devCount[id] || 0;
-        return `<div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.04)">
-          <span style="font-size:22px;width:30px;text-align:center;cursor:pointer" onclick="_sectsMgrOpenDevices('${escapeAttr(id)}')">${cfg.icon||'📁'}</span>
-          <div style="flex:1;min-width:0;cursor:pointer" onclick="_sectsMgrOpenDevices('${escapeAttr(id)}')">
-            <div style="font-size:13px;font-weight:600;color:#c0c0e0">${escapeHtml(cfg.name||id)}</div>
-            <div style="font-size:11px;color:#50508a">${cnt} устр. · нажать для просмотра</div>
+        const hidden = cfg.hidden || false;
+        const eyeStyle = hidden
+          ? 'background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.3);color:#8080ff;'
+          : 'background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);color:#a0a0c0;';
+        return `<div style="display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.04);${hidden?'opacity:0.55':''}">
+          <div style="display:flex;flex-direction:column;gap:3px;flex-shrink:0">
+            <button onclick="_sectsMgrMove('${escapeAttr(id)}',-1)" ${idx===0?'disabled style="opacity:0.25;cursor:default"':''} style="${btnS}padding:2px 7px;font-size:11px">▲</button>
+            <button onclick="_sectsMgrMove('${escapeAttr(id)}',1)" ${idx===sorted.length-1?'disabled style="opacity:0.25;cursor:default"':''} style="${btnS}padding:2px 7px;font-size:11px">▼</button>
           </div>
-          <button onclick="_sectsMgrEditForm('${escapeAttr(id)}')"
-            style="background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.3);border-radius:8px;padding:5px 9px;color:#8080ff;cursor:pointer;font-size:14px">✏️</button>
-          <button onclick="_sectsMgrDelete('${escapeAttr(id)}')"
-            style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);border-radius:8px;padding:5px 9px;color:#ef4444;cursor:pointer;font-size:14px">🗑️</button>
+          <span style="font-size:20px;width:26px;text-align:center;">${cfg.icon||'📁'}</span>
+          <div style="flex:1;min-width:0;cursor:pointer" onclick="_sectsMgrEditForm('${escapeAttr(id)}')">
+            <div style="font-size:13px;font-weight:600;color:#c0c0e0">${escapeHtml(cfg.name||id)}${hidden?' <span style="font-size:10px;color:#6060a0">(скрыт)</span>':''}</div>
+            <div style="font-size:11px;color:#50508a">${cnt} устр. · нажать для редактирования</div>
+          </div>
+          <button onclick="_sectsMgrToggleHidden('${escapeAttr(id)}')" title="${hidden?'Показать':'Скрыть'}" style="${eyeStyle}border-radius:8px;padding:5px 9px;cursor:pointer;font-size:14px">${hidden?'👁‍🗨':'👁'}</button>
+          <button onclick="_sectsMgrDelete('${escapeAttr(id)}')" style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);border-radius:8px;padding:5px 9px;color:#ef4444;cursor:pointer;font-size:14px">🗑️</button>
         </div>`;
       }).join('');
 
   _sectsMgrSetInner(`
-    <div style="padding:10px 16px;border-bottom:1px solid rgba(255,255,255,0.05)">
-      <button onclick="_sectsMgrCreateForm()" class="btn btn-neutral" style="width:100%;border-style:dashed">📂 Создать раздел</button>
+    <div style="padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.05)">
+      <button onclick="_sectsMgrCreateForm()" class="btn btn-neutral" style="width:100%;border-style:dashed">➕ Создать раздел</button>
     </div>
     ${listHtml}`, '📂 Разделы');
+}
+
+async function _sectsMgrMove(sectId, dir) {
+  const sorted = Object.entries(sectsMgr.sections).sort((a,b) => (a[1].order||99)-(b[1].order||99));
+  const idx = sorted.findIndex(([id]) => id === sectId);
+  const swapIdx = idx + dir;
+  if (swapIdx < 0 || swapIdx >= sorted.length) return;
+  const [idA, cfgA] = sorted[idx];
+  const [idB, cfgB] = sorted[swapIdx];
+  const orderA = cfgA.order ?? idx;
+  const orderB = cfgB.order ?? swapIdx;
+  sectsMgr.sections[idA] = { ...cfgA, order: orderB };
+  sectsMgr.sections[idB] = { ...cfgB, order: orderA };
+  try {
+    await Promise.all([
+      api('/sections', 'POST', { id: idA, order: orderB }),
+      api('/sections', 'POST', { id: idB, order: orderA }),
+    ]);
+    _sectsMgrRenderList();
+    setTimeout(loadStatus, 600);
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+async function _sectsMgrToggleHidden(sectId) {
+  const cfg = sectsMgr.sections[sectId];
+  if (!cfg) return;
+  const newHidden = !cfg.hidden;
+  try {
+    await api('/sections', 'POST', { id: sectId, hidden: newHidden });
+    sectsMgr.sections[sectId] = { ...cfg, hidden: newHidden };
+    showToast(newHidden ? '🙈 Раздел скрыт' : '👁 Раздел виден');
+    _sectsMgrRenderList();
+    setTimeout(loadStatus, 600);
+  } catch(e) { showToast('❌ ' + e.message); }
 }
 
 function _sectsMgrOpenDevices(sectId) {
@@ -3669,7 +3701,96 @@ async function _sectsMgrRemoveDev(eid) {
     await api('/devices', 'POST', { entity_id: eid, section: 'hidden', enabled: false });
     if (sectsMgr.devices[eid]) { sectsMgr.devices[eid].section = 'hidden'; sectsMgr.devices[eid].enabled = false; }
     showToast('🙈 Убрано из раздела');
-    _sectsMgrOpenDevices(sectsMgr.currentSect); // re-render current section
+    _sectsMgrOpenDevices(sectsMgr.currentSect);
+    setTimeout(loadStatus, 800);
+    if (settingsLoaded) loadSettings();
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+async function _sectsMgrRemoveDev2(eid, sectId) {
+  try {
+    await api('/devices', 'POST', { entity_id: eid, section: 'hidden', enabled: false });
+    if (sectsMgr.devices[eid]) { sectsMgr.devices[eid].section = 'hidden'; sectsMgr.devices[eid].enabled = false; }
+    showToast('🙈 Убрано из раздела');
+    _sectsMgrEditForm(sectId);
+    setTimeout(loadStatus, 800);
+    if (settingsLoaded) loadSettings();
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+function _sectsMgrEditDevName(eid, sectId) {
+  const cfg = sectsMgr.devices[eid];
+  if (!cfg) return;
+  const newName = prompt('Новое название:', cfg.name || eid);
+  if (!newName || !newName.trim()) return;
+  api('/devices', 'POST', { entity_id: eid, name: newName.trim() })
+    .then(() => {
+      sectsMgr.devices[eid].name = newName.trim();
+      const el = document.getElementById('emgr-devname-' + sanitizeId(eid));
+      if (el) el.textContent = newName.trim();
+      if (settingsLoaded) loadSettings();
+    }).catch(e => showToast('❌ ' + e.message));
+}
+
+function _sectsMgrEditDevIcon(eid, sectId) {
+  const cfg = sectsMgr.devices[eid];
+  if (!cfg) return;
+  const newIcon = prompt('Иконка (emoji):', cfg.icon || '📦');
+  if (!newIcon || !newIcon.trim()) return;
+  api('/devices', 'POST', { entity_id: eid, icon: newIcon.trim() })
+    .then(() => {
+      sectsMgr.devices[eid].icon = newIcon.trim();
+      _sectsMgrRenderEditForm(sectId, document.getElementById('es-icon')?.value || cfg.icon, document.getElementById('es-name')?.value || (sectsMgr.sections[sectId]?.name||''));
+      if (settingsLoaded) loadSettings();
+    }).catch(e => showToast('❌ ' + e.message));
+}
+
+async function _sectsMgrAddDevForm(sectId) {
+  const panel = document.getElementById('emgr-devlist');
+  if (!panel) return;
+  let entities = [];
+  panel.innerHTML = '<div style="color:#60608a;font-size:12px;text-align:center;padding:10px">Загрузка...</div>';
+  try {
+    const raw = await api('/ha_entities');
+    const useful = ['light','switch','media_player','input_boolean','climate','sensor','binary_sensor','camera','vacuum'];
+    entities = [];
+    for (const domain of useful) {
+      if (raw[domain]) for (const e of raw[domain]) entities.push({entity_id: e.entity_id, name: e.name||e.entity_id, domain});
+    }
+    // Filter out already-added devices
+    const added = new Set(Object.keys(sectsMgr.devices));
+    entities = entities.filter(e => !added.has(e.entity_id) || sectsMgr.devices[e.entity_id].section === 'hidden');
+  } catch(e) { panel.innerHTML = `<div style="color:#ef4444;font-size:12px;padding:8px">${escapeHtml(e.message)}</div>`; return; }
+
+  function renderPicker(q) {
+    const filtered = q ? entities.filter(e => e.name.toLowerCase().includes(q)||e.entity_id.toLowerCase().includes(q)) : entities;
+    panel.innerHTML = `
+      <input id="emgr-search" type="text" value="${escapeHtml(q)}" placeholder="Поиск устройства..."
+        oninput="renderPicker_emgr(this.value)"
+        style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#eaeaf8;font-size:12px;padding:7px 10px;font-family:inherit;margin-bottom:8px;box-sizing:border-box">
+      <div style="max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:3px">
+        ${filtered.slice(0,50).map(e => `<div onclick="_sectsMgrPickDev('${escapeAttr(e.entity_id)}','${escapeAttr(e.name)}','${escapeAttr(e.domain)}','${escapeAttr(sectId)}')"
+          style="padding:7px 10px;background:rgba(255,255,255,0.05);border-radius:8px;cursor:pointer;font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c8c8e8">${escapeHtml(e.name)}</span>
+          <span style="font-size:10px;color:#50508a;flex-shrink:0">${escapeHtml(e.domain)}</span>
+        </div>`).join('')}
+        ${filtered.length === 0 ? '<div style="text-align:center;color:#50508a;font-size:12px;padding:8px">Ничего не найдено</div>' : ''}
+      </div>`;
+    const inp = document.getElementById('emgr-search');
+    if (inp && !q) setTimeout(() => inp.focus(), 30);
+  }
+  window.renderPicker_emgr = renderPicker;
+  renderPicker('');
+}
+
+async function _sectsMgrPickDev(eid, name, domain, sectId) {
+  const ICONS = {light:'💡',switch:'🔌',media_player:'📺',climate:'🌡️',sensor:'📊',binary_sensor:'🔘',camera:'📹',vacuum:'🤖',input_boolean:'☑️'};
+  const icon = ICONS[domain] || '📦';
+  try {
+    await api('/devices', 'POST', { entity_id: eid, name, icon, section: sectId, enabled: true });
+    sectsMgr.devices[eid] = { ...(sectsMgr.devices[eid]||{}), name, icon, section: sectId, enabled: true };
+    showToast('✅ Добавлено: ' + name);
+    _sectsMgrEditForm(sectId);
     setTimeout(loadStatus, 800);
     if (settingsLoaded) loadSettings();
   } catch(e) { showToast('❌ ' + e.message); }
@@ -3677,23 +3798,48 @@ async function _sectsMgrRemoveDev(eid) {
 
 function _sectsMgrEditForm(sectId) {
   const sect = sectsMgr.sections[sectId] || { name: sectId, icon: '📁' };
-  // Strip leading emoji from name for editing
   const namePart = sect.name.replace(/^\S+\s/, '');
-  _sectsMgrSetInner(`
-    <div style="padding:16px">
-      <button onclick="_sectsMgrRenderList()" style="background:none;border:none;color:#6060a0;font-size:13px;cursor:pointer;padding:0 0 14px;font-family:inherit">← Назад</button>
-      <div style="margin-bottom:12px">
-        <div style="font-size:11px;color:#60608a;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.5px">Иконка и название</div>
-        <div style="display:flex;gap:8px">
-          <input id="es-icon" type="text" value="${escapeAttr(sect.icon||'📁')}" maxlength="4"
-            style="width:52px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px;color:#e0e0f0;font-size:18px;font-family:inherit;outline:none;text-align:center">
-          <input id="es-name" type="text" value="${escapeAttr(namePart)}"
-            style="flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 12px;color:#e0e0f0;font-size:14px;font-family:inherit;outline:none">
-        </div>
-      </div>
-      <button onclick="_sectsMgrSaveEdit('${escapeAttr(sectId)}')" class="btn btn-primary" style="width:100%;padding:13px">✓ Сохранить</button>
-    </div>`, '✏️ Редактировать');
+  _sectsMgrRenderEditForm(sectId, sect.icon||'📁', namePart);
   setTimeout(() => { document.getElementById('es-name')?.focus(); }, 30);
+}
+
+function _sectsMgrRenderEditForm(sectId, iconVal, nameVal) {
+  const sect = sectsMgr.sections[sectId] || {};
+  const IS = 'background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#e0e0f0;font-family:inherit;outline:none;';
+  // Device list for this section
+  const devs = Object.entries(sectsMgr.devices).filter(([, cfg]) => (cfg.section||'lights') === sectId);
+  const devsHtml = devs.length === 0
+    ? '<div style="text-align:center;padding:12px;color:#50508a;font-size:12px">Нет устройств — добавьте через кнопку ниже</div>'
+    : devs.map(([eid, cfg]) => `
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04)">
+        <button onclick="_sectsMgrEditDevIcon('${escapeAttr(eid)}','${escapeAttr(sectId)}')"
+          style="background:none;border:none;font-size:18px;cursor:pointer;width:28px;flex-shrink:0">${cfg.icon||'📦'}</button>
+        <div style="flex:1;min-width:0;cursor:pointer" onclick="_sectsMgrEditDevName('${escapeAttr(eid)}','${escapeAttr(sectId)}')">
+          <div style="font-size:12px;font-weight:600;color:#c0c0e0" id="emgr-devname-${sanitizeId(eid)}">${escapeHtml(cfg.name||eid)}</div>
+          <div style="font-size:10px;color:#40406a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(eid)}</div>
+        </div>
+        <button onclick="_sectsMgrRemoveDev2('${escapeAttr(eid)}','${escapeAttr(sectId)}')"
+          style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:7px;padding:4px 8px;color:#f87171;cursor:pointer;font-size:11px;flex-shrink:0">✕</button>
+      </div>`).join('');
+
+  _sectsMgrSetInner(`
+    <div style="padding:14px 14px 20px">
+      <button onclick="_sectsMgrRenderList()" style="background:none;border:none;color:#6060a0;font-size:13px;cursor:pointer;padding:0 0 12px;font-family:inherit">← Назад</button>
+      <div style="font-size:11px;color:#60608a;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Иконка и название</div>
+      <div style="display:flex;gap:8px;margin-bottom:14px">
+        <input id="es-icon" type="text" value="${escapeAttr(iconVal)}" maxlength="4"
+          style="${IS}width:52px;padding:9px;font-size:18px;text-align:center">
+        <input id="es-name" type="text" value="${escapeAttr(nameVal)}" placeholder="Название раздела"
+          style="${IS}flex:1;padding:9px 12px;font-size:14px">
+      </div>
+      <button onclick="_sectsMgrSaveEdit('${escapeAttr(sectId)}')" class="btn btn-primary" style="width:100%;padding:11px;margin-bottom:18px">✓ Сохранить название</button>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="font-size:11px;color:#60608a;text-transform:uppercase;letter-spacing:0.5px">⚡ Устройства (${devs.length})</div>
+        <button onclick="_sectsMgrAddDevForm('${escapeAttr(sectId)}')"
+          style="background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.28);border-radius:8px;padding:4px 10px;color:#a5b4fc;cursor:pointer;font-size:12px">➕ Добавить</button>
+      </div>
+      <div id="emgr-devlist">${devsHtml}</div>
+    </div>`, '✏️ ' + (sect.name || sectId));
 }
 
 async function _sectsMgrSaveEdit(sectId) {
@@ -4002,7 +4148,26 @@ function renderServerStats(d) {
       <div class="srv-progress-label"><span>Диск (${d.disk_used_gb||0}/${d.disk_total_gb||0} ГБ)</span><span>${d.disk_percent||0}%</span></div>
       <div class="srv-progress-bg">${bar(d.disk_percent||0)}</div>
     </div>
-    ${ha.version ? `<div style="font-size:12px;color:rgba(140,140,190,0.8);margin-bottom:8px;">🏠 HA ${escapeHtml(ha.version)} · ${ha.entities_count||'?'} сущностей · ${ha.automations_count||'?'} автоматизаций</div>` : ''}
+    <div style="border:0.5px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px;margin-bottom:12px;background:rgba(15,15,35,0.5)">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+        <span style="font-size:13px;font-weight:700;color:#c0c0e0">🏠 Home Assistant</span>
+        <span style="font-size:10px;padding:2px 7px;border-radius:8px;font-weight:600;${ha.online!==false?'background:rgba(52,211,153,0.15);color:#34d399':'background:rgba(248,113,113,0.15);color:#f87171'}">${ha.online!==false?'online':'offline'}</span>
+      </div>
+      ${ha.version ? `<div style="font-size:12px;color:rgba(160,160,210,0.85);margin-bottom:6px">Версия: <b>${escapeHtml(ha.version)}</b>${ha.location ? ' · ' + escapeHtml(ha.location) : ''}${ha.timezone ? ' · ' + escapeHtml(ha.timezone) : ''}</div>` : ''}
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:6px">
+        ${[
+          ['📊',ha.entities_count||0,'сущностей'],
+          ['🤖',ha.automations_count||0,'автоматизаций'],
+          ['💡',ha.lights_count||0,'освещение'],
+          ['🔌',ha.switches_count||0,'выключателей'],
+          ['📡',ha.sensors_count||0,'сенсоров'],
+          ['🔧',ha.components||0,'компонентов'],
+        ].map(([ic,v,lbl])=>`<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:7px 6px;text-align:center">
+          <div style="font-size:15px;font-weight:700;color:#c4b5fd">${ic} ${v}</div>
+          <div style="font-size:9px;color:#50508a;margin-top:2px">${lbl}</div>
+        </div>`).join('')}
+      </div>
+    </div>
     <div style="font-size:11px;color:rgba(110,110,158,0.65);text-transform:uppercase;letter-spacing:0.5px;font-weight:700;margin-bottom:7px">Сервисы</div>
     <div class="srv-svc-grid">${svcsHtml}</div>
     <div style="margin-top:10px"><button class="btn btn-neutral" style="width:100%" onclick="_serverStatsLoaded=false;loadServerStats()">🔄 Обновить</button></div>`;

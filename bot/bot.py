@@ -4694,20 +4694,32 @@ async def _web_server_stats(request: aiohttp_web.Request) -> aiohttp_web.Respons
         # HA info
         ha_info = {}
         try:
-            ha_root = await ha_get("")
-            if ha_root:
-                ha_info["version"] = ha_root.get("version", "?")
+            # /api/config has version, timezone, location, etc.
+            ha_cfg = await ha_get("config")
+            if ha_cfg:
+                ha_info["version"]   = ha_cfg.get("version", "?")
+                ha_info["timezone"]  = ha_cfg.get("time_zone", "")
+                ha_info["location"]  = ha_cfg.get("location_name", "")
+                ha_info["unit"]      = ha_cfg.get("unit_system", {}).get("length", "")
+                ha_info["components"] = len(ha_cfg.get("components", []))
         except Exception:
             pass
         try:
             all_states = await ha_get("states")
             if isinstance(all_states, list):
-                ha_info["entities_count"] = len(all_states)
-                ha_info["automations_count"] = sum(
-                    1 for e in all_states if e.get("entity_id", "").startswith("automation.")
-                )
+                ha_info["entities_count"]    = len(all_states)
+                ha_info["automations_count"] = sum(1 for e in all_states if e.get("entity_id","").startswith("automation."))
+                ha_info["lights_count"]      = sum(1 for e in all_states if e.get("entity_id","").startswith("light."))
+                ha_info["switches_count"]    = sum(1 for e in all_states if e.get("entity_id","").startswith("switch."))
+                ha_info["sensors_count"]     = sum(1 for e in all_states if e.get("entity_id","").startswith("sensor."))
         except Exception:
             pass
+        # HA availability ping
+        try:
+            ha_root = await ha_get("")
+            ha_info["online"] = bool(ha_root)
+        except Exception:
+            ha_info["online"] = False
 
         payload = {
             "cpu_percent":  round(cpu, 1),
