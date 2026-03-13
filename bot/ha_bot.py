@@ -141,8 +141,8 @@ HA_TOKEN   = os.environ["HA_TOKEN"]
 HA_HEADERS = {"Authorization": f"Bearer {HA_TOKEN}", "Content-Type": "application/json"}
 
 WEBAPP_TOKEN = os.environ.get("WEBAPP_TOKEN", "")
-WEBAPP_URL   = "https://hub.office.mooo.com/ha-app/"
-WEBAPP_DIR   = Path("/opt/ha-bot/webapp")
+WEBAPP_URL   = os.environ.get("WEBAPP_URL", "")
+WEBAPP_DIR   = Path(os.environ.get("WEBAPP_DIR", "/opt/ha-bot/webapp"))
 
 FAMILY_USERS_FILE  = Path("/opt/ha-bot/family_users.json")
 # ── Пути к файлам данных ───────────────────────────────────────────────────────

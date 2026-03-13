@@ -110,8 +110,8 @@ AWG_PARAMS = {
 # ─── udp2raw ──────────────────────────────────────────────────────────
 UDP2RAW_SERVICE = "udp2raw"          # systemd unit name
 UDP2RAW_PORT    = 4443               # TCP port that udp2raw listens on
-UDP2RAW_KEY     = "3a74b69f6f34123c62d6b882adf87cc68d8578b726236582b895d1d1480014e2"
-SERVER_IP       = "144.31.89.167"
+UDP2RAW_KEY     = os.environ.get("UDP2RAW_KEY", "")
+SERVER_IP       = os.environ.get("SERVER_IP", "")
 _udp2raw_was_down = False            # watchdog state
 
 BTN_CLIENTS   = "👥 Клиенты"
@@ -126,7 +126,7 @@ RESERVED_TEXTS = {BTN_CANCEL, BTN_CLIENTS, BTN_STATS, BTN_ADD, BTN_SERVER, BTN_S
 
 # ─── Remnawave config ─────────────────────────────────────────────────
 REMNAWAVE_URL   = "https://panelwin.mooo.com/api"
-REMNAWAVE_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1dWlkIjoiNzEyYTI1NGUtOTk2OC00MGYxLTgzNzctZjgyODVmZWFlNmQ1IiwidXNlcm5hbWUiOm51bGwsInJvbGUiOiJBUEkiLCJpYXQiOjE3NzE0ODYyMDgsImV4cCI6MTA0MTEzOTk4MDh9.MwW_yE97OJfeTsSm2MX526n05WHDHmnxfF86qXy3S-c"
+REMNAWAVE_TOKEN = os.environ.get("REMNAWAVE_TOKEN", "")
 VLESS_PER_PAGE  = 8
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")

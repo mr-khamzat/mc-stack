@@ -5,9 +5,9 @@ When it turns ON → runs ha_news_update.py, then resets boolean to OFF.
 """
 import asyncio, json, subprocess, time, sys, os
 
-HA_WS    = "wss://ha-as.khamzat-home.crazedns.ru/api/websocket"
-HA_URL   = "https://ha-as.khamzat-home.crazedns.ru"
-HA_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiIyODNjNGZkYjJmZmQ0ZjZhYWIyNDhkODFlMTRmZWQ1MSIsImlhdCI6MTc3MjQ0MzA4NSwiZXhwIjoyMDg3ODAzMDg1fQ.nGHRLmY8aJDa618QsgGQ2iP3Nrn3BEzC8UWLYxZkpJU"
+HA_URL   = os.environ["HA_URL"].rstrip("/")
+HA_TOKEN = os.environ["HA_TOKEN"]
+HA_WS    = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
 TRIGGER  = "input_boolean.news_refresh_trigger"
 NEWS_SCRIPT = "/opt/meshcentral-bot/ha_news_update.py"
 
