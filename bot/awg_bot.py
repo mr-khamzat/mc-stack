@@ -49,7 +49,7 @@ TRAFFIC_FILE = f"{DATA_DIR}/traffic_daily.json"
 INVITES_FILE = f"{DATA_DIR}/invites.json"
 
 SERVER_PUB_KEY = Path(f"{AWG_DIR}/server_public.key").read_text().strip()
-SERVER_ENDPOINT = os.environ.get("SERVER_ENDPOINT", "144.31.89.167:9443")
+SERVER_ENDPOINT = os.environ.get("SERVER_ENDPOINT", "")
 SUBNET = "10.8.1"
 DNS = "94.140.14.14, 94.140.15.15"  # AdGuard DNS — блокировка рекламы и трекеров
 
@@ -58,7 +58,7 @@ AWG2_DIR = "/opt/amnezia-awg2-data/awg"
 AWG2_CONTAINER = "amnezia-awg2"
 AWG2_CONF = f"{AWG2_DIR}/wg0.conf"
 AWG2_PUB_KEY = Path(f"{AWG2_DIR}/server_public.key").read_text().strip()
-AWG2_ENDPOINT = os.environ.get("AWG2_SERVER_ENDPOINT", "144.31.89.167:43825")
+AWG2_ENDPOINT = os.environ.get("AWG2_SERVER_ENDPOINT", "")
 AWG2_SUBNET = "10.8.3"
 
 # ─── WG (standard WireGuard for Keenetic) ────────────────────────────
@@ -68,7 +68,7 @@ WG_SUBNET = "10.8.2"
 WG_DNS = "1.1.1.1"  # через тоннель
 WG_MTU = 1420
 WG_PORT = 51820
-WG_SERVER_ENDPOINT = os.environ.get("WG_SERVER_ENDPOINT", "144.31.89.167:51820")
+WG_SERVER_ENDPOINT = os.environ.get("WG_SERVER_ENDPOINT", "")
 _wg_pub_key_cache = ""
 def _wg_server_pub() -> str:
     global _wg_pub_key_cache
@@ -125,7 +125,7 @@ BTN_CANCEL    = "❌ Отмена"
 RESERVED_TEXTS = {BTN_CANCEL, BTN_CLIENTS, BTN_STATS, BTN_ADD, BTN_SERVER, BTN_SPEEDTEST, BTN_TOOLS, BTN_VLESS}
 
 # ─── Remnawave config ─────────────────────────────────────────────────
-REMNAWAVE_URL   = "https://panelwin.mooo.com/api"
+REMNAWAVE_URL   = os.environ.get("REMNAWAVE_URL", "")
 REMNAWAVE_TOKEN = os.environ.get("REMNAWAVE_TOKEN", "")
 VLESS_PER_PAGE  = 8
 
