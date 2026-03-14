@@ -1322,7 +1322,7 @@ function toggleSection(id) {
 
 // ── API ────────────────────────────────────────────────────────────────────
 async function apiPost(path, body) { return api(path, 'POST', body); }
-async function api(path, method = 'GET', body = null) {
+async function api(path, method = 'GET', body = null, _retry = true) {
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), 15000);
   try {
@@ -1336,6 +1336,19 @@ async function api(path, method = 'GET', body = null) {
     };
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch(API_BASE + path, opts);
+    // Сессия истекла (рестарт бота) — переавторизоваться и повторить запрос
+    if (res.status === 401 && _retry) {
+      sessionStorage.removeItem('ha_bot_token');
+      API_TOKEN = '';
+      const token = await _doTelegramAuth();
+      if (token && token !== 'FORBIDDEN') {
+        API_TOKEN = token;
+        sessionStorage.setItem('ha_bot_token', token);
+        return api(path, method, body, false);
+      }
+      _showAccessDenied('Открой через Telegram', 'Сессия истекла');
+      throw new Error('Unauthorized');
+    }
     if (!res.ok) throw new Error('HTTP ' + res.status);
     return await res.json();
   } finally {
@@ -1702,11 +1715,17 @@ let _sseRefreshTimer = null;
 
 // ── Init ───────────────────────────────────────────────────────────────────
 // ── Telegram Auth ─────────────────────────────────────────────────────────
-const _FALLBACK_TOKEN = '__WEBAPP_TOKEN__';
 
-async function ensureAuth() {
-  if (API_TOKEN) return true;
+function _showAccessDenied(msg, sub) {
+  document.getElementById('loading').innerHTML =
+    '<div style="text-align:center;padding:60px 20px;color:#ef4444">' +
+    '<div style="font-size:56px">🔐</div>' +
+    '<div style="font-size:18px;margin-top:16px;font-weight:600">' + msg + '</div>' +
+    (sub ? '<div style="font-size:13px;margin-top:8px;color:#94a3b8">' + sub + '</div>' : '') +
+    '</div>';
+}
 
+async function _doTelegramAuth() {
   // Ждём инициализации Telegram SDK (до 2 секунд)
   let initData = '';
   for (let i = 0; i < 20; i++) {
@@ -1714,36 +1733,45 @@ async function ensureAuth() {
     if (tg && tg.initData) { initData = tg.initData; break; }
     await new Promise(r => setTimeout(r, 100));
   }
+  if (!initData) return null;
+  try {
+    const res = await fetch(API_BASE + '/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData })
+    });
+    const d = await res.json();
+    if (d.ok && d.token) return d.token;
+    if (res.status === 403) return 'FORBIDDEN';
+  } catch(e) { /* сетевая ошибка */ }
+  return null;
+}
 
-  if (initData) {
-    try {
-      const res = await fetch(API_BASE + '/auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData })
-      });
-      const d = await res.json();
-      if (d.ok && d.token) {
-        API_TOKEN = d.token;
-        sessionStorage.setItem('ha_bot_token', d.token);
-        return true;
-      }
-      // 403 = пользователь не в списке разрешённых
-      if (res.status === 403) {
-        document.getElementById('loading').innerHTML =
-          '<div style="text-align:center;padding:40px;color:#ef4444">' +
-          '<div style="font-size:48px">🚫</div>' +
-          '<div style="font-size:16px;margin-top:12px">Доступ запрещён</div>' +
-          '</div>';
-        return false;
-      }
-    } catch(e) { /* сетевая ошибка — используем fallback */ }
+async function ensureAuth() {
+  if (API_TOKEN) return true;
+
+  // Проверяем кешированный токен
+  const cached = sessionStorage.getItem('ha_bot_token');
+  if (cached) {
+    API_TOKEN = cached;
+    return true;
   }
 
-  // Fallback: токен не в source-коде, но работает если нет Telegram или ошибка auth
-  API_TOKEN = _FALLBACK_TOKEN;
-  sessionStorage.setItem('ha_bot_token', _FALLBACK_TOKEN);
-  return true;
+  const token = await _doTelegramAuth();
+
+  if (token === 'FORBIDDEN') {
+    _showAccessDenied('Доступ запрещён', 'Обратитесь к администратору бота');
+    return false;
+  }
+  if (token) {
+    API_TOKEN = token;
+    sessionStorage.setItem('ha_bot_token', token);
+    return true;
+  }
+
+  // Нет Telegram контекста или ошибка — запретить доступ
+  _showAccessDenied('Открой через Telegram', 'Приложение доступно только через бота');
+  return false;
 }
 
 async function init() {
@@ -3678,30 +3706,34 @@ function _sectsMgrRenderList() {
           </div>
           <div style="font-size:10px;color:#40406a;margin-top:1px">${isBuiltin?'статичный раздел':cnt+' устр.'}</div>
         </div>
-        ${!isBuiltin ? `<div style="display:flex;gap:3px;flex-shrink:0">
+        <!-- Кнопки ▲▼ для всех разделов -->
+        <div style="display:flex;gap:3px;flex-shrink:0">
           <button onclick="_sectsMgrMove('${escapeAttr(id)}',-1)" ${idx===0?'disabled':''} title="Выше"
             style="width:30px;height:30px;border-radius:7px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.05);color:${idx===0?'#252545':'#a0a0c0'};font-size:12px;cursor:${idx===0?'default':'pointer'}">▲</button>
           <button onclick="_sectsMgrMove('${escapeAttr(id)}',1)" ${idx===arr.length-1?'disabled':''} title="Ниже"
             style="width:30px;height:30px;border-radius:7px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.05);color:${idx===arr.length-1?'#252545':'#a0a0c0'};font-size:12px;cursor:${idx===arr.length-1?'default':'pointer'}">▼</button>
-        </div>` : ''}
+        </div>
       </div>
       <div style="display:flex;gap:6px;padding:0 12px 10px">
-        ${!isBuiltin ? `<button onclick="_sectsMgrEditForm('${escapeAttr(id)}')"
-          style="flex:1;padding:7px 0;border-radius:8px;border:1px solid rgba(99,102,241,0.35);background:rgba(99,102,241,0.1);color:#a5b4fc;cursor:pointer;font-size:12px;font-weight:600">✏️ Изменить</button>` : ''}
+        <!-- ✏️ Изменить — для всех разделов (иконка + название) -->
+        <button onclick="_sectsMgrEditForm('${escapeAttr(id)}')"
+          style="flex:1;padding:7px 0;border-radius:8px;border:1px solid rgba(99,102,241,0.35);background:rgba(99,102,241,0.1);color:#a5b4fc;cursor:pointer;font-size:12px;font-weight:600">✏️ Изменить</button>
         <button onclick="_sectsMgrToggleHidden('${escapeAttr(id)}')"
           style="flex:1;padding:7px 0;border-radius:8px;border:1px solid ${hidden?'rgba(99,102,241,0.4)':'rgba(255,255,255,0.1)'};background:${hidden?'rgba(99,102,241,0.12)':'rgba(255,255,255,0.04)'};color:${hidden?'#8080ff':'#a0a0c0'};cursor:pointer;font-size:12px;font-weight:600">${hidden?'👁 Показать':'🙈 Скрыть'}</button>
+        <!-- 🗑️ Удалить — только для пользовательских разделов, встроенные защищены -->
         ${!isBuiltin ? `<button onclick="_sectsMgrDelete('${escapeAttr(id)}')" title="Удалить"
           style="width:38px;padding:7px 0;border-radius:8px;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.07);color:#f87171;cursor:pointer;font-size:15px">🗑️</button>` : ''}
       </div>
     </div>`;
   }
 
+  // Для ▲▼ передаём глобальный индекс и общий массив, чтобы перемещение работало между группами
   const builtinHtml = builtinSects.length ? `
-    <div style="padding:6px 12px 2px;font-size:10px;color:#40406a;text-transform:uppercase;letter-spacing:0.5px;font-weight:700">Встроенные разделы (можно скрыть)</div>
-    ${builtinSects.map(e => renderSectCard(e, 0, [], true)).join('')}` : '';
+    <div style="padding:6px 12px 2px;font-size:10px;color:#40406a;text-transform:uppercase;letter-spacing:0.5px;font-weight:700">Встроенные разделы</div>
+    ${builtinSects.map((e, i) => renderSectCard(e, sorted.indexOf(e), sorted, true)).join('')}` : '';
   const customHtml = customSects.length ? `
-    <div style="padding:8px 12px 2px;font-size:10px;color:#40406a;text-transform:uppercase;letter-spacing:0.5px;font-weight:700">Разделы устройств (полное управление)</div>
-    ${customOnlySorted.map((e, i) => renderSectCard(e, i, customOnlySorted, false)).join('')}` : '';
+    <div style="padding:8px 12px 2px;font-size:10px;color:#40406a;text-transform:uppercase;letter-spacing:0.5px;font-weight:700">Разделы устройств</div>
+    ${customSects.map((e, i) => renderSectCard(e, sorted.indexOf(e), sorted, false)).join('')}` : '';
 
   const listHtml = (builtinHtml + customHtml) || '<div style="text-align:center;padding:20px;color:#60608a;font-size:13px">Нет разделов</div>';
 
@@ -3890,22 +3922,28 @@ function _sectsMgrEditForm(sectId) {
 
 function _sectsMgrRenderEditForm(sectId, iconVal, nameVal) {
   const sect = sectsMgr.sections[sectId] || {};
+  const isBuiltin = !!sect.builtin;
   const IS = 'background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#e0e0f0;font-family:inherit;outline:none;';
-  // Device list for this section
-  const devs = Object.entries(sectsMgr.devices).filter(([, cfg]) => (cfg.section||'lights') === sectId);
-  const devsHtml = devs.length === 0
-    ? '<div style="text-align:center;padding:12px;color:#50508a;font-size:12px">Нет устройств — добавьте через кнопку ниже</div>'
-    : devs.map(([eid, cfg]) => `
-      <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04)">
-        <button onclick="_sectsMgrEditDevIcon('${escapeAttr(eid)}','${escapeAttr(sectId)}')"
-          style="background:none;border:none;font-size:18px;cursor:pointer;width:28px;flex-shrink:0">${cfg.icon||'📦'}</button>
-        <div style="flex:1;min-width:0;cursor:pointer" onclick="_sectsMgrEditDevName('${escapeAttr(eid)}','${escapeAttr(sectId)}')">
-          <div style="font-size:12px;font-weight:600;color:#c0c0e0" id="emgr-devname-${sanitizeId(eid)}">${escapeHtml(cfg.name||eid)}</div>
-          <div style="font-size:10px;color:#40406a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(eid)}</div>
-        </div>
-        <button onclick="_sectsMgrRemoveDev2('${escapeAttr(eid)}','${escapeAttr(sectId)}')"
-          style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:7px;padding:4px 8px;color:#f87171;cursor:pointer;font-size:11px;flex-shrink:0">✕</button>
-      </div>`).join('');
+
+  // Список устройств показываем только для пользовательских разделов
+  const devs = isBuiltin ? [] : Object.entries(sectsMgr.devices).filter(([, cfg]) => (cfg.section||'lights') === sectId);
+  const devsHtml = isBuiltin
+    ? `<div style="text-align:center;padding:12px;color:#50508a;font-size:12px;border:1px dashed rgba(255,255,255,0.08);border-radius:8px">
+        Встроенный раздел — устройства управляются автоматически через Home Assistant
+       </div>`
+    : (devs.length === 0
+      ? '<div style="text-align:center;padding:12px;color:#50508a;font-size:12px">Нет устройств — добавьте через кнопку ниже</div>'
+      : devs.map(([eid, cfg]) => `
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04)">
+          <button onclick="_sectsMgrEditDevIcon('${escapeAttr(eid)}','${escapeAttr(sectId)}')"
+            style="background:none;border:none;font-size:18px;cursor:pointer;width:28px;flex-shrink:0">${cfg.icon||'📦'}</button>
+          <div style="flex:1;min-width:0;cursor:pointer" onclick="_sectsMgrEditDevName('${escapeAttr(eid)}','${escapeAttr(sectId)}')">
+            <div style="font-size:12px;font-weight:600;color:#c0c0e0" id="emgr-devname-${sanitizeId(eid)}">${escapeHtml(cfg.name||eid)}</div>
+            <div style="font-size:10px;color:#40406a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(eid)}</div>
+          </div>
+          <button onclick="_sectsMgrRemoveDev2('${escapeAttr(eid)}','${escapeAttr(sectId)}')"
+            style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:7px;padding:4px 8px;color:#f87171;cursor:pointer;font-size:11px;flex-shrink:0">✕</button>
+        </div>`).join(''));
 
   _sectsMgrSetInner(`
     <div style="padding:14px 14px 20px">
@@ -3921,11 +3959,11 @@ function _sectsMgrRenderEditForm(sectId, iconVal, nameVal) {
         <input id="es-name" type="text" value="${escapeAttr(nameVal)}" placeholder="Название раздела"
           style="${IS}flex:1;padding:9px 12px;font-size:14px">
       </div>
-      <button onclick="_sectsMgrSaveEdit('${escapeAttr(sectId)}')" class="btn btn-primary" style="width:100%;padding:11px;margin-bottom:18px">✓ Сохранить название</button>
+      <button onclick="_sectsMgrSaveEdit('${escapeAttr(sectId)}')" class="btn btn-primary" style="width:100%;padding:11px;margin-bottom:18px">✓ Сохранить</button>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-        <div style="font-size:11px;color:#60608a;text-transform:uppercase;letter-spacing:0.5px">⚡ Устройства (${devs.length})</div>
-        <button onclick="_sectsMgrAddDevForm('${escapeAttr(sectId)}')"
-          style="background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.28);border-radius:8px;padding:4px 10px;color:#a5b4fc;cursor:pointer;font-size:12px">➕ Добавить</button>
+        <div style="font-size:11px;color:#60608a;text-transform:uppercase;letter-spacing:0.5px">${isBuiltin ? '📋 Содержимое раздела' : '⚡ Устройства (' + devs.length + ')'}</div>
+        ${!isBuiltin ? `<button onclick="_sectsMgrAddDevForm('${escapeAttr(sectId)}')"
+          style="background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.28);border-radius:8px;padding:4px 10px;color:#a5b4fc;cursor:pointer;font-size:12px">➕ Добавить</button>` : ''}
       </div>
       <div id="emgr-devlist">${devsHtml}</div>
     </div>`, '✏️ ' + (sect.name || sectId));
