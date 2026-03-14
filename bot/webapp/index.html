@@ -847,7 +847,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
 <!-- Main app -->
 <div id="app">
   <div class="app-header">
-    <h1>🏠 Умный Дом</h1>
+    <h1 style="font-size:22px;line-height:1">🏠</h1>
     <div style="display:flex;align-items:center;gap:8px">
       <span class="last-updated" id="last-updated">—</span>
       <div id="user-badge" onclick="showUserMenu()" title="Аккаунт"
@@ -937,7 +937,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   </div>
 
   <!-- 2. FAMILY -->
-  <div class="section">
+  <div class="section" data-section-perm="family">
     <div class="section-header" onclick="toggleSection('sec-family-body')">
       <span>👨‍👩‍👦 Семья</span>
       <span class="chevron">▾</span>
@@ -952,7 +952,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   </div>
 
   <!-- PRESENCE STATS -->
-  <div class="section">
+  <div class="section" data-section-perm="presence">
     <div class="section-header" onclick="toggleSection('sec-presence-body'); if(!_presenceLoaded) loadPresenceStats()">
       <span>📊 Кто сколько дома (7 дней)</span>
       <span class="chevron">▾</span>
@@ -967,7 +967,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   </div>
 
   <!-- FACES HISTORY -->
-  <div class="section">
+  <div class="section" data-section-perm="faces">
     <div class="section-header" onclick="toggleSection('sec-faces-body'); if(!_facesLoaded) loadFacesHistory()">
       <span>🚪 У двери — история</span>
       <span class="chevron">▾</span>
@@ -982,7 +982,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   </div>
 
   <!-- ENERGY HEATMAP -->
-  <div class="section">
+  <div class="section" data-section-perm="energy">
     <div class="section-header" onclick="toggleSection('sec-energy-body'); if(!_energyHourlyLoaded) loadEnergyHourly()">
       <span>⚡ Энергия по часам (24ч)</span>
       <span class="chevron">▾</span>
@@ -997,7 +997,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   </div>
 
   <!-- 3. LIGHTS -->
-  <div class="section">
+  <div class="section" data-section-perm="lights">
     <div class="section-header" onclick="toggleSection('sec-lights-body')">
       <span>💡 Свет</span>
       <span class="chevron">▴</span>
@@ -1012,7 +1012,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   </div>
 
   <!-- 4. CLIMATE -->
-  <div class="section">
+  <div class="section" data-section-perm="climate">
     <div class="section-header" onclick="toggleSection('sec-climate-body')">
       <span>🌡️ Климат</span>
       <span class="chevron">▾</span>
@@ -1055,7 +1055,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   </div>
 
   <!-- 5. TV -->
-  <div class="section">
+  <div class="section" data-section-perm="tv">
     <div class="section-header" onclick="toggleSection('sec-tv-body')">
       <span>📺 Телевизор</span>
       <span class="chevron">▾</span>
@@ -1089,7 +1089,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   </div>
 
   <!-- 6. VACUUM -->
-  <div class="section">
+  <div class="section" data-section-perm="vacuum">
     <div class="section-header" onclick="toggleSection('sec-vacuum-body')">
       <span>🤖 Пылесос</span>
       <span class="chevron">▾</span>
@@ -1145,7 +1145,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   <div id="dynamic-sections"></div>
 
   <!-- SCENES -->
-  <div class="section">
+  <div class="section" data-section-perm="scenes">
     <div class="section-header" onclick="toggleSection('sec-scenes-body'); if(!_scenesLoaded) loadScenes()">
       <span>🎭 Сцены / Режимы</span>
       <span class="chevron">▾</span>
@@ -1160,7 +1160,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   </div>
 
   <!-- ALERTS CONFIG -->
-  <div class="section">
+  <div class="section" data-section-perm="alerts">
     <div class="section-header" onclick="toggleSection('sec-alerts-body'); if(!_alertsLoaded) loadAlerts()">
       <span>🔔 Алерты</span>
       <span class="chevron">▾</span>
@@ -1239,7 +1239,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   </div>
 
   <!-- 9. SETTINGS -->
-  <div class="section">
+  <div class="section" data-section-perm="devices">
     <div class="section-header" onclick="toggleSettings()">
       <span>⚙️ Устройства</span>
       <span class="chevron" id="settings-chevron">▾</span>
@@ -1768,36 +1768,22 @@ let _sseRefreshTimer = null;
 let HA_USER_ROLE    = localStorage.getItem('ha_user_role')    || 'viewer';
 let HA_USERNAME     = localStorage.getItem('ha_username')     || '';
 let HA_DISPLAY_NAME = localStorage.getItem('ha_display_name') || '';
+let HA_AVATAR_URL   = localStorage.getItem('ha_avatar_url')   || '';
 
 // ── Role Permissions ───────────────────────────────────────────────────────
-const SECTION_PERM_MAP = {
-    'sec-family-body':   'family',
-    'sec-presence-body': 'presence',
-    'sec-faces-body':    'faces',
-    'sec-energy-body':   'energy',
-    'sec-lights-body':   'lights',
-    'sec-climate-body':  'climate',
-    'sec-tv-body':       'tv',
-    'sec-vacuum-body':   'vacuum',
-    'sec-scenes-body':   'scenes',
-    'sec-alerts-body':   'alerts',
-    'sec-settings-body': 'devices',
-};
+// SECTION_PERM_MAP removed — sections now use data-section-perm attribute directly
 
 function applyRolePermissions(perms) {
     if (HA_USER_ROLE === 'admin') return; // admin sees everything
     if (!perms || typeof perms !== 'object') return;
     // Cache permissions in localStorage so they survive page reloads
     localStorage.setItem('ha_permissions', JSON.stringify(perms));
-    for (const [bodyId, perm] of Object.entries(SECTION_PERM_MAP)) {
-        const bodyEl = document.getElementById(bodyId);
-        if (!bodyEl) continue;
-        const sectionEl = bodyEl.closest('.section');
-        if (!sectionEl) continue;
-        // perm not in object → default allow; false → hide
+    // Use data-section-perm attribute — direct and unambiguous
+    document.querySelectorAll('[data-section-perm]').forEach(el => {
+        const perm = el.getAttribute('data-section-perm');
         const allowed = perms.hasOwnProperty(perm) ? perms[perm] : true;
-        sectionEl.style.display = allowed ? '' : 'none';
-    }
+        el.style.display = allowed ? '' : 'none';
+    });
 }
 
 function _updateUserBadge() {
@@ -1808,8 +1794,14 @@ function _updateUserBadge() {
   const name = HA_DISPLAY_NAME || HA_USERNAME;
   badge.style.display = 'flex';
   nameEl.textContent = name || 'Аккаунт';
-  avatar.textContent = name ? name.charAt(0).toUpperCase() : '👤';
-  avatar.style.background = HA_USER_ROLE === 'admin' ? '#3b82f6' : '#6366f1';
+  if (HA_AVATAR_URL) {
+    avatar.innerHTML = `<img src="${HA_AVATAR_URL}" style="width:24px;height:24px;border-radius:50%;object-fit:cover" onerror="this.parentElement.innerHTML='${name ? name.charAt(0).toUpperCase() : '👤'}'">`;
+    avatar.style.background = 'transparent';
+  } else {
+    avatar.innerHTML = '';
+    avatar.textContent = name ? name.charAt(0).toUpperCase() : '👤';
+    avatar.style.background = HA_USER_ROLE === 'admin' ? '#3b82f6' : '#6366f1';
+  }
   if (HA_USER_ROLE === 'admin') admShow();
 }
 
@@ -1827,8 +1819,13 @@ function doLogout() {
   localStorage.removeItem('ha_username');
   localStorage.removeItem('ha_display_name');
   localStorage.removeItem('ha_permissions');
-  // Reset section visibility so next user starts with all visible
-  document.querySelectorAll('.section').forEach(s => s.style.display = '');
+  localStorage.removeItem('ha_avatar_url');
+  HA_AVATAR_URL = '';
+  // Reset ONLY permission-controlled sections; admin section handled separately
+  document.querySelectorAll('[data-section-perm]').forEach(s => s.style.display = '');
+  // Hide admin section until next admin logs in
+  const adminSec = document.getElementById('sec-admin');
+  if (adminSec) adminSec.style.display = 'none';
   API_TOKEN = '';
   HA_USER_ROLE = 'viewer';
   HA_USERNAME  = '';
@@ -1893,10 +1890,13 @@ async function doHaLogin() {
       HA_USER_ROLE    = d.role || 'viewer';
       HA_USERNAME     = d.username || user;
       HA_DISPLAY_NAME = d.display_name || HA_USERNAME;
+      HA_AVATAR_URL   = d.avatar_url || '';
       localStorage.setItem('ha_bot_token',    d.token);
       localStorage.setItem('ha_user_role',    HA_USER_ROLE);
       localStorage.setItem('ha_username',     HA_USERNAME);
       localStorage.setItem('ha_display_name', HA_DISPLAY_NAME);
+      if (HA_AVATAR_URL) localStorage.setItem('ha_avatar_url', HA_AVATAR_URL);
+      else localStorage.removeItem('ha_avatar_url');
       // Apply permissions immediately from login response (no extra API call needed)
       if (d.permissions && typeof d.permissions === 'object') {
         applyRolePermissions(d.permissions);
@@ -2133,6 +2133,21 @@ function renderPresenceStats(stats) {
 
 // ── Faces History ────────────────────────────────────────────────────────────
 let _facesLoaded = false;
+function openPhotoLightbox(url) {
+  let lb = document.getElementById('photo-lightbox');
+  if (!lb) {
+    lb = document.createElement('div');
+    lb.id = 'photo-lightbox';
+    lb.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:9000;' +
+      'display:flex;align-items:center;justify-content:center;cursor:zoom-out;padding:16px';
+    lb.onclick = () => lb.remove();
+    document.body.appendChild(lb);
+  }
+  lb.innerHTML = `<img src="${url}" style="max-width:100%;max-height:90vh;border-radius:12px;object-fit:contain;box-shadow:0 0 40px rgba(0,0,0,0.8)" onclick="event.stopPropagation()">
+    <div style="position:absolute;top:16px;right:16px;font-size:28px;cursor:pointer;color:#fff;background:rgba(0,0,0,0.4);border-radius:50%;width:40px;height:40px;display:flex;align-items:center;justify-content:center" onclick="document.getElementById('photo-lightbox').remove()">✕</div>`;
+  lb.style.display = 'flex';
+}
+
 async function loadFacesHistory() {
   _facesLoaded = true;
   const el = document.getElementById('faces-content');
@@ -2163,15 +2178,21 @@ function renderFacesHistory(entries) {
       const d = new Date(e.ts);
       timeStr = d.toLocaleDateString('ru',{day:'numeric',month:'short'}) + ' ' + d.toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
     } catch(_) { timeStr = e.ts || ''; }
-    const thumb = e.snapshot_url
-      ? `<img src="${escapeAttr(e.snapshot_url)}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;flex-shrink:0;background:#1a1a2e" onerror="this.style.display='none'">`
+    const snapUrl = e.snapshot_url
+      ? (e.snapshot_url + '?token=' + encodeURIComponent(API_TOKEN))
+      : '';
+    const thumb = snapUrl
+      ? `<img src="${escapeAttr(snapUrl)}" onclick="openPhotoLightbox('${escapeAttr(snapUrl)}')"
+             style="width:56px;height:56px;object-fit:cover;border-radius:8px;flex-shrink:0;
+             background:#1a1a2e;cursor:pointer" onerror="this.style.display='none'">`
       : `<div style="width:56px;height:56px;border-radius:8px;background:#1a1a2e;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0">${icon}</div>`;
     return `<div style="display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06)">
       ${thumb}
-      <div>
+      <div style="flex:1;min-width:0">
         <div style="font-size:14px;font-weight:600;color:#e0e0ff">${icon} ${escapeHtml(e.person)}</div>
         <div style="font-size:12px;color:#9090b8">📍 ${escapeHtml(cam)}</div>
         <div style="font-size:11px;color:#60608a">🕐 ${escapeHtml(timeStr)}</div>
+        ${snapUrl ? `<div style="font-size:11px;color:#6366f1;margin-top:2px;cursor:pointer" onclick="openPhotoLightbox('${escapeAttr(snapUrl)}')">🔍 Посмотреть фото</div>` : ''}
       </div>
     </div>`;
   }).join('');

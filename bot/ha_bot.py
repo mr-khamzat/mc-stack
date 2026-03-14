@@ -4948,6 +4948,31 @@ async def _web_ha_login(request: aiohttp_web.Request) -> aiohttp_web.Response:
                       "client_id": HA_URL + "/"},
                 ssl=False)
             d2 = await r2.json()
+
+            # Шаг 3: получить имя и аватар пользователя из HA
+            display_name = username
+            avatar_url = None
+            if d2.get("type") == "create_entry":
+                ha_token = (d2.get("result") or {}).get("access_token")
+                if ha_token:
+                    try:
+                        r3 = await s.get(f"{HA_URL}/auth/current_user",
+                            headers={"Authorization": f"Bearer {ha_token}"}, ssl=False)
+                        if r3.status == 200:
+                            u = await r3.json()
+                            display_name = u.get("name") or username
+                    except Exception:
+                        pass
+                    try:
+                        r4 = await s.get(f"{HA_URL}/api/states/person.{username.lower()}",
+                            headers={"Authorization": f"Bearer {HA_TOKEN}"}, ssl=False)
+                        if r4.status == 200:
+                            ps = await r4.json()
+                            ep = (ps.get("attributes") or {}).get("entity_picture")
+                            if ep:
+                                avatar_url = (HA_URL + ep) if ep.startswith("/") else ep
+                    except Exception:
+                        pass
     except Exception as e:
         log.error(f"ha_login: {e}")
         return aiohttp_web.Response(
@@ -4961,7 +4986,6 @@ async def _web_ha_login(request: aiohttp_web.Request) -> aiohttp_web.Response:
 
     # Роль определяется по списку HA_WEBAPP_ADMINS в .env
     role = "admin" if username.lower() in _HA_WEBAPP_ADMINS else "viewer"
-    display_name = username
     now_str = datetime.now(MSK).strftime("%Y-%m-%d %H:%M:%S")
 
     # Сохранить / обновить пользователя в webapp_users
@@ -4988,10 +5012,11 @@ async def _web_ha_login(request: aiohttp_web.Request) -> aiohttp_web.Response:
         log.warning(f"ha_login webapp_users: {e}")
         perms = dict(_PERM_DEFAULTS)
 
-    log.info(f"ha_login: user '{username}' authenticated, role={role}")
+    log.info(f"ha_login: user '{username}' authenticated, role={role}, name='{display_name}'")
     return aiohttp_web.Response(
         text=json.dumps({"ok": True, "token": WEBAPP_TOKEN, "role": role,
                          "username": username, "display_name": display_name,
+                         "avatar_url": avatar_url,
                          "permissions": perms}),
         content_type="application/json", headers=_CORS_HEADERS)
 
@@ -5128,19 +5153,21 @@ async def _web_frigate_faces_history(request: aiohttp_web.Request) -> aiohttp_we
     """GET /ha-app/api/frigate/faces-history — последние распознавания лиц."""
     if not _check_token(request):
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
-    entries: list = []
-    if FACES_LOG_FILE.exists():
-        try:
-            entries = json.loads(FACES_LOG_FILE.read_text())
-        except Exception:
-            entries = []
-    # Return newest first, add snapshot URL
-    result = []
-    for e in reversed(entries[-50:]):
-        snap = ""
-        if e.get("event_id"):
-            snap = f"{HA_URL}/api/frigate/notifications/{e['event_id']}/snapshot.jpg"
-        result.append({**e, "snapshot_url": snap})
+    try:
+        c = _db()
+        rows = c.execute(
+            "SELECT ts, person, event_id, camera FROM faces_log ORDER BY id DESC LIMIT 50"
+        ).fetchall()
+        result = []
+        for r in rows:
+            event_id = r[2] or ""
+            # Use our proxy endpoint so <img> works without auth headers
+            snap = (f"/ha-app/api/frigate/thumb/{event_id}" if event_id else "")
+            result.append({"ts": r[0], "person": r[1], "event_id": event_id,
+                           "camera": r[3], "snapshot_url": snap})
+    except Exception as e:
+        log.warning(f"faces-history: {e}")
+        result = []
     return aiohttp_web.Response(
         text=json.dumps(result, ensure_ascii=False),
         content_type="application/json", headers=_CORS_HEADERS)
