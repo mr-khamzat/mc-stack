@@ -598,7 +598,7 @@ async def ha_get(path: str) -> dict | list | None:
         async with aiohttp.ClientSession() as s:
             async with s.get(
                 f"{HA_URL}/api/{path}", headers=HA_HEADERS,
-                timeout=aiohttp.ClientTimeout(total=10)
+                timeout=aiohttp.ClientTimeout(total=10), ssl=False
             ) as r:
                 if r.status == 200:
                     return await r.json()
@@ -622,7 +622,7 @@ async def ha_post(path: str, data: dict = None) -> dict | None:
         async with aiohttp.ClientSession() as s:
             async with s.post(
                 f"{HA_URL}/api/{path}", headers=HA_HEADERS,
-                json=data or {}, timeout=aiohttp.ClientTimeout(total=10)
+                json=data or {}, timeout=aiohttp.ClientTimeout(total=10), ssl=False
             ) as r:
                 return await r.json()
     except Exception as e:
