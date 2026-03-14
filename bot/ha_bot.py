@@ -144,22 +144,6 @@ WEBAPP_TOKEN = os.environ.get("WEBAPP_TOKEN", "")
 WEBAPP_URL   = "https://hub.office.mooo.com/ha-app/"
 WEBAPP_DIR   = Path("/opt/ha-bot/webapp")
 
-# Хранилище сессионных токенов для Mini App (user_id → random token, TTL 4ч)
-# Не сохраняются на диск — при рестарте бота пользователи переавторизуются через Telegram
-_session_store: dict[str, dict] = {}  # token -> {user_id, expires_at}
-
-def _create_session_token(user_id: int) -> str:
-    """Создать временный сессионный токен для пользователя Mini App."""
-    import secrets as _secrets_mod
-    token = _secrets_mod.token_urlsafe(32)
-    expires = _time.time() + 4 * 3600  # 4 часа
-    _session_store[token] = {"user_id": user_id, "expires_at": expires}
-    # Очистка просроченных токенов
-    expired = [t for t, v in list(_session_store.items()) if v["expires_at"] < _time.time()]
-    for t in expired:
-        _session_store.pop(t, None)
-    return token
-
 FAMILY_USERS_FILE  = Path("/opt/ha-bot/family_users.json")
 # ── Пути к файлам данных ───────────────────────────────────────────────────────
 DB_FILE            = Path("/opt/ha-bot/ha_bot.db")      # SQLite (основное хранилище)
@@ -3599,20 +3583,12 @@ async def _send_monthly_report():
 def _check_token(request: aiohttp_web.Request) -> bool:
     """Проверить авторизацию запроса к API.
 
-    Принимает:
-    - WEBAPP_TOKEN (внутренние вызовы от HA автоматизаций, бота)
-    - Сессионный токен выданный через /auth (Telegram WebApp пользователи)
+    Токен передаётся в заголовке Authorization: Bearer ТОКЕН.
+    Токен — WEBAPP_TOKEN из .env. Никогда не вшивается в HTML,
+    выдаётся только через /auth после верификации Telegram initData.
     """
     auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        return False
-    token = auth[7:]
-    if token == WEBAPP_TOKEN:
-        return True
-    session = _session_store.get(token)
-    if session and session["expires_at"] > _time.time():
-        return True
-    return False
+    return auth == f"Bearer {WEBAPP_TOKEN}"
 
 async def _web_index(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/ — отдать HTML страницу Mini App.
@@ -3969,16 +3945,10 @@ async def _sse_broadcast(entity_id: str, state: str, attrs: dict):
 
 def _check_token_qs(request: aiohttp_web.Request) -> bool:
     """Check auth token from Authorization header or ?token= query param."""
-    def _valid_token(t: str) -> bool:
-        if t == WEBAPP_TOKEN:
-            return True
-        session = _session_store.get(t)
-        return bool(session and session["expires_at"] > _time.time())
-
     auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer ") and _valid_token(auth[7:]):
+    if auth == f"Bearer {WEBAPP_TOKEN}":
         return True
-    return _valid_token(request.rel_url.query.get("token", ""))
+    return request.rel_url.query.get("token") == WEBAPP_TOKEN
 
 async def _web_sse(request: aiohttp_web.Request) -> aiohttp_web.StreamResponse:
     """GET /ha-app/api/events — SSE stream of HA state changes."""
@@ -4952,9 +4922,8 @@ async def _web_auth_telegram(request: aiohttp_web.Request) -> aiohttp_web.Respon
             status=403,
             text=json.dumps({"ok": False, "error": "forbidden"}),
             content_type="application/json", headers=_CORS_HEADERS)
-    session_token = _create_session_token(user_id)
     return aiohttp_web.Response(
-        text=json.dumps({"ok": True, "token": session_token, "ttl": 4 * 3600}),
+        text=json.dumps({"ok": True, "token": WEBAPP_TOKEN}),
         content_type="application/json", headers=_CORS_HEADERS)
 
 

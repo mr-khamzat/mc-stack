@@ -1252,7 +1252,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
 'use strict';
 
 // ── Constants ──────────────────────────────────────────────────────────────
-let API_TOKEN = sessionStorage.getItem('ha_bot_token') || '';
+let API_TOKEN = localStorage.getItem('ha_bot_token') || '';
 const API_BASE  = (window.location.origin || 'https://hub.office.mooo.com') + '/ha-app/api';
 
 const LIGHTS_MAP = {
@@ -1338,12 +1338,12 @@ async function api(path, method = 'GET', body = null, _retry = true) {
     const res = await fetch(API_BASE + path, opts);
     // Сессия истекла (рестарт бота) — переавторизоваться и повторить запрос
     if (res.status === 401 && _retry) {
-      sessionStorage.removeItem('ha_bot_token');
+      localStorage.removeItem('ha_bot_token');
       API_TOKEN = '';
       const token = await _doTelegramAuth();
       if (token && token !== 'FORBIDDEN') {
         API_TOKEN = token;
-        sessionStorage.setItem('ha_bot_token', token);
+        localStorage.setItem('ha_bot_token', token);
         return api(path, method, body, false);
       }
       _showAccessDenied('Открой через Telegram', 'Сессия истекла');
@@ -1751,7 +1751,7 @@ async function ensureAuth() {
   if (API_TOKEN) return true;
 
   // Проверяем кешированный токен
-  const cached = sessionStorage.getItem('ha_bot_token');
+  const cached = localStorage.getItem('ha_bot_token');
   if (cached) {
     API_TOKEN = cached;
     return true;
@@ -1765,7 +1765,7 @@ async function ensureAuth() {
   }
   if (token) {
     API_TOKEN = token;
-    sessionStorage.setItem('ha_bot_token', token);
+    localStorage.setItem('ha_bot_token', token);
     return true;
   }
 
