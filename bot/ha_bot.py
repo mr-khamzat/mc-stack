@@ -4924,7 +4924,9 @@ async def _web_ha_login(request: aiohttp_web.Request) -> aiohttp_web.Response:
         async with aiohttp.ClientSession(timeout=timeout) as s:
             # Шаг 1: начать login flow
             r1 = await s.post(f"{HA_URL}/auth/login_flow",
-                json={"handler": ["homeassistant", None], "redirect_uri": HA_URL + "/"},
+                json={"handler": ["homeassistant", None],
+                      "redirect_uri": HA_URL + "/",
+                      "client_id": HA_URL + "/"},
                 ssl=False)
             d1 = await r1.json()
             flow_id = d1.get("flow_id")
@@ -4933,7 +4935,8 @@ async def _web_ha_login(request: aiohttp_web.Request) -> aiohttp_web.Response:
 
             # Шаг 2: отправить учётные данные
             r2 = await s.post(f"{HA_URL}/auth/login_flow/{flow_id}",
-                json={"username": username, "password": password},
+                json={"username": username, "password": password,
+                      "client_id": HA_URL + "/"},
                 ssl=False)
             d2 = await r2.json()
     except Exception as e:
