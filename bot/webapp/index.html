@@ -1340,13 +1340,7 @@ async function api(path, method = 'GET', body = null, _retry = true) {
     if (res.status === 401 && _retry) {
       localStorage.removeItem('ha_bot_token');
       API_TOKEN = '';
-      const token = await _doTelegramAuth();
-      if (token && token !== 'FORBIDDEN') {
-        API_TOKEN = token;
-        localStorage.setItem('ha_bot_token', token);
-        return api(path, method, body, false);
-      }
-      _showAccessDenied('Открой через Telegram', 'Сессия истекла');
+      _showAccessDenied('Токен устарел', 'Закрой и нажми кнопку<br>🖥️ Панель управления в боте снова');
       throw new Error('Unauthorized');
     }
     if (!res.ok) throw new Error('HTTP ' + res.status);
