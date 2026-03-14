@@ -1717,12 +1717,19 @@ let _sseRefreshTimer = null;
 // ── Telegram Auth ─────────────────────────────────────────────────────────
 
 function _showAccessDenied(msg, sub) {
-  document.getElementById('loading').innerHTML =
-    '<div style="text-align:center;padding:60px 20px;color:#ef4444">' +
-    '<div style="font-size:56px">🔐</div>' +
-    '<div style="font-size:18px;margin-top:16px;font-weight:600">' + msg + '</div>' +
-    (sub ? '<div style="font-size:13px;margin-top:8px;color:#94a3b8">' + sub + '</div>' : '') +
-    '</div>';
+  // Показываем поверх всего — не в #loading (он скрывается в finally)
+  let el = document.getElementById('access-denied-screen');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'access-denied-screen';
+    el.style.cssText = 'position:fixed;inset:0;background:#0f172a;z-index:9999;' +
+      'display:flex;align-items:center;justify-content:center;flex-direction:column;text-align:center;padding:20px';
+    document.body.appendChild(el);
+  }
+  el.innerHTML =
+    '<div style="font-size:64px">🔐</div>' +
+    '<div style="font-size:20px;margin-top:20px;font-weight:700;color:#f1f5f9">' + msg + '</div>' +
+    (sub ? '<div style="font-size:14px;margin-top:10px;color:#94a3b8">' + sub + '</div>' : '');
 }
 
 async function _doTelegramAuth() {
@@ -1780,7 +1787,7 @@ async function init() {
   qaRender();
   try {
     const authOk = await ensureAuth();
-    if (!authOk) { clearTimeout(timer); return; }
+    if (!authOk) { clearTimeout(timer); hideLoading(); return; }
     await loadStatus();
     // Update home-away subtitle
     try {
