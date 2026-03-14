@@ -141,8 +141,8 @@ HA_TOKEN   = os.environ["HA_TOKEN"]
 HA_HEADERS = {"Authorization": f"Bearer {HA_TOKEN}", "Content-Type": "application/json"}
 
 WEBAPP_TOKEN = os.environ.get("WEBAPP_TOKEN", "")
-WEBAPP_URL   = "https://hub.office.mooo.com/ha-app/"
-WEBAPP_DIR   = Path("/opt/ha-bot/webapp")
+WEBAPP_URL   = os.environ.get("WEBAPP_URL", "").rstrip("/") + "/"  # читается из .env!
+WEBAPP_DIR   = Path(os.environ.get("WEBAPP_DIR", "/opt/ha-bot/webapp"))
 # Логины HA-пользователей с ролью admin в мини апс (из .env, через запятую)
 _HA_WEBAPP_ADMINS = {u.strip().lower() for u in os.environ.get("HA_WEBAPP_ADMINS", "").split(",") if u.strip()}
 
@@ -1256,7 +1256,7 @@ def main_kb() -> ReplyKeyboardMarkup:
         [KeyboardButton(text="🏡 Дом"),      KeyboardButton(text="👪 Семья"),    KeyboardButton(text="🌤️ Погода")],
         [KeyboardButton(text="📹 Камеры"),   KeyboardButton(text="⚙️ Автоматизации"), KeyboardButton(text="🕌 Намаз")],
         [KeyboardButton(text="📊 Статус"),   KeyboardButton(text="🛠 Устройства"), KeyboardButton(text="🧠 ИИ Ассистент")],
-        [KeyboardButton(text="🖥️ Панель управления", web_app=WebAppInfo(url=f"{WEBAPP_URL}?auth={WEBAPP_TOKEN}"))],
+        [KeyboardButton(text="🖥️ Панель управления", web_app=WebAppInfo(url=WEBAPP_URL))],
     ], resize_keyboard=True)
 
 # ── /start ────────────────────────────────────────────────────────────────────
@@ -5897,7 +5897,7 @@ async def handle_document(msg: Message):
 async def cmd_app(msg: Message):
     if not is_admin(msg.from_user.id): return
     kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(
-        text="🖥️ Открыть панель", web_app=WebAppInfo(url=f"{WEBAPP_URL}?auth={WEBAPP_TOKEN}")
+        text="🖥️ Открыть панель", web_app=WebAppInfo(url=WEBAPP_URL)
     )]], resize_keyboard=True, one_time_keyboard=True)
     await msg.answer("🖥️ Откройте панель управления:", reply_markup=kb)
 
@@ -5912,7 +5912,7 @@ async def cmd_link(msg: Message):
         await msg.answer("⛔ Нет доступа")
         return
     # Токен передаётся в URL-фрагменте (#) — не попадает в логи сервера
-    link = f"{WEBAPP_URL}#auth={WEBAPP_TOKEN}"
+    link = WEBAPP_URL
     await msg.answer(
         f"🔗 <b>Ссылка для браузера (ПК/планшет):</b>\n\n"
         f"<code>{link}</code>\n\n"
