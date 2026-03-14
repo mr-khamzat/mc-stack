@@ -4898,6 +4898,76 @@ async def _frigate_person_identified_task(camera: str, person: str, event_id: st
     _activity_log("frigate_person_identified", f"{person}@{camera}")
 
 
+# ── Auth через логин/пароль Home Assistant ────────────────────────────────────
+async def _web_ha_login(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/ha-login — авторизация через учётные данные HA.
+
+    Проверяет логин/пароль через HA login_flow API.
+    Возвращает токен доступа и роль пользователя (admin / viewer).
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return aiohttp_web.Response(status=400,
+            text='{"ok":false,"error":"bad request"}',
+            content_type="application/json", headers=_CORS_HEADERS)
+
+    username = body.get("username", "").strip()
+    password = body.get("password", "")
+    if not username or not password:
+        return aiohttp_web.Response(
+            text=json.dumps({"ok": False, "error": "Введите логин и пароль"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+
+    timeout = aiohttp.ClientTimeout(total=10)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as s:
+            # Шаг 1: начать login flow
+            r1 = await s.post(f"{HA_URL}/auth/login_flow",
+                json={"handler": ["homeassistant", None], "redirect_uri": HA_URL + "/"},
+                ssl=False)
+            d1 = await r1.json()
+            flow_id = d1.get("flow_id")
+            if not flow_id:
+                raise ValueError("no flow_id")
+
+            # Шаг 2: отправить учётные данные
+            r2 = await s.post(f"{HA_URL}/auth/login_flow/{flow_id}",
+                json={"username": username, "password": password},
+                ssl=False)
+            d2 = await r2.json()
+    except Exception as e:
+        log.error(f"ha_login: {e}")
+        return aiohttp_web.Response(
+            text=json.dumps({"ok": False, "error": "Ошибка подключения к HA"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+
+    if d2.get("type") != "create_entry":
+        return aiohttp_web.Response(
+            text=json.dumps({"ok": False, "error": "Неверный логин или пароль"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+
+    # Учётные данные верны — определяем роль через HA API
+    role = "viewer"
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as s:
+            r3 = await s.get(f"{HA_URL}/api/config/auth/users",
+                headers={"Authorization": f"Bearer {HA_TOKEN}"}, ssl=False)
+            users = await r3.json()
+            for u in users:
+                if u.get("username") == username or u.get("name", "").lower() == username.lower():
+                    if u.get("system_admin") or u.get("is_owner"):
+                        role = "admin"
+                    break
+    except Exception as e:
+        log.warning(f"ha_login role check: {e}")
+
+    log.info(f"ha_login: user '{username}' authenticated, role={role}")
+    return aiohttp_web.Response(
+        text=json.dumps({"ok": True, "token": WEBAPP_TOKEN, "role": role, "username": username}),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+
 # ── Auth (Telegram WebApp initData) ──────────────────────────────────────────
 async def _web_auth_telegram(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """POST /ha-app/api/auth — валидация Telegram WebApp initData."""
@@ -5563,6 +5633,8 @@ async def _start_web():
     app.router.add_post("/ha-app/api/frigate/person-identified",  _web_frigate_person_identified)
     app.router.add_get("/ha-app/api/frigate/faces-history",       _web_frigate_faces_history)
     app.router.add_post("/ha-app/api/auth",                       _web_auth_telegram)
+    app.router.add_post("/ha-app/api/ha-login",                   _web_ha_login)
+    app.router.add_route("OPTIONS", "/ha-app/api/ha-login",       _web_options)
     app.router.add_get("/ha-app/api/presence-stats",              _web_presence_stats)
     app.router.add_get("/ha-app/api/energy-hourly",               _web_energy_hourly)
     app.router.add_get("/ha-app/api/server-stats",                _web_server_stats)

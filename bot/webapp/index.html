@@ -1336,11 +1336,12 @@ async function api(path, method = 'GET', body = null, _retry = true) {
     };
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch(API_BASE + path, opts);
-    // Сессия истекла (рестарт бота) — переавторизоваться и повторить запрос
     if (res.status === 401 && _retry) {
       localStorage.removeItem('ha_bot_token');
+      localStorage.removeItem('ha_user_role');
+      localStorage.removeItem('ha_username');
       API_TOKEN = '';
-      _showAccessDenied('Токен устарел', 'Закрой и нажми кнопку<br>🖥️ Панель управления в боте снова');
+      _showLoginForm('Сессия истекла, войдите снова');
       throw new Error('Unauthorized');
     }
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -1708,80 +1709,95 @@ function handleSSEUpdate(d) {
 let _sseRefreshTimer = null;
 
 // ── Init ───────────────────────────────────────────────────────────────────
-// ── Telegram Auth ─────────────────────────────────────────────────────────
+// ── HA Login Auth ──────────────────────────────────────────────────────────
 
-function _showAccessDenied(msg, sub) {
-  // Показываем поверх всего — не в #loading (он скрывается в finally)
+let HA_USER_ROLE = localStorage.getItem('ha_user_role') || 'viewer';
+let HA_USERNAME  = localStorage.getItem('ha_username')  || '';
+
+function _showLoginForm(errorMsg) {
   let el = document.getElementById('access-denied-screen');
   if (!el) {
     el = document.createElement('div');
     el.id = 'access-denied-screen';
     el.style.cssText = 'position:fixed;inset:0;background:#0f172a;z-index:9999;' +
-      'display:flex;align-items:center;justify-content:center;flex-direction:column;text-align:center;padding:20px';
+      'display:flex;align-items:center;justify-content:center;flex-direction:column;' +
+      'text-align:center;padding:24px';
     document.body.appendChild(el);
   }
   el.innerHTML =
-    '<div style="font-size:64px">🔐</div>' +
-    '<div style="font-size:20px;margin-top:20px;font-weight:700;color:#f1f5f9">' + msg + '</div>' +
-    (sub ? '<div style="font-size:14px;margin-top:10px;color:#94a3b8">' + sub + '</div>' : '');
+    '<div style="font-size:52px">🏠</div>' +
+    '<div style="font-size:22px;margin-top:14px;font-weight:700;color:#f1f5f9">Вход</div>' +
+    '<div style="font-size:13px;margin-top:6px;color:#64748b">Логин и пароль от Home Assistant</div>' +
+    '<input id="ha-user" type="text" placeholder="Логин" autocomplete="username" ' +
+      'style="margin-top:22px;padding:13px 16px;border-radius:12px;border:1px solid #334155;' +
+      'background:#1e293b;color:#f1f5f9;font-size:16px;width:270px;box-sizing:border-box;outline:none">' +
+    '<input id="ha-pass" type="password" placeholder="Пароль" autocomplete="current-password" ' +
+      'style="margin-top:10px;padding:13px 16px;border-radius:12px;border:1px solid #334155;' +
+      'background:#1e293b;color:#f1f5f9;font-size:16px;width:270px;box-sizing:border-box;outline:none">' +
+    '<div id="ha-err" style="min-height:18px;margin-top:8px;font-size:13px;color:#ef4444">' +
+      (errorMsg || '') + '</div>' +
+    '<button id="ha-btn" onclick="doHaLogin()" ' +
+      'style="padding:13px 0;border-radius:12px;border:none;background:#3b82f6;color:#fff;' +
+      'font-size:16px;font-weight:600;cursor:pointer;width:270px;margin-top:4px">Войти</button>';
+  const passEl = el.querySelector('#ha-pass');
+  passEl.addEventListener('keydown', e => { if (e.key === 'Enter') doHaLogin(); });
+  // Фокус на поле логина
+  setTimeout(() => { el.querySelector('#ha-user').focus(); }, 100);
 }
 
-async function _doTelegramAuth() {
-  // Ждём инициализации Telegram SDK (до 2 секунд)
-  let initData = '';
-  for (let i = 0; i < 20; i++) {
-    const tg = window.Telegram && window.Telegram.WebApp;
-    if (tg && tg.initData) { initData = tg.initData; break; }
-    await new Promise(r => setTimeout(r, 100));
-  }
-  if (!initData) return null;
+async function doHaLogin() {
+  const btn = document.getElementById('ha-btn');
+  const err = document.getElementById('ha-err');
+  const user = document.getElementById('ha-user').value.trim();
+  const pass = document.getElementById('ha-pass').value;
+  if (!user || !pass) { err.textContent = 'Введите логин и пароль'; return; }
+  btn.disabled = true;
+  btn.textContent = 'Проверка...';
+  err.textContent = '';
   try {
-    const res = await fetch(API_BASE + '/auth', {
+    const res = await fetch(API_BASE + '/ha-login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData })
+      body: JSON.stringify({ username: user, password: pass })
     });
     const d = await res.json();
-    if (d.ok && d.token) return d.token;
-    if (res.status === 403) return 'FORBIDDEN';
-  } catch(e) { /* сетевая ошибка */ }
-  return null;
+    if (d.ok && d.token) {
+      API_TOKEN = d.token;
+      HA_USER_ROLE = d.role || 'viewer';
+      HA_USERNAME  = d.username || user;
+      localStorage.setItem('ha_bot_token',  d.token);
+      localStorage.setItem('ha_user_role',  HA_USER_ROLE);
+      localStorage.setItem('ha_username',   HA_USERNAME);
+      document.getElementById('access-denied-screen').remove();
+      // Запускаем приложение
+      await loadStatus();
+      try { const sc = await api('/scenes'); homeAwayUpdateSub(sc); } catch(_){}
+      setInterval(loadStatus, 30000);
+      startSSE();
+    } else {
+      err.textContent = d.error || 'Неверный логин или пароль';
+      btn.disabled = false;
+      btn.textContent = 'Войти';
+    }
+  } catch(e) {
+    err.textContent = 'Ошибка сети';
+    btn.disabled = false;
+    btn.textContent = 'Войти';
+  }
 }
 
 async function ensureAuth() {
   if (API_TOKEN) return true;
 
-  // 1. Токен из URL-параметра (?auth=TOKEN) — передаётся кнопкой бота
-  const urlToken = new URLSearchParams(window.location.search).get('auth');
-  if (urlToken) {
-    API_TOKEN = urlToken;
-    localStorage.setItem('ha_bot_token', urlToken);
-    // Убираем токен из адресной строки
-    history.replaceState(null, '', window.location.pathname);
-    return true;
-  }
-
-  // 2. Кешированный токен из localStorage
+  // Кешированный токен из localStorage (после успешного входа)
   const cached = localStorage.getItem('ha_bot_token');
   if (cached) {
     API_TOKEN = cached;
     return true;
   }
 
-  // 3. Telegram WebApp initData (мобильный / Telegram Desktop с WebView)
-  const token = await _doTelegramAuth();
-
-  if (token === 'FORBIDDEN') {
-    _showAccessDenied('Доступ запрещён', 'Обратитесь к администратору бота');
-    return false;
-  }
-  if (token) {
-    API_TOKEN = token;
-    localStorage.setItem('ha_bot_token', token);
-    return true;
-  }
-
-  _showAccessDenied('Нет доступа', 'Открой через кнопку в Telegram боте');
+  // Нет токена → показать форму входа
+  _showLoginForm();
   return false;
 }
 
