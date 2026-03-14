@@ -143,6 +143,8 @@ HA_HEADERS = {"Authorization": f"Bearer {HA_TOKEN}", "Content-Type": "applicatio
 WEBAPP_TOKEN = os.environ.get("WEBAPP_TOKEN", "")
 WEBAPP_URL   = "https://hub.office.mooo.com/ha-app/"
 WEBAPP_DIR   = Path("/opt/ha-bot/webapp")
+# Логины HA-пользователей с ролью admin в мини апс (из .env, через запятую)
+_HA_WEBAPP_ADMINS = {u.strip().lower() for u in os.environ.get("HA_WEBAPP_ADMINS", "").split(",") if u.strip()}
 
 FAMILY_USERS_FILE  = Path("/opt/ha-bot/family_users.json")
 # ── Пути к файлам данных ───────────────────────────────────────────────────────
@@ -4958,21 +4960,9 @@ async def _web_ha_login(request: aiohttp_web.Request) -> aiohttp_web.Response:
             content_type="application/json", headers=_CORS_HEADERS)
 
     # Учётные данные верны — определяем роль через HA API
-    role = "viewer"
+    # Роль определяется по списку HA_WEBAPP_ADMINS в .env
+    role = "admin" if username.lower() in _HA_WEBAPP_ADMINS else "viewer"
     display_name = username
-    try:
-        async with aiohttp.ClientSession(timeout=timeout) as s:
-            r3 = await s.get(f"{HA_URL}/api/config/auth/users",
-                headers={"Authorization": f"Bearer {HA_TOKEN}"}, ssl=False)
-            users = await r3.json()
-            for u in users:
-                if u.get("username") == username or u.get("name", "").lower() == username.lower():
-                    if u.get("system_admin") or u.get("is_owner"):
-                        role = "admin"
-                    display_name = u.get("name") or username
-                    break
-    except Exception as e:
-        log.warning(f"ha_login role check: {e}")
 
     log.info(f"ha_login: user '{username}' authenticated, role={role}, name='{display_name}'")
     return aiohttp_web.Response(
