@@ -221,6 +221,12 @@ def _db_init():
         );
     """)
     c.commit()
+    # Schema migration: add username column to activity_log
+    try:
+        c.execute("ALTER TABLE activity_log ADD COLUMN username TEXT NOT NULL DEFAULT ''")
+        c.commit()
+    except Exception:
+        pass  # already exists
     _db_migrate()
 
 def _db_migrate():
@@ -1042,13 +1048,13 @@ _HA_PRAYER_EIDS = {
 _prayer_cache: dict = {"date": None, "timings": None}
 
 # ── Журнал активности ─────────────────────────────────────────────────────────
-def _activity_log(action: str, detail: str = ""):
+def _activity_log(action: str, detail: str = "", username: str = ""):
     """Append event to activity_log table, keep last 200 entries."""
     try:
         with _DB_LOCK:
             c = _db()
-            c.execute("INSERT INTO activity_log (ts,action,detail) VALUES (?,?,?)",
-                (datetime.now(MSK).strftime("%Y-%m-%d %H:%M:%S"), action, detail))
+            c.execute("INSERT INTO activity_log (ts,action,detail,username) VALUES (?,?,?,?)",
+                (datetime.now(MSK).strftime("%Y-%m-%d %H:%M:%S"), action, detail, username))
             c.execute("DELETE FROM activity_log WHERE id NOT IN "
                       "(SELECT id FROM activity_log ORDER BY id DESC LIMIT 200)")
             c.commit()
@@ -4346,7 +4352,8 @@ async def _web_action(request: aiohttp_web.Request) -> aiohttp_web.Response:
             return aiohttp_web.Response(status=400, text="Bad request", headers=_CORS_HEADERS)
         domain, service = service_str.split(".", 1)
         await ha_call(domain, service, entity_id, extra or None)
-        _activity_log(f"webapp:{service_str}", entity_id)
+        ha_user = request.headers.get("X-HA-User", "")
+        _activity_log(f"webapp:{service_str}", entity_id, username=ha_user)
         return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
                                     headers=_CORS_HEADERS)
     except Exception as e:
@@ -4971,6 +4978,74 @@ async def _web_ha_login(request: aiohttp_web.Request) -> aiohttp_web.Response:
     return aiohttp_web.Response(
         text=json.dumps({"ok": True, "token": WEBAPP_TOKEN, "role": role,
                          "username": username, "display_name": display_name}),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+
+# ── Role Config (permissions for viewer role) ─────────────────────────────────
+_VIEWER_PERM_DEFAULTS = {
+    "lights": True, "climate": True, "energy": True,
+    "cameras": False, "scenes": True, "family": True,
+    "presence": True, "faces": False, "vacuum": True,
+    "tv": True, "alerts": False, "devices": False,
+}
+
+def _role_config_load() -> dict:
+    try:
+        c = _db()
+        row = c.execute("SELECT value FROM config WHERE key='viewer_permissions'").fetchone()
+        if row:
+            data = json.loads(row[0])
+            return {**_VIEWER_PERM_DEFAULTS, **data}
+    except Exception:
+        pass
+    return dict(_VIEWER_PERM_DEFAULTS)
+
+def _role_config_save(perms: dict):
+    with _DB_LOCK:
+        c = _db()
+        c.execute("INSERT OR REPLACE INTO config (key,value) VALUES ('viewer_permissions',?)",
+                  (json.dumps(perms),))
+        c.commit()
+
+async def _web_role_config_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/role-config — get viewer role permissions."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    return aiohttp_web.Response(
+        text=json.dumps(_role_config_load()),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+async def _web_role_config_post(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/role-config — save viewer permissions (admin only)."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    if request.headers.get("X-HA-User-Role", "") != "admin":
+        return aiohttp_web.Response(status=403, text="Admin only", headers=_CORS_HEADERS)
+    try:
+        body = await request.json()
+    except Exception:
+        return aiohttp_web.Response(status=400, text="Bad request", headers=_CORS_HEADERS)
+    perms = {k: bool(body.get(k, v)) for k, v in _VIEWER_PERM_DEFAULTS.items()}
+    _role_config_save(perms)
+    return aiohttp_web.Response(text='{"ok":true}',
+        content_type="application/json", headers=_CORS_HEADERS)
+
+async def _web_activity_log_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/activity-all — full activity log with usernames (admin only)."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    if request.headers.get("X-HA-User-Role", "") != "admin":
+        return aiohttp_web.Response(status=403, text="Admin only", headers=_CORS_HEADERS)
+    try:
+        c = _db()
+        rows = c.execute(
+            "SELECT ts, action, detail, username FROM activity_log ORDER BY id DESC LIMIT 200"
+        ).fetchall()
+        result = [{"ts": r[0], "action": r[1], "detail": r[2], "username": r[3]} for r in rows]
+    except Exception as e:
+        result = []
+    return aiohttp_web.Response(
+        text=json.dumps(result, ensure_ascii=False),
         content_type="application/json", headers=_CORS_HEADERS)
 
 
@@ -5672,6 +5747,11 @@ async def _start_web():
     app.router.add_route("OPTIONS", "/ha-app/api/alerts",       _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/scenes",            _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/scenes/{scene_id}", _web_options)
+    app.router.add_get("/ha-app/api/role-config",   _web_role_config_get)
+    app.router.add_post("/ha-app/api/role-config",  _web_role_config_post)
+    app.router.add_get("/ha-app/api/activity-all",  _web_activity_log_get)
+    app.router.add_route("OPTIONS", "/ha-app/api/role-config",  _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/activity-all", _web_options)
     runner = aiohttp_web.AppRunner(app)
     await runner.setup()
     site = aiohttp_web.TCPSite(runner, "127.0.0.1", 8766)
