@@ -4953,7 +4953,8 @@ async def _web_ha_login(request: aiohttp_web.Request) -> aiohttp_web.Response:
             display_name = username
             avatar_url = None
             if d2.get("type") == "create_entry":
-                ha_token = (d2.get("result") or {}).get("access_token")
+                result = d2.get("result")
+                ha_token = result.get("access_token") if isinstance(result, dict) else None
                 if ha_token:
                     try:
                         r3 = await s.get(f"{HA_URL}/auth/current_user",
@@ -5023,10 +5024,13 @@ async def _web_ha_login(request: aiohttp_web.Request) -> aiohttp_web.Response:
 
 # ── Role Config (permissions for viewer role) ─────────────────────────────────
 _PERM_DEFAULTS = {
-    "lights": True, "climate": True, "energy": True,
-    "cameras": False, "scenes": True, "family": True,
-    "presence": True, "faces": False, "vacuum": True,
-    "tv": True, "alerts": False, "devices": False,
+    "status": True, "family": True, "presence": True,
+    "faces": False, "energy": True, "lights": True,
+    "climate": True, "tv": True, "vacuum": True,
+    "prayers": True, "weather": True, "scenes": True,
+    "alerts": False, "nightmode": True, "server": False,
+    "logbook": False, "activity": False,
+    "devices": False, "cameras": False,
 }
 
 def _user_perms_load(username: str) -> dict:
@@ -5156,7 +5160,8 @@ async def _web_frigate_faces_history(request: aiohttp_web.Request) -> aiohttp_we
     try:
         c = _db()
         rows = c.execute(
-            "SELECT ts, person, event_id, camera FROM faces_log ORDER BY id DESC LIMIT 50"
+            "SELECT ts, person, event_id, camera FROM faces_log "
+            "WHERE ts >= datetime('now', '-2 days') ORDER BY id DESC LIMIT 100"
         ).fetchall()
         result = []
         for r in rows:

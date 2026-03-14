@@ -887,7 +887,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   </div>
 
   <!-- 1. STATUS -->
-  <div class="section">
+  <div class="section" data-section-perm="status">
     <div class="section-header" onclick="toggleSection('sec-status-body')">
       <span>📊 Статус</span>
       <span class="chevron">▴</span>
@@ -1112,7 +1112,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   </div>
 
   <!-- 7. PRAYERS -->
-  <div class="section" id="prayers-section">
+  <div class="section" id="prayers-section" data-section-perm="prayers">
     <div class="section-header" onclick="toggleSection('sec-prayers-body')">
       <span>🕌 Намаз</span>
       <span class="chevron">▾</span>
@@ -1127,7 +1127,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   </div>
 
   <!-- 8. WEATHER -->
-  <div class="section">
+  <div class="section" data-section-perm="weather">
     <div class="section-header" onclick="toggleSection('sec-weather-body')">
       <span>🌤️ Погода — Грозный</span>
       <span class="chevron">▾</span>
@@ -1175,7 +1175,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   </div>
 
   <!-- NIGHT MODE -->
-  <div class="section">
+  <div class="section" data-section-perm="nightmode">
     <div class="section-header" onclick="toggleSection('sec-nightmode-body'); if(!_nightModeLoaded) loadNightMode()">
       <span>🌙 Ночной режим</span>
       <span class="chevron">▾</span>
@@ -1190,7 +1190,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   </div>
 
   <!-- SERVER STATS -->
-  <div class="section">
+  <div class="section" data-section-perm="server">
     <div class="section-header" onclick="toggleSection('sec-server-body'); if(!_serverStatsLoaded) loadServerStats()">
       <span>🖥️ Сервер</span>
       <span class="chevron">▾</span>
@@ -1205,7 +1205,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   </div>
 
   <!-- HA LOGBOOK -->
-  <div class="section">
+  <div class="section" data-section-perm="logbook">
     <div class="section-header" onclick="toggleSection('sec-logbook-body'); if(!_logbookLoaded) loadLogbook()">
       <span>📋 История HA</span>
       <span class="chevron">▾</span>
@@ -1220,7 +1220,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   </div>
 
   <!-- ACTIVITY LOG -->
-  <div class="section">
+  <div class="section" data-section-perm="activity">
     <div class="section-header" onclick="toggleSection('sec-activity-body'); if(document.getElementById('activity-list').childElementCount===0) loadActivity()">
       <span>📋 История активности</span>
       <span class="chevron">▾</span>
@@ -1708,6 +1708,13 @@ async function loadStatus() {
     const d = await api('/status');
     window._statusData = d;
     applyStatus(d);
+    // Re-apply permissions after DOM update so they don't reset over time
+    if (HA_USER_ROLE !== 'admin') {
+      try {
+        const cached = localStorage.getItem('ha_permissions');
+        if (cached) applyRolePermissions(JSON.parse(cached));
+      } catch(_) {}
+    }
   } catch(e) {
     if (e.name !== 'AbortError') {
       showToast('❌ Ошибка загрузки: ' + e.message);
@@ -2134,7 +2141,8 @@ function renderPresenceStats(stats) {
 // ── Faces History ────────────────────────────────────────────────────────────
 let _facesLoaded = false;
 let _facesAllEntries = [];
-let _facesDayIndex = 0; // 0 = сегодня, 1 = вчера, ...
+let _facesPage = 0; // страница: 0 = новейшие
+const _FACES_PER_PAGE = 4;
 const _CAM_NAMES    = {'cam_a6810678':'Подъезд'};
 const _PERSON_ICONS = {'Хамзат':'👨','Айза':'👩','Сулим':'👦','Камила':'👧'};
 
@@ -2155,109 +2163,76 @@ function openPhotoLightbox(url) {
 
 async function loadFacesHistory() {
   _facesLoaded = true;
-  _facesDayIndex = 0;
+  _facesPage = 0;
   const el = document.getElementById('faces-content');
   el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div>';
   try {
     _facesAllEntries = await api('/frigate/faces-history');
-    renderFacesDay();
+    renderFacesPage();
   } catch(e) {
     el.innerHTML = '<div style="color:#ef4444;font-size:13px;text-align:center;padding:10px">Ошибка: ' + escapeHtml(e.message) + '</div>';
   }
 }
 
-function _facesGroupByDay(entries) {
-  // Группировка по дате (YYYY-MM-DD по локальному времени), сортировка дней desc
-  const map = {};
-  for (const e of entries) {
-    let day = '';
-    try { day = new Date(e.ts).toLocaleDateString('sv'); } catch(_) { day = e.ts.slice(0,10); }
-    if (!map[day]) map[day] = [];
-    map[day].push(e);
-  }
-  return Object.keys(map).sort((a,b) => b.localeCompare(a)).map(day => ({ day, items: map[day] }));
-}
-
-function _facesFormatDayLabel(dayStr) {
-  try {
-    const d = new Date(dayStr + 'T12:00:00');
-    const today = new Date(); today.setHours(12,0,0,0);
-    const yesterday = new Date(today); yesterday.setDate(today.getDate()-1);
-    if (d.toDateString() === today.toDateString()) return 'Сегодня';
-    if (d.toDateString() === yesterday.toDateString()) return 'Вчера';
-    return d.toLocaleDateString('ru', {day:'numeric', month:'long'});
-  } catch(_) { return dayStr; }
-}
-
-function renderFacesDay() {
+function renderFacesPage() {
   const el = document.getElementById('faces-content');
-  const groups = _facesGroupByDay(_facesAllEntries);
-  if (!groups.length) {
-    el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:16px">Пока никто не был распознан</div>';
+  if (!_facesAllEntries || !_facesAllEntries.length) {
+    el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:16px">За последние 2 дня никого не распознано</div>';
     return;
   }
-  if (_facesDayIndex >= groups.length) _facesDayIndex = groups.length - 1;
-  if (_facesDayIndex < 0) _facesDayIndex = 0;
+  const total = _facesAllEntries.length;
+  const totalPages = Math.ceil(total / _FACES_PER_PAGE);
+  if (_facesPage >= totalPages) _facesPage = totalPages - 1;
+  if (_facesPage < 0) _facesPage = 0;
 
-  const group = groups[_facesDayIndex];
-  const dayLabel = _facesFormatDayLabel(group.day);
-  const items = group.items.slice(0, 4); // max 4 за день
-  const hasPrev = _facesDayIndex < groups.length - 1;
-  const hasNext = _facesDayIndex > 0;
+  const items = _facesAllEntries.slice(_facesPage * _FACES_PER_PAGE, (_facesPage + 1) * _FACES_PER_PAGE);
+  const hasPrev = _facesPage > 0;
+  const hasNext = _facesPage < totalPages - 1;
 
   const navBtn = `background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);
     color:#9090b8;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer`;
-  const navBtnDisabled = `background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);
-    color:#40405a;border-radius:8px;padding:5px 10px;font-size:12px;cursor:default`;
+  const navBtnOff = `background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);
+    color:#383858;border-radius:8px;padding:5px 10px;font-size:12px;cursor:default`;
 
   let html = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:6px">
-    <button onclick="facesDayNav(1)" style="${hasPrev ? navBtn : navBtnDisabled}" ${hasPrev ? '' : 'disabled'}>← Ранее</button>
-    <span style="font-size:13px;font-weight:600;color:#c0c0e0;flex:1;text-align:center">${escapeHtml(dayLabel)}</span>
-    <button onclick="facesDayNav(-1)" style="${hasNext ? navBtn : navBtnDisabled}" ${hasNext ? '' : 'disabled'}>Позже →</button>
+    <button onclick="facesPageNav(-1)" style="${hasPrev ? navBtn : navBtnOff}" ${hasPrev ? '' : 'disabled'}>← Новее</button>
+    <span style="font-size:11px;color:#60608a;flex:1;text-align:center">${_facesPage * _FACES_PER_PAGE + 1}–${Math.min((_facesPage + 1) * _FACES_PER_PAGE, total)} из ${total}</span>
+    <button onclick="facesPageNav(1)" style="${hasNext ? navBtn : navBtnOff}" ${hasNext ? '' : 'disabled'}>Старше →</button>
     <button onclick="_facesLoaded=false;loadFacesHistory()" style="${navBtn};margin-left:4px">🔄</button>
   </div>`;
 
-  if (!items.length) {
-    html += '<div style="color:#60608a;font-size:13px;text-align:center;padding:12px">Нет событий</div>';
-  } else {
-    // 4 миниатюры сеткой 2×2
-    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
-    for (const e of items) {
-      const icon = _PERSON_ICONS[e.person] || '👤';
-      const cam  = _CAM_NAMES[e.camera] || e.camera;
-      let timeStr = '';
-      try {
-        const d = new Date(e.ts);
-        timeStr = d.toLocaleTimeString('ru', {hour:'2-digit', minute:'2-digit'});
-      } catch(_) { timeStr = ''; }
-      const snapUrl = e.snapshot_url
-        ? (e.snapshot_url + '?token=' + encodeURIComponent(API_TOKEN))
-        : '';
-      const thumbContent = snapUrl
-        ? `<img src="${escapeAttr(snapUrl)}" onclick="openPhotoLightbox('${escapeAttr(snapUrl)}')"
-               style="width:100%;height:90px;object-fit:cover;border-radius:8px;display:block;cursor:pointer;background:#1a1a2e"
-               onerror="this.style.display='none'">`
-        : `<div style="width:100%;height:90px;border-radius:8px;background:#1a1a2e;display:flex;align-items:center;justify-content:center;font-size:36px">${icon}</div>`;
-      html += `<div style="background:rgba(255,255,255,0.04);border-radius:10px;overflow:hidden;cursor:pointer" onclick="${snapUrl ? `openPhotoLightbox('${escapeAttr(snapUrl)}')` : ''}">
-        ${thumbContent}
-        <div style="padding:5px 7px">
-          <div style="font-size:12px;font-weight:600;color:#e0e0ff">${icon} ${escapeHtml(e.person)}</div>
-          <div style="font-size:10px;color:#60608a">🕐 ${escapeHtml(timeStr)}</div>
-        </div>
-      </div>`;
-    }
-    html += '</div>';
-    if (group.items.length > 4) {
-      html += `<div style="font-size:11px;color:#50508a;text-align:center;margin-top:6px">показаны 4 из ${group.items.length}</div>`;
-    }
+  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  for (const e of items) {
+    const icon = _PERSON_ICONS[e.person] || '👤';
+    const cam  = _CAM_NAMES[e.camera] || e.camera;
+    let timeStr = '';
+    try {
+      const d = new Date(e.ts);
+      timeStr = d.toLocaleDateString('ru',{day:'numeric',month:'short'}) + ' ' + d.toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
+    } catch(_) { timeStr = ''; }
+    const snapUrl = e.snapshot_url
+      ? (e.snapshot_url + '?token=' + encodeURIComponent(API_TOKEN))
+      : '';
+    const thumbContent = snapUrl
+      ? `<img src="${escapeAttr(snapUrl)}" onclick="openPhotoLightbox('${escapeAttr(snapUrl)}')"
+             style="width:100%;height:90px;object-fit:cover;border-radius:8px;display:block;cursor:pointer;background:#1a1a2e"
+             onerror="this.style.display='none'">`
+      : `<div style="width:100%;height:90px;border-radius:8px;background:#1a1a2e;display:flex;align-items:center;justify-content:center;font-size:36px">${icon}</div>`;
+    html += `<div style="background:rgba(255,255,255,0.04);border-radius:10px;overflow:hidden" onclick="${snapUrl ? `openPhotoLightbox('${escapeAttr(snapUrl)}')` : ''}">
+      ${thumbContent}
+      <div style="padding:5px 7px">
+        <div style="font-size:12px;font-weight:600;color:#e0e0ff;cursor:default">${icon} ${escapeHtml(e.person)}</div>
+        <div style="font-size:10px;color:#60608a">🕐 ${escapeHtml(timeStr)}</div>
+      </div>
+    </div>`;
   }
-
+  html += '</div>';
   el.innerHTML = html;
 }
 
-function facesDayNav(dir) {
-  _facesDayIndex += dir;
-  renderFacesDay();
+function facesPageNav(dir) {
+  _facesPage += dir;
+  renderFacesPage();
 }
 
 // ── Energy Heatmap ────────────────────────────────────────────────────────────
@@ -4777,11 +4752,25 @@ window.addEventListener('load', safeInit); // fallback if DOMContentLoaded misse
 
 // ── Admin Panel ────────────────────────────────────────────────────────────
 const ADM_PERM_LABELS = {
-    lights: '💡 Свет', climate: '🌡️ Климат', energy: '⚡ Энергия',
-    cameras: '📹 Камеры', scenes: '🎭 Сцены', family: '👨‍👩‍👧 Семья',
-    presence: '📍 Присутствие', faces: '🫥 Распознавание лиц',
-    vacuum: '🤖 Пылесос', tv: '📺 Телевизор',
-    alerts: '🔔 Алерты', devices: '⚙️ Устройства',
+    status:   '📊 Статус',
+    family:   '👨‍👩‍👧 Семья',
+    presence: '📍 Присутствие',
+    faces:    '🚪 У двери',
+    energy:   '⚡ Энергия',
+    lights:   '💡 Свет',
+    climate:  '🌡️ Климат',
+    tv:       '📺 Телевизор',
+    vacuum:   '🤖 Пылесос',
+    prayers:  '🕌 Намаз',
+    weather:  '🌤️ Погода',
+    scenes:   '🎭 Сцены',
+    alerts:   '🔔 Алерты',
+    nightmode:'🌙 Ночной режим',
+    server:   '🖥️ Сервер',
+    logbook:  '📋 История HA',
+    activity: '📋 История активности',
+    devices:  '⚙️ Устройства',
+    cameras:  '📹 Камеры',
 };
 let _admPerms = {};
 let _admSelectedUser = null;
