@@ -1790,8 +1790,7 @@ async function ensureAuth() {
     return true;
   }
 
-  // Нет ни одного способа авторизоваться
-  _showAccessDenied('Нет доступа', 'Напиши боту /link для получения ссылки');
+  _showAccessDenied('Нет доступа', 'Открой через кнопку в Telegram боте');
   return false;
 }
 

@@ -1248,7 +1248,7 @@ def main_kb() -> ReplyKeyboardMarkup:
         [KeyboardButton(text="🏡 Дом"),      KeyboardButton(text="👪 Семья"),    KeyboardButton(text="🌤️ Погода")],
         [KeyboardButton(text="📹 Камеры"),   KeyboardButton(text="⚙️ Автоматизации"), KeyboardButton(text="🕌 Намаз")],
         [KeyboardButton(text="📊 Статус"),   KeyboardButton(text="🛠 Устройства"), KeyboardButton(text="🧠 ИИ Ассистент")],
-        [KeyboardButton(text="🖥️ Панель управления", web_app=WebAppInfo(url=WEBAPP_URL))],
+        [KeyboardButton(text="🖥️ Панель управления", web_app=WebAppInfo(url=f"{WEBAPP_URL}#auth={WEBAPP_TOKEN}"))],
     ], resize_keyboard=True)
 
 # ── /start ────────────────────────────────────────────────────────────────────
@@ -4915,7 +4915,7 @@ async def _web_auth_telegram(request: aiohttp_web.Request) -> aiohttp_web.Respon
     user_raw = parsed.get("user", "{}")
     user = json.loads(user_raw) if isinstance(user_raw, str) else user_raw
     user_id = int(user.get("id", 0))
-    allowed = _users_load()
+    allowed = _load_family_users()
     allowed_ids = {ADMIN_ID} | {int(uid) for uid in allowed.keys()}
     if user_id not in allowed_ids:
         return aiohttp_web.Response(
@@ -5665,7 +5665,7 @@ async def handle_document(msg: Message):
 async def cmd_app(msg: Message):
     if not is_admin(msg.from_user.id): return
     kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(
-        text="🖥️ Открыть панель", web_app=WebAppInfo(url=WEBAPP_URL)
+        text="🖥️ Открыть панель", web_app=WebAppInfo(url=f"{WEBAPP_URL}#auth={WEBAPP_TOKEN}")
     )]], resize_keyboard=True, one_time_keyboard=True)
     await msg.answer("🖥️ Откройте панель управления:", reply_markup=kb)
 
@@ -5674,7 +5674,7 @@ async def cmd_app(msg: Message):
 async def cmd_link(msg: Message):
     """Выдать персональную ссылку для открытия мини апс в браузере."""
     uid = msg.from_user.id
-    allowed = _users_load()
+    allowed = _load_family_users()
     allowed_ids = {ADMIN_ID} | {int(u) for u in allowed.keys()}
     if uid not in allowed_ids:
         await msg.answer("⛔ Нет доступа")
