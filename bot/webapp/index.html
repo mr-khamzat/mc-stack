@@ -1786,12 +1786,17 @@ const SECTION_PERM_MAP = {
 
 function applyRolePermissions(perms) {
     if (HA_USER_ROLE === 'admin') return; // admin sees everything
+    if (!perms || typeof perms !== 'object') return;
+    // Cache permissions in localStorage so they survive page reloads
+    localStorage.setItem('ha_permissions', JSON.stringify(perms));
     for (const [bodyId, perm] of Object.entries(SECTION_PERM_MAP)) {
         const bodyEl = document.getElementById(bodyId);
         if (!bodyEl) continue;
         const sectionEl = bodyEl.closest('.section');
         if (!sectionEl) continue;
-        sectionEl.style.display = perms[perm] ? '' : 'none';
+        // perm not in object → default allow; false → hide
+        const allowed = perms.hasOwnProperty(perm) ? perms[perm] : true;
+        sectionEl.style.display = allowed ? '' : 'none';
     }
 }
 
@@ -1821,6 +1826,9 @@ function doLogout() {
   localStorage.removeItem('ha_user_role');
   localStorage.removeItem('ha_username');
   localStorage.removeItem('ha_display_name');
+  localStorage.removeItem('ha_permissions');
+  // Reset section visibility so next user starts with all visible
+  document.querySelectorAll('.section').forEach(s => s.style.display = '');
   API_TOKEN = '';
   HA_USER_ROLE = 'viewer';
   HA_USERNAME  = '';
@@ -1889,10 +1897,15 @@ async function doHaLogin() {
       localStorage.setItem('ha_user_role',    HA_USER_ROLE);
       localStorage.setItem('ha_username',     HA_USERNAME);
       localStorage.setItem('ha_display_name', HA_DISPLAY_NAME);
+      // Apply permissions immediately from login response (no extra API call needed)
+      if (d.permissions && typeof d.permissions === 'object') {
+        applyRolePermissions(d.permissions);
+      }
       _updateUserBadge();
       document.getElementById('access-denied-screen').remove();
       // Запускаем приложение
       await loadStatus();
+      // Refresh permissions from API (in case admin changed them since last login)
       try { const perms = await api(`/user-perms?user=${encodeURIComponent(HA_USERNAME)}`); applyRolePermissions(perms); } catch(_){}
       try { const sc = await api('/scenes'); homeAwayUpdateSub(sc); } catch(_){}
       setInterval(loadStatus, 30000);
@@ -1930,11 +1943,16 @@ async function init() {
   const timer = setTimeout(hideLoading, 3000);
   // Init quick actions from localStorage immediately
   qaRender();
+  // Apply cached permissions immediately before any API calls
+  try {
+    const cachedPerms = localStorage.getItem('ha_permissions');
+    if (cachedPerms) applyRolePermissions(JSON.parse(cachedPerms));
+  } catch(_) {}
   try {
     const authOk = await ensureAuth();
     if (!authOk) { clearTimeout(timer); hideLoading(); return; }
     await loadStatus();
-    // Load and apply role permissions
+    // Load and apply role permissions from API (authoritative)
     try {
       const perms = await api(`/user-perms?user=${encodeURIComponent(HA_USERNAME)}`);
       applyRolePermissions(perms);

@@ -4959,54 +4959,106 @@ async def _web_ha_login(request: aiohttp_web.Request) -> aiohttp_web.Response:
             text=json.dumps({"ok": False, "error": "Неверный логин или пароль"}),
             content_type="application/json", headers=_CORS_HEADERS)
 
-    # Учётные данные верны — определяем роль через HA API
     # Роль определяется по списку HA_WEBAPP_ADMINS в .env
     role = "admin" if username.lower() in _HA_WEBAPP_ADMINS else "viewer"
     display_name = username
+    now_str = datetime.now(MSK).strftime("%Y-%m-%d %H:%M:%S")
 
-    log.info(f"ha_login: user '{username}' authenticated, role={role}, name='{display_name}'")
+    # Сохранить / обновить пользователя в webapp_users
+    # Права: если уже есть запись — берём сохранённые права, иначе пустые (все по умолчанию)
+    try:
+        with _DB_LOCK:
+            c = _db()
+            row = c.execute(
+                "SELECT permissions FROM webapp_users WHERE username=?", (username,)
+            ).fetchone()
+            perms_json = row[0] if row else "{}"
+            c.execute("""
+                INSERT INTO webapp_users (username, display_name, role, permissions, last_login)
+                VALUES (?,?,?,?,?)
+                ON CONFLICT(username) DO UPDATE SET
+                    display_name=excluded.display_name,
+                    role=excluded.role,
+                    last_login=excluded.last_login
+            """, (username, display_name, role, perms_json, now_str))
+            c.commit()
+        # Use _user_perms_load to get merged permissions with defaults
+        perms = _user_perms_load(username)
+    except Exception as e:
+        log.warning(f"ha_login webapp_users: {e}")
+        perms = dict(_PERM_DEFAULTS)
+
+    log.info(f"ha_login: user '{username}' authenticated, role={role}")
     return aiohttp_web.Response(
         text=json.dumps({"ok": True, "token": WEBAPP_TOKEN, "role": role,
-                         "username": username, "display_name": display_name}),
+                         "username": username, "display_name": display_name,
+                         "permissions": perms}),
         content_type="application/json", headers=_CORS_HEADERS)
 
 
 # ── Role Config (permissions for viewer role) ─────────────────────────────────
-_VIEWER_PERM_DEFAULTS = {
+_PERM_DEFAULTS = {
     "lights": True, "climate": True, "energy": True,
     "cameras": False, "scenes": True, "family": True,
     "presence": True, "faces": False, "vacuum": True,
     "tv": True, "alerts": False, "devices": False,
 }
 
-def _role_config_load() -> dict:
+def _user_perms_load(username: str) -> dict:
+    """Загрузить права конкретного пользователя (или defaults если нет записи)."""
     try:
         c = _db()
-        row = c.execute("SELECT value FROM config WHERE key='viewer_permissions'").fetchone()
+        row = c.execute("SELECT permissions FROM webapp_users WHERE username=?", (username,)).fetchone()
         if row:
-            data = json.loads(row[0])
-            return {**_VIEWER_PERM_DEFAULTS, **data}
+            data = json.loads(row[0]) if row[0] else {}
+            return {**_PERM_DEFAULTS, **data}
     except Exception:
         pass
-    return dict(_VIEWER_PERM_DEFAULTS)
+    return dict(_PERM_DEFAULTS)
 
-def _role_config_save(perms: dict):
+def _user_perms_save(username: str, perms: dict):
+    """Сохранить права пользователя."""
     with _DB_LOCK:
         c = _db()
-        c.execute("INSERT OR REPLACE INTO config (key,value) VALUES ('viewer_permissions',?)",
-                  (json.dumps(perms),))
+        c.execute("UPDATE webapp_users SET permissions=? WHERE username=?",
+                  (json.dumps(perms), username))
         c.commit()
 
-async def _web_role_config_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
-    """GET /ha-app/api/role-config — get viewer role permissions."""
+async def _web_webapp_users(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/webapp-users — список пользователей мини апс (admin only)."""
     if not _check_token(request):
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    if request.headers.get("X-HA-User-Role", "") != "admin":
+        return aiohttp_web.Response(status=403, text="Admin only", headers=_CORS_HEADERS)
+    try:
+        c = _db()
+        rows = c.execute(
+            "SELECT username, display_name, role, permissions, last_login FROM webapp_users ORDER BY last_login DESC"
+        ).fetchall()
+        result = [{"username": r[0], "display_name": r[1], "role": r[2],
+                   "permissions": json.loads(r[3]) if r[3] else {},
+                   "last_login": r[4]} for r in rows]
+    except Exception:
+        result = []
     return aiohttp_web.Response(
-        text=json.dumps(_role_config_load()),
+        text=json.dumps(result, ensure_ascii=False),
         content_type="application/json", headers=_CORS_HEADERS)
 
-async def _web_role_config_post(request: aiohttp_web.Request) -> aiohttp_web.Response:
-    """POST /ha-app/api/role-config — save viewer permissions (admin only)."""
+async def _web_user_perms_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/user-perms?user=USERNAME — права пользователя."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    target = request.rel_url.query.get("user", "")
+    requester = request.headers.get("X-HA-User", "")
+    # Свои права — можно всегда, чужие — только admin
+    if target != requester and request.headers.get("X-HA-User-Role", "") != "admin":
+        return aiohttp_web.Response(status=403, text="Admin only", headers=_CORS_HEADERS)
+    perms = _user_perms_load(target) if target else dict(_PERM_DEFAULTS)
+    return aiohttp_web.Response(
+        text=json.dumps(perms), content_type="application/json", headers=_CORS_HEADERS)
+
+async def _web_user_perms_post(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/user-perms — сохранить права пользователя (admin only)."""
     if not _check_token(request):
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
     if request.headers.get("X-HA-User-Role", "") != "admin":
@@ -5015,8 +5067,11 @@ async def _web_role_config_post(request: aiohttp_web.Request) -> aiohttp_web.Res
         body = await request.json()
     except Exception:
         return aiohttp_web.Response(status=400, text="Bad request", headers=_CORS_HEADERS)
-    perms = {k: bool(body.get(k, v)) for k, v in _VIEWER_PERM_DEFAULTS.items()}
-    _role_config_save(perms)
+    target = body.get("username", "")
+    if not target:
+        return aiohttp_web.Response(status=400, text="username required", headers=_CORS_HEADERS)
+    perms = {k: bool(body.get(k, v)) for k, v in _PERM_DEFAULTS.items()}
+    _user_perms_save(target, perms)
     return aiohttp_web.Response(text='{"ok":true}',
         content_type="application/json", headers=_CORS_HEADERS)
 
@@ -5737,10 +5792,12 @@ async def _start_web():
     app.router.add_route("OPTIONS", "/ha-app/api/alerts",       _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/scenes",            _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/scenes/{scene_id}", _web_options)
-    app.router.add_get("/ha-app/api/role-config",   _web_role_config_get)
-    app.router.add_post("/ha-app/api/role-config",  _web_role_config_post)
+    app.router.add_get("/ha-app/api/webapp-users",  _web_webapp_users)
+    app.router.add_get("/ha-app/api/user-perms",    _web_user_perms_get)
+    app.router.add_post("/ha-app/api/user-perms",   _web_user_perms_post)
     app.router.add_get("/ha-app/api/activity-all",  _web_activity_log_get)
-    app.router.add_route("OPTIONS", "/ha-app/api/role-config",  _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/webapp-users", _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/user-perms",   _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/activity-all", _web_options)
     runner = aiohttp_web.AppRunner(app)
     await runner.setup()
