@@ -848,7 +848,20 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
 <div id="app">
   <div class="app-header">
     <h1>🏠 Умный Дом</h1>
-    <span class="last-updated" id="last-updated">—</span>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="last-updated" id="last-updated">—</span>
+      <div id="user-badge" onclick="showUserMenu()" title="Аккаунт"
+        style="display:none;align-items:center;gap:6px;cursor:pointer;
+               background:rgba(255,255,255,0.07);border-radius:20px;
+               padding:4px 10px 4px 6px;border:1px solid rgba(255,255,255,0.1)">
+        <div id="user-avatar"
+          style="width:24px;height:24px;border-radius:50%;background:#3b82f6;
+                 display:flex;align-items:center;justify-content:center;
+                 font-size:12px;font-weight:700;color:#fff;flex-shrink:0">?</div>
+        <span id="user-display-name" style="font-size:12px;color:#94a3b8;max-width:80px;
+              overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+      </div>
+    </div>
   </div>
 
   <!-- QUICK ACTIONS -->
@@ -1711,8 +1724,48 @@ let _sseRefreshTimer = null;
 // ── Init ───────────────────────────────────────────────────────────────────
 // ── HA Login Auth ──────────────────────────────────────────────────────────
 
-let HA_USER_ROLE = localStorage.getItem('ha_user_role') || 'viewer';
-let HA_USERNAME  = localStorage.getItem('ha_username')  || '';
+let HA_USER_ROLE    = localStorage.getItem('ha_user_role')    || 'viewer';
+let HA_USERNAME     = localStorage.getItem('ha_username')     || '';
+let HA_DISPLAY_NAME = localStorage.getItem('ha_display_name') || '';
+
+function _updateUserBadge() {
+  const badge = document.getElementById('user-badge');
+  const avatar = document.getElementById('user-avatar');
+  const nameEl = document.getElementById('user-display-name');
+  if (!badge) return;
+  const name = HA_DISPLAY_NAME || HA_USERNAME;
+  if (!name) { badge.style.display = 'none'; return; }
+  badge.style.display = 'flex';
+  nameEl.textContent = name;
+  avatar.textContent = name.charAt(0).toUpperCase();
+  // Цвет аватара по роли
+  avatar.style.background = HA_USER_ROLE === 'admin' ? '#3b82f6' : '#6366f1';
+}
+
+function showUserMenu() {
+  const name = HA_DISPLAY_NAME || HA_USERNAME || 'Пользователь';
+  const role = HA_USER_ROLE === 'admin' ? '👑 Администратор' : '👤 Пользователь';
+  if (confirm(`${name}\n${role}\n\nВыйти из аккаунта?`)) {
+    doLogout();
+  }
+}
+
+function doLogout() {
+  localStorage.removeItem('ha_bot_token');
+  localStorage.removeItem('ha_user_role');
+  localStorage.removeItem('ha_username');
+  localStorage.removeItem('ha_display_name');
+  API_TOKEN = '';
+  HA_USER_ROLE = 'viewer';
+  HA_USERNAME  = '';
+  HA_DISPLAY_NAME = '';
+  // Убрать бейдж и показать форму входа
+  const badge = document.getElementById('user-badge');
+  if (badge) badge.style.display = 'none';
+  const existing = document.getElementById('access-denied-screen');
+  if (existing) existing.remove();
+  _showLoginForm();
+}
 
 function _showLoginForm(errorMsg) {
   let el = document.getElementById('access-denied-screen');
@@ -1763,11 +1816,14 @@ async function doHaLogin() {
     const d = await res.json();
     if (d.ok && d.token) {
       API_TOKEN = d.token;
-      HA_USER_ROLE = d.role || 'viewer';
-      HA_USERNAME  = d.username || user;
-      localStorage.setItem('ha_bot_token',  d.token);
-      localStorage.setItem('ha_user_role',  HA_USER_ROLE);
-      localStorage.setItem('ha_username',   HA_USERNAME);
+      HA_USER_ROLE    = d.role || 'viewer';
+      HA_USERNAME     = d.username || user;
+      HA_DISPLAY_NAME = d.display_name || HA_USERNAME;
+      localStorage.setItem('ha_bot_token',    d.token);
+      localStorage.setItem('ha_user_role',    HA_USER_ROLE);
+      localStorage.setItem('ha_username',     HA_USERNAME);
+      localStorage.setItem('ha_display_name', HA_DISPLAY_NAME);
+      _updateUserBadge();
       document.getElementById('access-denied-screen').remove();
       // Запускаем приложение
       await loadStatus();
@@ -1793,6 +1849,8 @@ async function ensureAuth() {
   const cached = localStorage.getItem('ha_bot_token');
   if (cached) {
     API_TOKEN = cached;
+    HA_DISPLAY_NAME = localStorage.getItem('ha_display_name') || '';
+    _updateUserBadge();
     return true;
   }
 

@@ -4952,6 +4952,7 @@ async def _web_ha_login(request: aiohttp_web.Request) -> aiohttp_web.Response:
 
     # Учётные данные верны — определяем роль через HA API
     role = "viewer"
+    display_name = username
     try:
         async with aiohttp.ClientSession(timeout=timeout) as s:
             r3 = await s.get(f"{HA_URL}/api/config/auth/users",
@@ -4961,13 +4962,15 @@ async def _web_ha_login(request: aiohttp_web.Request) -> aiohttp_web.Response:
                 if u.get("username") == username or u.get("name", "").lower() == username.lower():
                     if u.get("system_admin") or u.get("is_owner"):
                         role = "admin"
+                    display_name = u.get("name") or username
                     break
     except Exception as e:
         log.warning(f"ha_login role check: {e}")
 
-    log.info(f"ha_login: user '{username}' authenticated, role={role}")
+    log.info(f"ha_login: user '{username}' authenticated, role={role}, name='{display_name}'")
     return aiohttp_web.Response(
-        text=json.dumps({"ok": True, "token": WEBAPP_TOKEN, "role": role, "username": username}),
+        text=json.dumps({"ok": True, "token": WEBAPP_TOKEN, "role": role,
+                         "username": username, "display_name": display_name}),
         content_type="application/json", headers=_CORS_HEADERS)
 
 
