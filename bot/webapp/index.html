@@ -1306,6 +1306,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
 // ── Constants ──────────────────────────────────────────────────────────────
 let API_TOKEN = localStorage.getItem('ha_bot_token') || '';
 const API_BASE  = (window.location.origin || 'https://hub.office.mooo.com') + '/ha-app/api';
+let _statusIntervalId = null; // prevent duplicate intervals
 
 const LIGHTS_MAP = {
   'light.svet_krovat':            '🛏️ Кровать',
@@ -1915,7 +1916,7 @@ async function doHaLogin() {
       // Refresh permissions from API (in case admin changed them since last login)
       try { const perms = await api(`/user-perms?user=${encodeURIComponent(HA_USERNAME)}`); applyRolePermissions(perms); } catch(_){}
       try { const sc = await api('/scenes'); homeAwayUpdateSub(sc); } catch(_){}
-      setInterval(loadStatus, 30000);
+      if (!_statusIntervalId) _statusIntervalId = setInterval(loadStatus, 30000);
       startSSE();
     } else {
       err.textContent = d.error || 'Неверный логин или пароль';
@@ -1976,7 +1977,7 @@ async function init() {
     hideLoading();
   }
   // Fallback polling every 30s (SSE handles real-time updates)
-  setInterval(loadStatus, 30000);
+  if (!_statusIntervalId) _statusIntervalId = setInterval(loadStatus, 30000);
   // Start SSE for real-time updates
   startSSE();
 }
@@ -4854,6 +4855,7 @@ async function admSavePerms() {
         await api('/user-perms', 'POST', perms);
         showToast('✅ Права сохранены');
         _admPerms = perms;
+        admShow();
     } catch(e) {
         showToast('❌ Ошибка сохранения');
     }
