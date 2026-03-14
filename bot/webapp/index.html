@@ -851,7 +851,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
     <div style="display:flex;align-items:center;gap:8px">
       <span class="last-updated" id="last-updated">—</span>
       <div id="user-badge" onclick="showUserMenu()" title="Аккаунт"
-        style="display:none;align-items:center;gap:6px;cursor:pointer;
+        style="display:flex;align-items:center;gap:6px;cursor:pointer;
                background:rgba(255,255,255,0.07);border-radius:20px;
                padding:4px 10px 4px 6px;border:1px solid rgba(255,255,255,0.1)">
         <div id="user-avatar"
@@ -1734,11 +1734,9 @@ function _updateUserBadge() {
   const nameEl = document.getElementById('user-display-name');
   if (!badge) return;
   const name = HA_DISPLAY_NAME || HA_USERNAME;
-  if (!name) { badge.style.display = 'none'; return; }
   badge.style.display = 'flex';
-  nameEl.textContent = name;
-  avatar.textContent = name.charAt(0).toUpperCase();
-  // Цвет аватара по роли
+  nameEl.textContent = name || 'Аккаунт';
+  avatar.textContent = name ? name.charAt(0).toUpperCase() : '👤';
   avatar.style.background = HA_USER_ROLE === 'admin' ? '#3b82f6' : '#6366f1';
 }
 
