@@ -1757,13 +1757,27 @@ async function _doTelegramAuth() {
 async function ensureAuth() {
   if (API_TOKEN) return true;
 
-  // Проверяем кешированный токен
+  // 1. Токен из URL-фрагмента (#auth=TOKEN) — для входа через браузер с ПК
+  const hash = window.location.hash;
+  if (hash.startsWith('#auth=')) {
+    const urlToken = hash.slice(6);
+    if (urlToken) {
+      API_TOKEN = urlToken;
+      localStorage.setItem('ha_bot_token', urlToken);
+      // Убираем токен из адресной строки (не сохранять в истории браузера)
+      history.replaceState(null, '', window.location.pathname);
+      return true;
+    }
+  }
+
+  // 2. Кешированный токен из localStorage
   const cached = localStorage.getItem('ha_bot_token');
   if (cached) {
     API_TOKEN = cached;
     return true;
   }
 
+  // 3. Telegram WebApp initData (мобильный / Telegram Desktop с WebView)
   const token = await _doTelegramAuth();
 
   if (token === 'FORBIDDEN') {
@@ -1776,8 +1790,8 @@ async function ensureAuth() {
     return true;
   }
 
-  // Нет Telegram контекста или ошибка — запретить доступ
-  _showAccessDenied('Открой через Telegram', 'Приложение доступно только через бота');
+  // Нет ни одного способа авторизоваться
+  _showAccessDenied('Нет доступа', 'Напиши боту /link для получения ссылки');
   return false;
 }
 

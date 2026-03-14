@@ -5669,6 +5669,26 @@ async def cmd_app(msg: Message):
     )]], resize_keyboard=True, one_time_keyboard=True)
     await msg.answer("🖥️ Откройте панель управления:", reply_markup=kb)
 
+# ── /link command — прямая ссылка для браузера (ПК, планшет) ─────────────────
+@dp.message(Command("link"))
+async def cmd_link(msg: Message):
+    """Выдать персональную ссылку для открытия мини апс в браузере."""
+    uid = msg.from_user.id
+    allowed = _users_load()
+    allowed_ids = {ADMIN_ID} | {int(u) for u in allowed.keys()}
+    if uid not in allowed_ids:
+        await msg.answer("⛔ Нет доступа")
+        return
+    # Токен передаётся в URL-фрагменте (#) — не попадает в логи сервера
+    link = f"{WEBAPP_URL}#auth={WEBAPP_TOKEN}"
+    await msg.answer(
+        f"🔗 <b>Ссылка для браузера (ПК/планшет):</b>\n\n"
+        f"<code>{link}</code>\n\n"
+        f"Нажми на ссылку или скопируй в браузер. "
+        f"После первого открытия браузер запомнит доступ навсегда.",
+        parse_mode="HTML"
+    )
+
 # ── Inline кнопки: сцены из алертов ───────────────────────────────────────────
 @dp.callback_query(F.data.startswith("scene:run:"))
 async def cb_scene_run_alert(cb: CallbackQuery):
