@@ -2133,6 +2133,11 @@ function renderPresenceStats(stats) {
 
 // ── Faces History ────────────────────────────────────────────────────────────
 let _facesLoaded = false;
+let _facesAllEntries = [];
+let _facesDayIndex = 0; // 0 = сегодня, 1 = вчера, ...
+const _CAM_NAMES    = {'cam_a6810678':'Подъезд'};
+const _PERSON_ICONS = {'Хамзат':'👨','Айза':'👩','Сулим':'👦','Камила':'👧'};
+
 function openPhotoLightbox(url) {
   let lb = document.getElementById('photo-lightbox');
   if (!lb) {
@@ -2150,52 +2155,109 @@ function openPhotoLightbox(url) {
 
 async function loadFacesHistory() {
   _facesLoaded = true;
+  _facesDayIndex = 0;
   const el = document.getElementById('faces-content');
   el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div>';
   try {
-    const data = await api('/frigate/faces-history');
-    renderFacesHistory(data);
+    _facesAllEntries = await api('/frigate/faces-history');
+    renderFacesDay();
   } catch(e) {
     el.innerHTML = '<div style="color:#ef4444;font-size:13px;text-align:center;padding:10px">Ошибка: ' + escapeHtml(e.message) + '</div>';
   }
 }
-function renderFacesHistory(entries) {
+
+function _facesGroupByDay(entries) {
+  // Группировка по дате (YYYY-MM-DD по локальному времени), сортировка дней desc
+  const map = {};
+  for (const e of entries) {
+    let day = '';
+    try { day = new Date(e.ts).toLocaleDateString('sv'); } catch(_) { day = e.ts.slice(0,10); }
+    if (!map[day]) map[day] = [];
+    map[day].push(e);
+  }
+  return Object.keys(map).sort((a,b) => b.localeCompare(a)).map(day => ({ day, items: map[day] }));
+}
+
+function _facesFormatDayLabel(dayStr) {
+  try {
+    const d = new Date(dayStr + 'T12:00:00');
+    const today = new Date(); today.setHours(12,0,0,0);
+    const yesterday = new Date(today); yesterday.setDate(today.getDate()-1);
+    if (d.toDateString() === today.toDateString()) return 'Сегодня';
+    if (d.toDateString() === yesterday.toDateString()) return 'Вчера';
+    return d.toLocaleDateString('ru', {day:'numeric', month:'long'});
+  } catch(_) { return dayStr; }
+}
+
+function renderFacesDay() {
   const el = document.getElementById('faces-content');
-  if (!entries || !entries.length) {
+  const groups = _facesGroupByDay(_facesAllEntries);
+  if (!groups.length) {
     el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:16px">Пока никто не был распознан</div>';
     return;
   }
-  const _CAM_NAMES = {'cam_a6810678':'Подъезд'};
-  const _PERSON_ICONS = {'Хамзат':'👨','Айза':'👩','Сулим':'👦','Камила':'👧'};
-  el.innerHTML = `<div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:8px">
-    <button onclick="_facesLoaded=false;loadFacesHistory()" style="font-size:11px;padding:4px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#9090b8;cursor:pointer">🔄 Обновить</button>
-  </div>` +
-  entries.slice(0, 30).map(e => {
-    const icon = _PERSON_ICONS[e.person] || '👤';
-    const cam  = _CAM_NAMES[e.camera] || e.camera;
-    let timeStr = '';
-    try {
-      const d = new Date(e.ts);
-      timeStr = d.toLocaleDateString('ru',{day:'numeric',month:'short'}) + ' ' + d.toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
-    } catch(_) { timeStr = e.ts || ''; }
-    const snapUrl = e.snapshot_url
-      ? (e.snapshot_url + '?token=' + encodeURIComponent(API_TOKEN))
-      : '';
-    const thumb = snapUrl
-      ? `<img src="${escapeAttr(snapUrl)}" onclick="openPhotoLightbox('${escapeAttr(snapUrl)}')"
-             style="width:56px;height:56px;object-fit:cover;border-radius:8px;flex-shrink:0;
-             background:#1a1a2e;cursor:pointer" onerror="this.style.display='none'">`
-      : `<div style="width:56px;height:56px;border-radius:8px;background:#1a1a2e;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0">${icon}</div>`;
-    return `<div style="display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06)">
-      ${thumb}
-      <div style="flex:1;min-width:0">
-        <div style="font-size:14px;font-weight:600;color:#e0e0ff">${icon} ${escapeHtml(e.person)}</div>
-        <div style="font-size:12px;color:#9090b8">📍 ${escapeHtml(cam)}</div>
-        <div style="font-size:11px;color:#60608a">🕐 ${escapeHtml(timeStr)}</div>
-        ${snapUrl ? `<div style="font-size:11px;color:#6366f1;margin-top:2px;cursor:pointer" onclick="openPhotoLightbox('${escapeAttr(snapUrl)}')">🔍 Посмотреть фото</div>` : ''}
-      </div>
-    </div>`;
-  }).join('');
+  if (_facesDayIndex >= groups.length) _facesDayIndex = groups.length - 1;
+  if (_facesDayIndex < 0) _facesDayIndex = 0;
+
+  const group = groups[_facesDayIndex];
+  const dayLabel = _facesFormatDayLabel(group.day);
+  const items = group.items.slice(0, 4); // max 4 за день
+  const hasPrev = _facesDayIndex < groups.length - 1;
+  const hasNext = _facesDayIndex > 0;
+
+  const navBtn = `background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);
+    color:#9090b8;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer`;
+  const navBtnDisabled = `background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);
+    color:#40405a;border-radius:8px;padding:5px 10px;font-size:12px;cursor:default`;
+
+  let html = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:6px">
+    <button onclick="facesDayNav(1)" style="${hasPrev ? navBtn : navBtnDisabled}" ${hasPrev ? '' : 'disabled'}>← Ранее</button>
+    <span style="font-size:13px;font-weight:600;color:#c0c0e0;flex:1;text-align:center">${escapeHtml(dayLabel)}</span>
+    <button onclick="facesDayNav(-1)" style="${hasNext ? navBtn : navBtnDisabled}" ${hasNext ? '' : 'disabled'}>Позже →</button>
+    <button onclick="_facesLoaded=false;loadFacesHistory()" style="${navBtn};margin-left:4px">🔄</button>
+  </div>`;
+
+  if (!items.length) {
+    html += '<div style="color:#60608a;font-size:13px;text-align:center;padding:12px">Нет событий</div>';
+  } else {
+    // 4 миниатюры сеткой 2×2
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+    for (const e of items) {
+      const icon = _PERSON_ICONS[e.person] || '👤';
+      const cam  = _CAM_NAMES[e.camera] || e.camera;
+      let timeStr = '';
+      try {
+        const d = new Date(e.ts);
+        timeStr = d.toLocaleTimeString('ru', {hour:'2-digit', minute:'2-digit'});
+      } catch(_) { timeStr = ''; }
+      const snapUrl = e.snapshot_url
+        ? (e.snapshot_url + '?token=' + encodeURIComponent(API_TOKEN))
+        : '';
+      const thumbContent = snapUrl
+        ? `<img src="${escapeAttr(snapUrl)}" onclick="openPhotoLightbox('${escapeAttr(snapUrl)}')"
+               style="width:100%;height:90px;object-fit:cover;border-radius:8px;display:block;cursor:pointer;background:#1a1a2e"
+               onerror="this.style.display='none'">`
+        : `<div style="width:100%;height:90px;border-radius:8px;background:#1a1a2e;display:flex;align-items:center;justify-content:center;font-size:36px">${icon}</div>`;
+      html += `<div style="background:rgba(255,255,255,0.04);border-radius:10px;overflow:hidden;cursor:pointer" onclick="${snapUrl ? `openPhotoLightbox('${escapeAttr(snapUrl)}')` : ''}">
+        ${thumbContent}
+        <div style="padding:5px 7px">
+          <div style="font-size:12px;font-weight:600;color:#e0e0ff">${icon} ${escapeHtml(e.person)}</div>
+          <div style="font-size:10px;color:#60608a">🕐 ${escapeHtml(timeStr)}</div>
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+    if (group.items.length > 4) {
+      html += `<div style="font-size:11px;color:#50508a;text-align:center;margin-top:6px">показаны 4 из ${group.items.length}</div>`;
+    }
+  }
+
+  el.innerHTML = html;
+}
+
+function facesDayNav(dir) {
+  _facesDayIndex += dir;
+  renderFacesDay();
 }
 
 // ── Energy Heatmap ────────────────────────────────────────────────────────────
