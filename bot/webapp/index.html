@@ -468,7 +468,7 @@ body {
   color: #e8e8f4;
   font-size: 14px;
   min-height: 100vh;
-  padding-bottom: 32px;
+  padding-bottom: 100px; /* space for FAB button */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -582,6 +582,7 @@ body::before {
   cursor: pointer;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
   font-size: 15px;
   font-weight: 600;
   color: rgba(220,220,250,0.92);
@@ -599,7 +600,7 @@ body::before {
   overflow: hidden;
   transition: max-height 0.4s cubic-bezier(0.4,0,0.2,1);
 }
-.section-body.open { max-height: 1400px; }
+.section-body.open { max-height: 9999px; }
 .section-content { padding: 4px 16px 18px; }
 
 /* ── Status grid ── */
@@ -663,22 +664,22 @@ body::before {
 /* ── Lights grid ── */
 .lights-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 9px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 7px;
 }
 .light-btn {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  padding: 16px 8px;
+  gap: 4px;
+  padding: 12px 4px;
   border-radius: var(--r-md);
   border: 0.5px solid rgba(255,255,255,0.1);
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.34,1.56,0.64,1);
   -webkit-tap-highlight-color: transparent;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   text-align: center;
   line-height: 1.3;
@@ -686,7 +687,7 @@ body::before {
   font-family: inherit;
   letter-spacing: 0.2px;
 }
-.light-btn .light-icon { font-size: 22px; }
+.light-btn .light-icon { font-size: 20px; }
 .light-btn.on {
   background: linear-gradient(145deg, rgba(251,191,36,0.22) 0%, rgba(245,158,11,0.11) 100%);
   border-color: rgba(251,191,36,0.52);
@@ -742,6 +743,22 @@ body::before {
 .tv-title { font-size: 12px; color: rgba(110,110,158,0.7); margin-top: 1px; }
 .tv-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
 .tv-media    { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+/* D-Pad remote */
+.tv-dpad { display:flex; flex-direction:column; align-items:center; gap:4px; margin:12px 0 6px; }
+.dpad-row { display:flex; gap:4px; align-items:center; justify-content:center; }
+.dpad-middle { gap:4px; }
+.dpad-btn {
+  width:52px; height:52px; border-radius:14px;
+  background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.12);
+  color:#c4c4e8; font-size:18px; font-weight:700;
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer; transition:background .15s, transform .1s; touch-action:manipulation;
+}
+.dpad-btn:active { background:rgba(99,102,241,0.35); transform:scale(0.92); }
+.dpad-ok { width:64px; height:64px; font-size:15px; font-weight:700; letter-spacing:.5px;
+  background:rgba(99,102,241,0.2); border-color:rgba(99,102,241,0.4); color:#c4b5fd; }
+.tv-app-btn { display:flex; flex-direction:column; align-items:center; gap:3px; }
+.tv-app-btn span { font-size:10px; color:#a0a0c0; }
 
 /* ── Vacuum ── */
 .vacuum-status {
@@ -758,6 +775,17 @@ body::before {
 .vacuum-controls { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
 
 /* ── Prayers ── */
+.prayer-header-card {
+  background: linear-gradient(135deg, rgba(99,102,241,0.14) 0%, rgba(139,92,246,0.08) 100%);
+  border: 0.5px solid rgba(139,92,246,0.3);
+  border-radius: var(--r-md);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+.prayer-hijri { font-size: 12px; color: rgba(165,150,230,0.7); font-weight:600; text-transform:uppercase; letter-spacing:.4px; margin-bottom:4px; }
+.prayer-next-name { font-size: 16px; font-weight: 700; color: #c4b5fd; }
+.prayer-countdown-big { font-size: 26px; font-weight: 800; color: #c4b5fd; letter-spacing:-0.5px; font-variant-numeric:tabular-nums; }
+.prayer-progress-wrap .namaz-progress-bg { background:rgba(255,255,255,0.07); border-radius:4px; height:5px; }
 .prayers-list { display: flex; flex-direction: column; gap: 7px; }
 .prayer-item {
   display: flex;
@@ -783,6 +811,74 @@ body::before {
 .prayer-item.next .prayer-name { color: #c4b5fd; }
 .prayer-time { font-size: 15px; font-weight: 700; color: #eaeaf8; letter-spacing: -0.2px; }
 .prayer-item.next .prayer-time { color: #c4b5fd; }
+
+/* ── Chat ── */
+.chat-messages-wrap {
+  max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
+  padding-bottom: 6px; margin-bottom: 10px;
+  scrollbar-width: none;
+}
+.chat-messages-wrap::-webkit-scrollbar { display: none; }
+.chat-msg {
+  display: flex; flex-direction: column; gap: 2px;
+  max-width: 80%; padding: 8px 12px;
+  border-radius: var(--r-md); font-size: 13px; line-height: 1.4;
+  background: rgba(255,255,255,0.06); border: 0.5px solid rgba(255,255,255,0.1);
+  word-break: break-word;
+}
+.chat-msg.me { align-self: flex-end; background: rgba(99,102,241,0.22); border-color: rgba(99,102,241,0.35); }
+.chat-msg-author { font-size: 11px; font-weight: 700; color: #a78bfa; margin-bottom: 2px; }
+.chat-msg.me .chat-msg-author { display: none; }
+.chat-msg-text { color: rgba(220,220,240,0.95); }
+.chat-msg-time { font-size: 10px; color: rgba(130,130,175,0.55); align-self: flex-end; margin-top: 2px; }
+.chat-input-row { display: flex; gap: 8px; align-items: center; }
+.chat-input-field {
+  flex: 1; background: rgba(255,255,255,0.07); border: 0.5px solid rgba(255,255,255,0.12);
+  border-radius: var(--r-md); padding: 10px 13px; color: #e8e8f8; font-size: 13px; outline: none;
+  font-family: inherit; width: 100%;
+}
+.chat-input-field::placeholder { color: rgba(130,130,175,0.5); }
+.chat-send-btn { padding: 10px 16px; font-size: 18px; line-height: 1; flex-shrink: 0; }
+
+/* ── Reminders ── */
+.reminder-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 13px; border-radius: var(--r-md);
+  background: rgba(255,255,255,0.05); border: 0.5px solid rgba(255,255,255,0.09);
+  margin-bottom: 6px;
+}
+.reminder-item.done { opacity: 0.4; }
+.reminder-item.global { border-color: rgba(251,191,36,0.35); background: rgba(251,191,36,0.08); }
+.reminder-text { font-size: 13px; color: rgba(210,210,240,0.9); flex: 1; }
+.reminder-time { font-size: 11px; color: rgba(140,140,190,0.65); white-space: nowrap; }
+.reminder-del { background: none; border: none; color: rgba(248,113,113,0.7); font-size: 16px; cursor: pointer; padding: 2px 6px; line-height: 1; }
+
+/* ── Photos ── */
+.photos-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+}
+.photo-thumb {
+  aspect-ratio: 1; border-radius: var(--r-sm); overflow: hidden; position: relative; cursor: pointer;
+  background: rgba(255,255,255,0.05);
+}
+.photo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-del-btn {
+  position: absolute; top: 3px; right: 3px;
+  background: rgba(0,0,0,0.6); border: none; color: #f87171; font-size: 12px;
+  border-radius: 50%; width: 20px; height: 20px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; line-height: 1;
+}
+.photo-lightbox {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 9999;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.photo-lightbox img { max-width: 100%; max-height: 90vh; border-radius: var(--r-md); }
+.photo-lightbox-close {
+  position: absolute; top: 16px; right: 16px;
+  background: rgba(255,255,255,0.15); border: none; color: #fff;
+  font-size: 22px; border-radius: 50%; width: 40px; height: 40px;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
 
 /* ── Buttons ── */
 .btn {
@@ -830,6 +926,11 @@ body::before {
   color: #fbbf24;
   border: 0.5px solid rgba(251,191,36,0.32);
   box-shadow: 0 0 14px rgba(251,191,36,0.12), 0 2px 8px rgba(0,0,0,0.2);
+}
+.btn-accent {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: white;
+  box-shadow: 0 4px 16px rgba(99,102,241,0.38), 0 1px 0 rgba(255,255,255,0.15) inset;
 }
 .btn:active { transform: scale(0.92); filter: brightness(1.15); }
 .btn.pending { opacity: 0.45; pointer-events: none; }
@@ -1564,7 +1665,10 @@ body.edit-mode .sec-edit-btn { display: flex; }
 .fab-wrap {
   position: fixed; bottom: 26px; right: 20px; z-index: 300;
   display: flex; flex-direction: column-reverse; align-items: flex-end; gap: 10px;
+  pointer-events: none; /* don't block touches when closed */
 }
+.fab-main { pointer-events: auto; } /* always tappable */
+body.fab-open .fab-wrap { pointer-events: auto; }
 .fab-main {
   width: 54px; height: 54px; border-radius: 50%;
   background: linear-gradient(135deg, var(--accent), var(--accent2));
@@ -1655,6 +1759,118 @@ body.fab-open .fab-backdrop { display: block; }
   font-size: 18px; font-weight: 700; color: #eaeaf8;
   min-width: 48px; text-align: center; letter-spacing: -0.3px;
 }
+
+/* ── Family cards redesign ─────────────────────────────────────────────────── */
+.family-cards { display:flex; flex-direction:column; gap:12px; }
+.family-card {
+  background: linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 18px; padding: 14px; position: relative; overflow: hidden;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.family-card.home { border-color: rgba(52,211,153,0.3); background: linear-gradient(135deg, rgba(52,211,153,0.06) 0%, rgba(99,102,241,0.03) 100%); }
+.family-card-top { display:flex; align-items:center; gap:12px; margin-bottom:10px; }
+.family-avatar {
+  width:48px; height:48px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+  font-size:20px; font-weight:700; color:#fff; flex-shrink:0; position:relative;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+}
+.family-avatar.home { background: linear-gradient(135deg, #10b981, #059669); }
+.family-pulse {
+  position:absolute; inset:-3px; border-radius:50%;
+  border:2px solid rgba(52,211,153,0.5);
+  animation: pulse-ring 2s ease-out infinite;
+}
+@keyframes pulse-ring {
+  0%   { transform:scale(1);   opacity:0.7; }
+  70%  { transform:scale(1.25); opacity:0;   }
+  100% { transform:scale(1.25); opacity:0;   }
+}
+.family-info { flex:1; min-width:0; }
+.family-card-name { font-size:16px; font-weight:600; color:#e2e8f0; }
+.family-card-status { font-size:12px; color:#64748b; margin-top:2px; }
+.family-card-badge { font-size:12px; font-weight:600; padding:3px 10px; border-radius:20px; }
+.family-card-badge.home { background:rgba(52,211,153,0.15); color:#34d399; }
+.family-card-badge.away { background:rgba(100,116,139,0.15); color:#94a3b8; }
+.family-emoji-status { font-size:22px; flex-shrink:0; cursor:pointer; }
+.family-reactions { display:flex; gap:8px; }
+.family-react-btn {
+  background: rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08);
+  border-radius:20px; padding:6px 12px; font-size:15px; cursor:pointer;
+  transition: transform 0.15s, background 0.15s; color:inherit;
+}
+.family-react-btn:active { transform:scale(0.92); background:rgba(255,255,255,0.1); }
+.family-card-footer { display:flex; align-items:center; justify-content:space-between; margin-top:10px; }
+.family-last-seen { font-size:11px; color:#475569; }
+
+/* ── Family widgets ────────────────────────────────────────────────────────── */
+.family-widget {
+  background: rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06);
+  border-radius:14px; padding:12px 14px; margin-top:12px;
+}
+.family-widget-title { font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; font-weight:600; }
+.family-note-textarea {
+  width:100%; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);
+  border-radius:10px; padding:10px; color:#e2e8f0; font-size:13px; font-family:inherit;
+  resize:none; outline:none; box-sizing:border-box; min-height:70px; line-height:1.5;
+}
+.cooking-list { display:flex; gap:8px; flex-wrap:wrap; }
+.cooking-btn {
+  background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);
+  border-radius:20px; padding:6px 14px; font-size:13px; cursor:pointer; color:#e2e8f0; transition:all 0.15s;
+}
+.cooking-btn.active { background:rgba(249,115,22,0.2); border-color:rgba(249,115,22,0.4); color:#fb923c; }
+.family-timeline { margin-top:8px; }
+.timeline-item { display:flex; gap:10px; padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.04); align-items:center; }
+.timeline-item:last-child { border-bottom:none; }
+.timeline-dot { width:8px; height:8px; border-radius:50%; background:#6366f1; flex-shrink:0; margin-top:4px; }
+.timeline-text { font-size:12px; color:#94a3b8; flex:1; }
+.timeline-time { font-size:11px; color:#475569; flex-shrink:0; }
+
+/* ── Shopping redesign ─────────────────────────────────────────────────────── */
+.shop-tabs { display:flex; gap:4px; margin-bottom:12px; background:rgba(255,255,255,0.04); border-radius:12px; padding:4px; }
+.shop-tab {
+  flex:1; padding:8px 4px; background:none; border:none; border-radius:9px; color:#64748b;
+  font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s; font-family:inherit;
+}
+.shop-tab.active { background:rgba(99,102,241,0.25); color:#a5b4fc; }
+.shop-quick-row { display:flex; gap:8px; overflow-x:auto; padding-bottom:6px; margin-bottom:10px; scrollbar-width:none; }
+.shop-quick-row::-webkit-scrollbar { display:none; }
+.shop-quick-chip {
+  display:flex; align-items:center; gap:5px; background:rgba(255,255,255,0.05);
+  border:1px solid rgba(255,255,255,0.09); border-radius:20px; padding:6px 12px;
+  white-space:nowrap; cursor:pointer; font-size:13px; color:#c0c0e0; transition:all 0.15s; flex-shrink:0;
+}
+.shop-quick-chip:active { background:rgba(99,102,241,0.2); transform:scale(0.96); }
+.shop-quick-chip.add-new { border-style:dashed; color:#6366f1; }
+.shop-item-row {
+  display:flex; align-items:center; gap:8px; padding:10px 0;
+  border-bottom:1px solid rgba(255,255,255,0.05); transition:opacity 0.3s, transform 0.3s;
+}
+.shop-item-row.completing { opacity:0; transform:translateX(30px); }
+.shop-item-emoji { font-size:18px; width:24px; text-align:center; flex-shrink:0; }
+.shop-item-body { flex:1; min-width:0; }
+.shop-item-name { font-size:14px; color:#e2e8f0; }
+.shop-item-qty { font-size:11px; color:#6366f1; font-weight:600; margin-left:4px; }
+.shop-priority-btn { font-size:14px; cursor:pointer; flex-shrink:0; padding:2px; background:none; border:none; opacity:0.6; }
+.shop-priority-btn.urgent { opacity:1; }
+.shop-assign-badge { font-size:11px; background:rgba(99,102,241,0.15); color:#a5b4fc; border-radius:20px; padding:3px 9px; white-space:nowrap; flex-shrink:0; }
+.shop-assign-avatar { width:26px; height:26px; border-radius:50%; background:linear-gradient(135deg,#6366f1,#8b5cf6); display:inline-flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:#fff; flex-shrink:0; }
+.shop-asgn-card {
+  display:flex; align-items:center; gap:10px; padding:10px 12px;
+  background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:12px; margin-bottom:6px;
+}
+.shop-asgn-info { flex:1; min-width:0; }
+.shop-asgn-name { font-size:13px; color:#e2e8f0; font-weight:500; }
+.shop-asgn-by { font-size:11px; color:#64748b; }
+.shop-stat-card { background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:12px; padding:12px; margin-bottom:8px; }
+.shop-stat-row { display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.04); }
+.shop-stat-row:last-child { border-bottom:none; }
+.shop-stat-rank { font-size:18px; width:24px; text-align:center; flex-shrink:0; }
+.shop-stat-name { flex:1; font-size:13px; color:#e2e8f0; }
+.shop-stat-count { font-size:13px; font-weight:700; color:#a5b4fc; }
+.shop-hist-item { display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid rgba(255,255,255,0.04); }
+.shop-hist-item:last-child { border-bottom:none; }
 </style>
 <!-- Inline failsafe: remove loading after 5s even without JS -->
 <script>
@@ -1816,8 +2032,26 @@ body.fab-open .fab-backdrop { display: block; }
     </div>
     <div class="section-body" id="sec-family-body">
       <div class="section-content">
-        <div class="family-list" id="family-list">
-          <div style="color:#60608a; font-size:13px; text-align:center; padding:10px">Загрузка...</div>
+        <div class="family-cards" id="family-list">
+          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div>
+        </div>
+        <!-- Shared note widget -->
+        <div class="family-widget" id="family-note-widget">
+          <div class="family-widget-title">📌 Заметка для семьи</div>
+          <textarea class="family-note-textarea" id="family-note-text" placeholder="Напишите что-то важное для всех..." onblur="saveFamilyNote()"></textarea>
+          <div style="font-size:10px;color:#475569;margin-top:4px" id="family-note-meta"></div>
+        </div>
+        <!-- Cooking widget -->
+        <div class="family-widget" id="family-cooking-widget">
+          <div class="family-widget-title">👩‍🍳 Кто готовит сегодня?</div>
+          <div class="cooking-list" id="cooking-list">
+            <div style="color:#60608a;font-size:12px">Загрузка...</div>
+          </div>
+        </div>
+        <!-- Timeline -->
+        <div class="family-widget" id="family-timeline-widget" style="display:none">
+          <div class="family-widget-title">⏱ Активность</div>
+          <div class="family-timeline" id="family-timeline"></div>
         </div>
       </div>
     </div>
@@ -1854,17 +2088,9 @@ body.fab-open .fab-backdrop { display: block; }
   </div>
 
   <!-- ENERGY HEATMAP -->
-  <div class="section" data-section-perm="energy">
-    <div class="section-header" onclick="toggleSection('sec-energy-body'); if(!_energyHourlyLoaded) loadEnergyHourly()">
-      <span>⚡ Энергия по часам (24ч)</span>
-      <span class="chevron">▾</span>
-    </div>
+  <div class="section" data-section-perm="energy" style="display:none">
     <div class="section-body" id="sec-energy-body">
-      <div class="section-content">
-        <div id="energy-hourly-content">
-          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Откройте для загрузки</div>
-        </div>
-      </div>
+      <div class="section-content"><div id="energy-hourly-content"></div></div>
     </div>
   </div>
 
@@ -1877,7 +2103,7 @@ body.fab-open .fab-backdrop { display: block; }
     <div class="section-body open" id="sec-lights-body">
       <div class="section-content">
         <div class="lights-grid" id="lights-grid">
-          <div style="color:#60608a; font-size:13px; text-align:center; padding:10px; grid-column:span 3">Загрузка...</div>
+          <div style="color:#60608a; font-size:13px; text-align:center; padding:10px; grid-column:span 4">Загрузка...</div>
         </div>
       </div>
     </div>
@@ -1937,27 +2163,58 @@ body.fab-open .fab-backdrop { display: block; }
     </div>
     <div class="section-body" id="sec-tv-body">
       <div class="section-content">
+        <!-- Status row -->
         <div class="tv-status">
           <div class="tv-dot" id="tv-dot"></div>
           <div>
             <div class="tv-status-text" id="tv-status-text">Выключен</div>
             <div class="tv-title" id="tv-title"></div>
           </div>
+          <div style="margin-left:auto;display:flex;gap:6px">
+            <button class="btn btn-success" onclick="tvAction('on')" style="padding:6px 12px;font-size:13px">▶ Вкл</button>
+            <button class="btn btn-danger"  onclick="tvAction('off')" style="padding:6px 12px;font-size:13px">⏹ Выкл</button>
+          </div>
         </div>
-        <div class="tv-controls">
-          <button class="btn btn-success" onclick="tvAction('on')">▶ Включить</button>
-          <button class="btn btn-danger"  onclick="tvAction('off')">⏹ Выключить</button>
-          <button class="btn btn-neutral" onclick="tvAction('vol_up')">🔊 Громче</button>
-          <button class="btn btn-neutral" onclick="tvAction('vol_down')">🔉 Тише</button>
+        <!-- Volume + Mute row -->
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button class="btn btn-neutral" onclick="tvAction('vol_down')" style="flex:1">🔉 Тише</button>
+          <button class="btn btn-neutral" id="tv-mute-btn" onclick="tvMuteToggle()" style="flex:1">🔇 Mute</button>
+          <button class="btn btn-neutral" onclick="tvAction('vol_up')" style="flex:1">🔊 Громче</button>
         </div>
-        <div class="divider"></div>
-        <div class="tv-media">
-          <button class="btn btn-neutral" onclick="tvAction('play')">▶ Play</button>
-          <button class="btn btn-neutral" onclick="tvAction('pause')">⏸ Pause</button>
-          <button class="btn btn-neutral" onclick="tvAction('stop')">⏹ Stop</button>
+        <!-- D-Pad remote -->
+        <div class="tv-dpad">
+          <div class="dpad-row">
+            <button class="dpad-btn dpad-top" onclick="tvKey('up')">▲</button>
+          </div>
+          <div class="dpad-row dpad-middle">
+            <button class="dpad-btn dpad-left" onclick="tvKey('left')">◀</button>
+            <button class="dpad-btn dpad-ok" onclick="tvKey('ok')">OK</button>
+            <button class="dpad-btn dpad-right" onclick="tvKey('right')">▶</button>
+          </div>
+          <div class="dpad-row">
+            <button class="dpad-btn dpad-bot" onclick="tvKey('down')">▼</button>
+          </div>
         </div>
-        <div style="margin-top:8px">
-          <button class="btn btn-neutral" id="tv-mute-btn" onclick="tvMuteToggle()" style="width:100%">🔇 Mute</button>
+        <!-- Nav + Back + Home + Menu -->
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <button class="btn btn-neutral" onclick="tvKey('back')" style="flex:1">← Назад</button>
+          <button class="btn btn-neutral" onclick="tvKey('home')" style="flex:1">🏠</button>
+          <button class="btn btn-neutral" onclick="tvKey('menu')" style="flex:1">☰ Меню</button>
+        </div>
+        <!-- Playback row -->
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <button class="btn btn-neutral" onclick="tvAction('play')" style="flex:1">▶ Play</button>
+          <button class="btn btn-neutral" onclick="tvAction('pause')" style="flex:1">⏸ Pause</button>
+          <button class="btn btn-neutral" onclick="tvAction('stop')" style="flex:1">⏹ Stop</button>
+        </div>
+        <!-- App shortcuts -->
+        <div class="divider" style="margin:10px 0 8px"></div>
+        <div style="font-size:11px;color:#60608a;margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.4px">Быстрый запуск</div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
+          <button class="btn btn-neutral tv-app-btn" onclick="tvKey('youtube')" style="flex-direction:column;padding:8px 4px;font-size:12px;gap:3px">▶<span>YouTube</span></button>
+          <button class="btn btn-neutral tv-app-btn" onclick="tvKey('netflix')" style="flex-direction:column;padding:8px 4px;font-size:12px;gap:3px">🎬<span>Netflix</span></button>
+          <button class="btn btn-neutral tv-app-btn" onclick="tvKey('kinopoisk')" style="flex-direction:column;padding:8px 4px;font-size:12px;gap:3px">🎭<span>Kinopoisk</span></button>
+          <button class="btn btn-neutral tv-app-btn" onclick="tvKey('settings_tv')" style="flex-direction:column;padding:8px 4px;font-size:12px;gap:3px">⚙️<span>Настройки</span></button>
         </div>
       </div>
     </div>
@@ -1994,6 +2251,27 @@ body.fab-open .fab-backdrop { display: block; }
     </div>
     <div class="section-body" id="sec-prayers-body">
       <div class="section-content">
+        <!-- Hijri date + next prayer countdown -->
+        <div class="prayer-header-card" id="prayer-header-card" style="display:none">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start">
+            <div>
+              <div class="prayer-hijri" id="prayer-hijri"></div>
+              <div class="prayer-next-name" id="prayer-next-name"></div>
+            </div>
+            <div style="text-align:right">
+              <div class="prayer-countdown-big" id="prayer-countdown-big">—</div>
+              <div style="font-size:11px;color:rgba(165,150,230,0.6);margin-top:2px">осталось</div>
+            </div>
+          </div>
+          <!-- Progress bar between prev and next prayer -->
+          <div class="prayer-progress-wrap" style="margin-top:10px">
+            <div class="namaz-progress-bg"><div class="namaz-progress-fill" id="prayer-progress-fill" style="width:0%"></div></div>
+            <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:10px;color:rgba(150,140,200,0.55)">
+              <span id="prayer-prog-from"></span><span id="prayer-prog-to"></span>
+            </div>
+          </div>
+        </div>
+        <!-- Prayers list -->
         <div class="prayers-list" id="prayers-list">
           <div style="color:#60608a; font-size:13px; text-align:center; padding:10px">Загрузка...</div>
         </div>
@@ -2019,6 +2297,70 @@ body.fab-open .fab-backdrop { display: block; }
   <!-- dynamic sections rendered by JS -->
   <div id="dynamic-sections"></div>
 
+  <!-- REMINDERS -->
+  <div class="section" data-section-perm="family">
+    <div class="section-header" onclick="toggleSection('sec-reminders-body'); if(!_remindersLoaded) loadReminders()">
+      <span>🔔 Напоминания</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body" id="sec-reminders-body">
+      <div class="section-content">
+        <!-- Create reminder -->
+        <div class="reminder-create-row">
+          <input id="reminder-text-input" type="text" placeholder="Текст напоминания..." class="chat-input-field" autocomplete="off">
+          <input id="reminder-dt-input" type="datetime-local" class="chat-input-field" style="margin-top:6px">
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn btn-accent" onclick="createReminder()" style="flex:1">＋ Добавить</button>
+            <button class="btn btn-neutral" id="reminder-global-btn" onclick="toggleReminderGlobal()" style="flex:1;font-size:12px">👪 Для всех: Нет</button>
+          </div>
+        </div>
+        <div class="divider" style="margin:10px 0"></div>
+        <div id="reminders-list"><div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FAMILY CHAT -->
+  <div class="section" data-section-perm="family">
+    <div class="section-header" onclick="toggleSection('sec-chat-body'); if(!_chatLoaded) loadChat()">
+      <span>💬 Семейный чат</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body" id="sec-chat-body">
+      <div class="section-content">
+        <div id="chat-messages" class="chat-messages-wrap"></div>
+        <div class="chat-input-row">
+          <input id="chat-input" type="text" placeholder="Сообщение..." class="chat-input-field" autocomplete="off" onkeydown="if(event.key==='Enter')sendChatMessage()">
+          <button class="btn btn-accent chat-send-btn" onclick="sendChatMessage()">↑</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PHOTO ALBUM -->
+  <div class="section" data-section-perm="family">
+    <div class="section-header" onclick="toggleSection('sec-photos-body'); if(!_photosLoaded) loadPhotos()">
+      <span>📸 Фотоальбом</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body" id="sec-photos-body">
+      <div class="section-content">
+        <!-- Upload -->
+        <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
+          <label class="btn btn-accent" style="flex:1;text-align:center;cursor:pointer">
+            📷 Выбрать фото
+            <input type="file" id="photo-upload-input" accept="image/*" style="display:none" onchange="uploadPhoto(this)">
+          </label>
+        </div>
+        <input id="photo-caption-input" type="text" placeholder="Подпись (необязательно)" class="chat-input-field" style="margin-bottom:8px" autocomplete="off">
+        <!-- Gallery -->
+        <div id="photos-grid" class="photos-grid">
+          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px;grid-column:span 3">Загрузка...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- SCENES -->
   <div class="section" data-section-perm="scenes">
     <div class="section-header" onclick="toggleSection('sec-scenes-body'); if(!_scenesLoaded) loadScenes()">
@@ -2034,107 +2376,63 @@ body.fab-open .fab-backdrop { display: block; }
     </div>
   </div>
 
-  <!-- ALERTS CONFIG -->
-  <div class="section" data-section-perm="alerts">
-    <div class="section-header" onclick="toggleSection('sec-alerts-body'); if(!_alertsLoaded) loadAlerts()">
-      <span>🔔 Алерты</span>
+  <!-- SHOPPING LIST -->
+  <div class="section" data-section-perm="shopping">
+    <div class="section-header" onclick="toggleSection('sec-shopping-body'); if(!_shoppingLoaded) loadShopping()">
+      <span>🛒 Список покупок</span>
       <span class="chevron">▾</span>
     </div>
-    <div class="section-body" id="sec-alerts-body">
+    <div class="section-body" id="sec-shopping-body">
       <div class="section-content">
-        <div id="alerts-content">
-          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Откройте для настройки</div>
+        <!-- Tabs -->
+        <div class="shop-tabs">
+          <button class="shop-tab active" id="stab-list"     onclick="shopTab('list')">📋 Список</button>
+          <button class="shop-tab"        id="stab-assigned" onclick="shopTab('assigned')">👤 Назначено</button>
+          <button class="shop-tab"        id="stab-history"  onclick="shopTab('history')">📜 История</button>
+          <button class="shop-tab"        id="stab-stats"    onclick="shopTab('stats')">📊 Статистика</button>
+        </div>
+        <!-- Add item row (list tab only) -->
+        <div id="shop-add-row" style="display:flex;gap:8px;margin-bottom:10px">
+          <input id="shopping-new-input" type="text" placeholder="Добавить товар..." autocomplete="off"
+            style="flex:1;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.05);color:#e2e8f0;font-size:14px;font-family:inherit;outline:none"
+            onkeydown="if(event.key==='Enter')shopAddItem()">
+          <button class="btn btn-primary" style="padding:10px 14px" onclick="shopAddItem()">➕</button>
+          <button class="btn btn-neutral" style="padding:10px 12px" onclick="loadShopping()">🔄</button>
+        </div>
+        <!-- Quick items row -->
+        <div class="shop-quick-row" id="shop-quick-row"></div>
+        <!-- Bulk assign bar -->
+        <div id="shop-bulk-bar" style="display:none;margin-bottom:10px">
+          <button class="btn btn-primary" style="width:100%" onclick="shopAssignSelected()">
+            👥 Назначить выбранные (<span id="shop-sel-count">0</span>)
+          </button>
+        </div>
+        <!-- Tab panels -->
+        <div id="shop-panel-list">
+          <div id="shopping-items-list"><div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Откройте для загрузки</div></div>
+        </div>
+        <div id="shop-panel-assigned" style="display:none">
+          <div id="shopping-assignments-list"></div>
+        </div>
+        <div id="shop-panel-history" style="display:none">
+          <div id="shopping-history-list"><div style="color:#60608a;font-size:13px;text-align:center;padding:20px">Нажмите для загрузки</div></div>
+        </div>
+        <div id="shop-panel-stats" style="display:none">
+          <div id="shopping-stats-content"><div style="color:#60608a;font-size:13px;text-align:center;padding:20px">Нажмите для загрузки</div></div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- NIGHT MODE -->
-  <div class="section" data-section-perm="nightmode">
-    <div class="section-header" onclick="toggleSection('sec-nightmode-body'); if(!_nightModeLoaded) loadNightMode()">
-      <span>🌙 Ночной режим</span>
-      <span class="chevron">▾</span>
-    </div>
-    <div class="section-body" id="sec-nightmode-body">
-      <div class="section-content">
-        <div id="nightmode-content">
-          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Откройте для настройки</div>
-        </div>
-      </div>
-    </div>
-  </div>
+  <!-- Sections merged into Admin — hidden stubs to preserve body IDs for JS refs -->
+  <div class="section" style="display:none"><div class="section-body" id="sec-alerts-body"></div></div>
+  <div class="section" style="display:none"><div class="section-body" id="sec-nightmode-body"></div></div>
+  <div class="section" style="display:none"><div class="section-body" id="sec-server-body"></div></div>
+  <div class="section" style="display:none"><div class="section-body" id="sec-logbook-body"></div></div>
+  <div class="section" style="display:none"><div class="section-body" id="sec-activity-body"></div></div>
+  <div class="section" style="display:none"><div class="section-body" id="sec-settings-body"></div></div>
 
-  <!-- SERVER STATS -->
-  <div class="section" data-section-perm="server">
-    <div class="section-header" onclick="toggleSection('sec-server-body'); if(!_serverStatsLoaded) loadServerStats()">
-      <span>🖥️ Сервер</span>
-      <span class="chevron">▾</span>
-    </div>
-    <div class="section-body" id="sec-server-body">
-      <div class="section-content">
-        <div id="server-stats-content">
-          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Откройте для загрузки</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- HA LOGBOOK -->
-  <div class="section" data-section-perm="logbook">
-    <div class="section-header" onclick="toggleSection('sec-logbook-body'); if(!_logbookLoaded) loadLogbook()">
-      <span>📋 История HA</span>
-      <span class="chevron">▾</span>
-    </div>
-    <div class="section-body" id="sec-logbook-body">
-      <div class="section-content">
-        <div id="logbook-content">
-          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Откройте для загрузки</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ACTIVITY LOG -->
-  <div class="section" data-section-perm="activity">
-    <div class="section-header" onclick="toggleSection('sec-activity-body'); if(document.getElementById('activity-list').childElementCount===0) loadActivity()">
-      <span>📋 История активности</span>
-      <span class="chevron">▾</span>
-    </div>
-    <div class="section-body" id="sec-activity-body">
-      <div class="section-content">
-        <div style="display:flex;gap:8px;margin-bottom:8px">
-          <button class="btn btn-neutral" style="flex:1" onclick="loadActivity()">🔄 Обновить</button>
-          <button class="btn btn-danger" onclick="clearActivity()">🗑️ Очистить</button>
-        </div>
-        <div id="activity-list">
-          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Нажмите Обновить</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 9. SETTINGS -->
-  <div class="section" data-section-perm="devices">
-    <div class="section-header" onclick="toggleSettings()">
-      <span>⚙️ Устройства</span>
-      <span class="chevron" id="settings-chevron">▾</span>
-    </div>
-    <div class="section-body" id="sec-settings-body">
-      <div class="section-content">
-        <div style="display:flex;gap:8px;margin-bottom:8px">
-          <button class="btn btn-primary" style="flex:1" onclick="openEntityBrowser()">➕ Из HA</button>
-          <button class="btn btn-neutral" style="flex:1" onclick="openSectionsManager()">📂 Разделы</button>
-          <button class="btn btn-neutral" onclick="settingsScan(event)" title="Авто-поиск">🔍</button>
-          <button class="btn btn-neutral" onclick="loadSettings()" title="Обновить">↺</button>
-        </div>
-        <div id="settings-list">
-          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Нажмите ↺ для загрузки</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ADMIN PANEL -->
+  <!-- ADMIN PANEL — contains all merged sections as tabs -->
   <div class="section" id="sec-admin" style="display:none">
     <div class="section-header" onclick="toggleSection('sec-admin-body')">
       <span>👑 Администрирование</span>
@@ -2142,19 +2440,23 @@ body.fab-open .fab-backdrop { display: block; }
     </div>
     <div class="section-body" id="sec-admin-body">
       <div class="section-content">
-        <!-- Tabs -->
-        <div style="display:flex;gap:8px;margin-bottom:16px">
-          <button id="adm-tab-perms" class="btn btn-primary" style="flex:1" onclick="admShowTab('perms')">🔐 Права</button>
-          <button id="adm-tab-log" class="btn btn-neutral" style="flex:1" onclick="admShowTab('log')">📋 Активность</button>
+        <!-- Scrollable tab strip -->
+        <div style="display:flex;gap:6px;overflow-x:auto;margin-bottom:14px;padding-bottom:4px;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none">
+          <button id="adm-tab-perms"   class="btn btn-primary"  style="white-space:nowrap;padding:8px 12px;font-size:12px;flex-shrink:0" onclick="admShowTab('perms')">🔐 Права</button>
+          <button id="adm-tab-devices" class="btn btn-neutral"  style="white-space:nowrap;padding:8px 12px;font-size:12px;flex-shrink:0" onclick="admShowTab('devices')">⚙️ Устройства</button>
+          <button id="adm-tab-alerts"  class="btn btn-neutral"  style="white-space:nowrap;padding:8px 12px;font-size:12px;flex-shrink:0" onclick="admShowTab('alerts')">🔔 Алерты</button>
+          <button id="adm-tab-night"   class="btn btn-neutral"  style="white-space:nowrap;padding:8px 12px;font-size:12px;flex-shrink:0" onclick="admShowTab('night')">🌙 Ночной</button>
+          <button id="adm-tab-server"  class="btn btn-neutral"  style="white-space:nowrap;padding:8px 12px;font-size:12px;flex-shrink:0" onclick="admShowTab('server')">🖥️ Сервер</button>
+          <button id="adm-tab-logbook" class="btn btn-neutral"  style="white-space:nowrap;padding:8px 12px;font-size:12px;flex-shrink:0" onclick="admShowTab('logbook')">📋 История</button>
+          <button id="adm-tab-log"     class="btn btn-neutral"  style="white-space:nowrap;padding:8px 12px;font-size:12px;flex-shrink:0" onclick="admShowTab('log')">🕐 Активность</button>
+          <button id="adm-tab-fab"     class="btn btn-neutral"  style="white-space:nowrap;padding:8px 12px;font-size:12px;flex-shrink:0" onclick="admShowTab('fab')">⚡ FAB</button>
         </div>
-        <!-- Permissions tab -->
+        <!-- Права tab -->
         <div id="adm-perms-panel">
-          <!-- User list -->
           <div id="adm-user-list-view">
             <div style="font-size:13px;color:#64748b;margin-bottom:10px">Выберите пользователя для настройки прав:</div>
             <div id="adm-user-list"></div>
           </div>
-          <!-- Per-user perms editor (hidden until user selected) -->
           <div id="adm-user-perms-view" style="display:none">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
               <button class="btn btn-neutral" style="padding:6px 10px;font-size:12px" onclick="admBackToUsers()">← Назад</button>
@@ -2164,10 +2466,52 @@ body.fab-open .fab-backdrop { display: block; }
             <button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="admSavePerms()">💾 Сохранить</button>
           </div>
         </div>
-        <!-- Activity log tab -->
+        <!-- Устройства tab -->
+        <div id="adm-devices-panel" style="display:none">
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <button class="btn btn-primary" style="flex:1" onclick="openEntityBrowser()">➕ Из HA</button>
+            <button class="btn btn-neutral" style="flex:1" onclick="openSectionsManager()">📂 Разделы</button>
+            <button class="btn btn-neutral" onclick="settingsScan(event)" title="Авто-поиск">🔍</button>
+            <button class="btn btn-neutral" onclick="loadSettings()" title="Обновить">↺</button>
+          </div>
+          <div id="settings-list">
+            <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Нажмите ↺ для загрузки</div>
+          </div>
+        </div>
+        <!-- Алерты tab -->
+        <div id="adm-alerts-panel" style="display:none">
+          <div id="alerts-content">
+            <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загружается...</div>
+          </div>
+        </div>
+        <!-- Ночной tab -->
+        <div id="adm-night-panel" style="display:none">
+          <div id="nightmode-content">
+            <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загружается...</div>
+          </div>
+        </div>
+        <!-- Сервер tab -->
+        <div id="adm-server-panel" style="display:none">
+          <div id="server-stats-content">
+            <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загружается...</div>
+          </div>
+        </div>
+        <!-- История HA tab -->
+        <div id="adm-logbook-panel" style="display:none">
+          <div id="logbook-content">
+            <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загружается...</div>
+          </div>
+        </div>
+        <!-- Активность tab -->
         <div id="adm-log-panel" style="display:none">
-          <button class="btn btn-neutral" style="width:100%;margin-bottom:12px" onclick="admLoadLog()">🔄 Обновить</button>
+          <button class="btn btn-neutral" style="width:100%;margin-bottom:8px" onclick="admLoadLog()">🔄 Обновить</button>
           <div id="adm-log-list" style="font-size:12px"></div>
+        </div>
+        <!-- FAB tab -->
+        <div id="adm-fab-panel" style="display:none">
+          <div style="font-size:13px;color:#64748b;margin-bottom:12px">Кнопки быстрого вызова (FAB). Перетащите для сортировки или используйте стрелки.</div>
+          <div id="fab-admin-list" style="margin-bottom:12px"></div>
+          <button class="btn btn-primary" style="width:100%" onclick="fabAdminAdd()">➕ Добавить действие</button>
         </div>
       </div>
     </div>
@@ -2178,24 +2522,7 @@ body.fab-open .fab-backdrop { display: block; }
   <div class="fab-backdrop" onclick="fabClose()"></div>
   <div class="fab-wrap">
     <button class="fab-main" id="fab-main" onclick="fabToggle()">⚡</button>
-    <div class="fab-items" id="fab-items">
-      <div class="fab-row">
-        <span class="fab-label">💡 Весь свет выкл</span>
-        <button class="fab-ic" onclick="fabAction('lights_off')">💡</button>
-      </div>
-      <div class="fab-row">
-        <span class="fab-label">🚪 Ухожу домой</span>
-        <button class="fab-ic" onclick="fabAction('away')">🚪</button>
-      </div>
-      <div class="fab-row">
-        <span class="fab-label">🤖 Пылесос запуск</span>
-        <button class="fab-ic" onclick="fabAction('vacuum')">🤖</button>
-      </div>
-      <div class="fab-row">
-        <span class="fab-label">🔄 Обновить данные</span>
-        <button class="fab-ic" onclick="fabAction('refresh')">🔄</button>
-      </div>
-    </div>
+    <div class="fab-items" id="fab-items"><!-- rendered by renderFab() --></div>
   </div>
 
   <!-- ── Timer Sheet ── -->
@@ -2424,33 +2751,8 @@ function applyStatus(d) {
   }
 
   // --- Family section ---
-  const familyEl = document.getElementById('family-list');
-  if (d.family && Object.keys(d.family).length > 0) {
-    familyEl.innerHTML = Object.entries(d.family).map(([name, info]) => {
-      // info может быть объектом {state, lat, lon} или строкой (старый формат)
-      const state = (typeof info === 'object') ? info.state : info;
-      const lat   = (typeof info === 'object') ? info.lat   : null;
-      const lon   = (typeof info === 'object') ? info.lon   : null;
-
-      let cls = 'badge-unknown', label = '—';
-      if (state === 'home')          { cls = 'badge-home'; label = '🏠 Дома'; }
-      else if (state === 'not_home') { cls = 'badge-away'; label = '🚗 Нет'; }
-      else                           { label = '❓'; }
-
-      const mapUrl = (lat && lon) ? `https://www.google.com/maps?q=${lat},${lon}` : null;
-      const mapBtn = mapUrl
-        ? `<a href="${mapUrl}" target="_blank" rel="noopener" class="map-link" title="Открыть на карте">📍</a>`
-        : `<span class="map-link map-link-off" title="Нет координат">📍</span>`;
-
-      return `<div class="family-item">
-        <span class="family-name">${escapeHtml(name)}</span>
-        <span class="badge ${cls}">${label}</span>
-        ${mapBtn}
-      </div>`;
-    }).join('');
-  } else {
-    familyEl.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:8px">Нет данных</div>';
-  }
+  _lastFamilyHA = d.family || {};
+  renderFamilyCards();
 
   // --- Lights section ---
   const lightsEl = document.getElementById('lights-grid');
@@ -2473,7 +2775,7 @@ function applyStatus(d) {
       </button>`;
     }).join('');
   } else {
-    lightsEl.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:8px;grid-column:span 3">Нет данных</div>';
+    lightsEl.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:8px;grid-column:span 4">Нет данных</div>';
   }
 
   // --- Energy cost in status ---
@@ -2582,40 +2884,9 @@ function applyStatus(d) {
   const prayersEl = document.getElementById('prayers-list');
   if (d.prayers && Object.keys(d.prayers).length > 0) {
     const _ps = document.getElementById('prayers-section'); if (_ps) _ps.style.display = '';
-    const now = new Date();
-    const nowMinutes = now.getHours() * 60 + now.getMinutes();
-
-    const prayerEntries = Object.entries(d.prayers);
-    const prayerMinutes = prayerEntries.map(([, t]) => {
-      const [h, m] = t.split(':').map(Number);
-      return h * 60 + m;
-    });
-
-    let nextIdx = -1;
-    for (let i = 0; i < prayerMinutes.length; i++) {
-      if (prayerMinutes[i] > nowMinutes) { nextIdx = i; break; }
-    }
-
-    prayersEl.innerHTML = prayerEntries.map(([name, time], i) => {
-      let cls = '';
-      let icon = '🕌';
-      if (i === nextIdx) {
-        cls = 'next';
-        icon = '⏰';
-      } else if (nextIdx === -1 ? true : i < nextIdx) {
-        if (prayerMinutes[i] <= nowMinutes) {
-          cls = 'past';
-          icon = '✅';
-        }
-      }
-      return `<div class="prayer-item ${cls}">
-        <div class="prayer-left">
-          <span class="prayer-icon">${icon}</span>
-          <span class="prayer-name">${escapeHtml(name)}</span>
-        </div>
-        <span class="prayer-time">${escapeHtml(time)}</span>
-      </div>`;
-    }).join('');
+    window._lastPrayers = d.prayers; // save for live countdown
+    _renderPrayers(d.prayers);
+    _startPrayerCountdown(d.prayers);
   } else {
     const _ps2 = document.getElementById('prayers-section'); if (_ps2) _ps2.style.display = 'none';
   }
@@ -2725,7 +2996,10 @@ function startSSE() {
 }
 
 function handleSSEUpdate(d) {
-  if (!d || !d.entity_id) return;
+  if (!d) return;
+  // Chat SSE event
+  if (d.type === 'chat') { if (d.msg) onChatSSE(d.msg); return; }
+  if (!d.entity_id) return;
   const eid = d.entity_id;
   const state = d.state;
   // Update light button if exists
@@ -2983,6 +3257,7 @@ async function ensureAuth() {
 async function init() {
   const timer = setTimeout(hideLoading, 3000);
   applyAutoTheme();
+  renderFab();
   // Init quick actions from localStorage immediately
   qaRender();
   // Apply cached permissions immediately before any API calls
@@ -3077,6 +3352,104 @@ function climateSetpoint(delta) {
   if (sl) sl.value = newVal;
 }
 
+// ── Prayers rendering + countdown ──────────────────────────────────────────
+const PRAYER_ICONS = { Fajr:'🌙', Dhuhr:'☀️', Asr:'🌤️', Maghrib:'🌅', Isha:'🌃' };
+let _prayerCountdownTimer = null;
+
+function _getHijriDate() {
+  try {
+    const d = new Date();
+    const fmt = new Intl.DateTimeFormat('ar-SA-u-ca-islamic', { day:'numeric', month:'long', year:'numeric' });
+    return fmt.format(d);
+  } catch(e) { return ''; }
+}
+
+function _renderPrayers(prayers) {
+  const prayersEl = document.getElementById('prayers-list');
+  const headerCard = document.getElementById('prayer-header-card');
+  if (!prayersEl) return;
+
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+  const entries = Object.entries(prayers);
+  const mins = entries.map(([, t]) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; });
+
+  let nextIdx = -1;
+  for (let i = 0; i < mins.length; i++) { if (mins[i] > nowMin) { nextIdx = i; break; } }
+
+  prayersEl.innerHTML = entries.map(([name, time], i) => {
+    let cls = '', icon = PRAYER_ICONS[name] || '🕌';
+    if (i === nextIdx) { cls = 'next'; }
+    else if (mins[i] <= nowMin) { cls = 'past'; icon = '✅'; }
+    return `<div class="prayer-item ${cls}">
+      <div class="prayer-left">
+        <span class="prayer-icon">${icon}</span>
+        <span class="prayer-name">${escapeHtml(name)}</span>
+      </div>
+      <span class="prayer-time">${escapeHtml(time)}</span>
+    </div>`;
+  }).join('');
+
+  // header card
+  if (headerCard) {
+    if (nextIdx >= 0) {
+      headerCard.style.display = '';
+      const hijriEl = document.getElementById('prayer-hijri');
+      const nextNameEl = document.getElementById('prayer-next-name');
+      const progFrom = document.getElementById('prayer-prog-from');
+      const progTo = document.getElementById('prayer-prog-to');
+      if (hijriEl) hijriEl.textContent = _getHijriDate();
+      if (nextNameEl) nextNameEl.textContent = entries[nextIdx][0];
+      if (progFrom) progFrom.textContent = nextIdx > 0 ? entries[nextIdx-1][1] : '00:00';
+      if (progTo) progTo.textContent = entries[nextIdx][1];
+      _updatePrayerProgress(nowMin, nextIdx, mins);
+    } else {
+      headerCard.style.display = '';
+      const hijriEl = document.getElementById('prayer-hijri');
+      if (hijriEl) hijriEl.textContent = _getHijriDate();
+      const nextNameEl = document.getElementById('prayer-next-name');
+      if (nextNameEl) nextNameEl.textContent = 'Все намазы сегодня совершены';
+      const cd = document.getElementById('prayer-countdown-big');
+      if (cd) cd.textContent = '—';
+    }
+  }
+}
+
+function _updatePrayerProgress(nowMin, nextIdx, mins) {
+  const fill = document.getElementById('prayer-progress-fill');
+  if (!fill || nextIdx < 0) return;
+  const prevMin = nextIdx > 0 ? mins[nextIdx - 1] : 0;
+  const nextMin = mins[nextIdx];
+  const span = nextMin - prevMin;
+  const elapsed = nowMin - prevMin;
+  const pct = span > 0 ? Math.min(100, Math.max(0, (elapsed / span) * 100)) : 0;
+  fill.style.width = pct + '%';
+}
+
+function _startPrayerCountdown(prayers) {
+  if (_prayerCountdownTimer) clearInterval(_prayerCountdownTimer);
+  _prayerCountdownTimer = setInterval(() => {
+    const cdEl = document.getElementById('prayer-countdown-big');
+    if (!cdEl) return;
+    const entries = Object.entries(prayers);
+    const now = new Date();
+    const nowSec = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+    const secs = entries.map(([, t]) => { const [h, m] = t.split(':').map(Number); return h * 3600 + m * 60; });
+    let nextIdx = -1;
+    for (let i = 0; i < secs.length; i++) { if (secs[i] > nowSec) { nextIdx = i; break; } }
+    if (nextIdx < 0) { cdEl.textContent = '—'; return; }
+    const diff = secs[nextIdx] - nowSec;
+    const h = Math.floor(diff / 3600);
+    const m = Math.floor((diff % 3600) / 60);
+    const s = diff % 60;
+    cdEl.textContent = h > 0 ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${m}:${String(s).padStart(2,'0')}`;
+    // Update progress every tick
+    const nowMin = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+    const mins = secs.map(s => s / 60);
+    _updatePrayerProgress(nowMin, nextIdx, mins);
+  }, 1000);
+}
+
 // TV
 const TV_ACTIONS = {
   'on':       { service: 'media_player.turn_on',     extra: {} },
@@ -3101,6 +3474,217 @@ function tvMuteToggle() {
   callAction(btn, 'media_player.volume_mute', TV_ENTITY, { is_volume_muted: newMuted });
   tvMuted = newMuted;
   btn.textContent = newMuted ? '🔇 Включить звук' : '🔇 Mute';
+}
+
+async function tvKey(key) {
+  const btn = event && event.target ? event.target.closest('button') : null;
+  if (btn) { btn.style.transform = 'scale(0.9)'; setTimeout(() => btn.style.transform = '', 150); }
+  try {
+    await api('/tv/key', 'POST', { key });
+  } catch(e) { showToast('❌ TV: ' + e.message); }
+}
+
+// ── Reminders ──────────────────────────────────────────────────────────────
+let _remindersLoaded = false;
+let _reminderGlobal = false;
+
+async function loadReminders() {
+  _remindersLoaded = true;
+  const el = document.getElementById('reminders-list');
+  try {
+    const data = await api('/reminders');
+    renderReminders(data);
+  } catch(e) {
+    el.innerHTML = '<div style="color:#ef4444;font-size:13px;text-align:center;padding:10px">Ошибка загрузки</div>';
+  }
+}
+
+function renderReminders(list) {
+  const el = document.getElementById('reminders-list');
+  if (!el) return;
+  if (!list || !list.length) {
+    el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Нет напоминаний</div>';
+    return;
+  }
+  el.innerHTML = list.map(r => {
+    const dt = new Date(r.remind_at);
+    const label = dt.toLocaleString('ru-RU', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+    const cls = (r.done ? 'done ' : '') + (r.is_global ? 'global' : '');
+    return `<div class="reminder-item ${cls}" id="rem-${r.id}">
+      <div style="flex:1;min-width:0">
+        <div class="reminder-text">${escapeHtml(r.text)}${r.is_global ? ' <span style="font-size:10px;color:#fbbf24">👪</span>' : ''}</div>
+        <div class="reminder-time">🔔 ${escapeHtml(label)}</div>
+      </div>
+      <button class="reminder-del" onclick="deleteReminder(${r.id})">✕</button>
+    </div>`;
+  }).join('');
+}
+
+function toggleReminderGlobal() {
+  _reminderGlobal = !_reminderGlobal;
+  const btn = document.getElementById('reminder-global-btn');
+  if (btn) btn.textContent = '👪 Для всех: ' + (_reminderGlobal ? 'Да' : 'Нет');
+}
+
+async function createReminder() {
+  const textEl = document.getElementById('reminder-text-input');
+  const dtEl = document.getElementById('reminder-dt-input');
+  const text = textEl ? textEl.value.trim() : '';
+  const dt = dtEl ? dtEl.value : '';
+  if (!text) { showToast('⚠️ Введите текст напоминания'); return; }
+  if (!dt) { showToast('⚠️ Укажите дату и время'); return; }
+  try {
+    const res = await api('/reminders', 'POST', { text, remind_at: dt, is_global: _reminderGlobal });
+    if (res && res.id) {
+      if (textEl) textEl.value = '';
+      showToast('✅ Напоминание добавлено');
+      loadReminders();
+    }
+  } catch(e) { showToast('❌ Ошибка: ' + e.message); }
+}
+
+async function deleteReminder(id) {
+  try {
+    await api('/reminders/' + id, 'DELETE');
+    const el = document.getElementById('rem-' + id);
+    if (el) el.remove();
+    showToast('🗑 Удалено');
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+// ── Family Chat ─────────────────────────────────────────────────────────────
+let _chatLoaded = false;
+let _chatMessages = [];
+
+async function loadChat() {
+  _chatLoaded = true;
+  const el = document.getElementById('chat-messages');
+  try {
+    const data = await api('/chat');
+    _chatMessages = data || [];
+    renderChat();
+  } catch(e) {
+    if (el) el.innerHTML = '<div style="color:#ef4444;font-size:13px;text-align:center;padding:10px">Ошибка загрузки</div>';
+  }
+}
+
+function renderChat() {
+  const el = document.getElementById('chat-messages');
+  if (!el) return;
+  const me = HA_USERNAME || '';
+  if (!_chatMessages.length) {
+    el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:20px">Нет сообщений. Напишите первым!</div>';
+    return;
+  }
+  el.innerHTML = _chatMessages.map(m => {
+    const isMe = m.username === me;
+    const dt = new Date(m.created_at);
+    const timeStr = dt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    return `<div class="chat-msg ${isMe ? 'me' : ''}">
+      <div class="chat-msg-author">${escapeHtml(m.display_name || m.username)}</div>
+      <div class="chat-msg-text">${escapeHtml(m.text)}</div>
+      <div class="chat-msg-time">${timeStr}</div>
+    </div>`;
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+async function sendChatMessage() {
+  const input = document.getElementById('chat-input');
+  const text = input ? input.value.trim() : '';
+  if (!text) return;
+  if (input) input.value = '';
+  try {
+    await api('/chat', 'POST', { text });
+    await loadChat();
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+// Called from SSE when new chat message arrives
+function onChatSSE(msgData) {
+  if (!_chatLoaded) return;
+  _chatMessages.push(msgData);
+  if (_chatMessages.length > 100) _chatMessages = _chatMessages.slice(-100);
+  renderChat();
+}
+
+// ── Photo Album ─────────────────────────────────────────────────────────────
+let _photosLoaded = false;
+
+async function loadPhotos() {
+  _photosLoaded = true;
+  try {
+    const data = await api('/photos');
+    renderPhotos(data || []);
+  } catch(e) {
+    const el = document.getElementById('photos-grid');
+    if (el) el.innerHTML = '<div style="color:#ef4444;font-size:13px;text-align:center;padding:10px;grid-column:span 3">Ошибка загрузки</div>';
+  }
+}
+
+function renderPhotos(list) {
+  const el = document.getElementById('photos-grid');
+  if (!el) return;
+  if (!list.length) {
+    el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:20px;grid-column:span 3">Нет фотографий</div>';
+    return;
+  }
+  el.innerHTML = list.map(p => {
+    const url = API_BASE + '/photos/img/' + encodeURIComponent(p.filename) + '?token=' + encodeURIComponent(WEBAPP_TOKEN || '');
+    return `<div class="photo-thumb" id="ph-${p.id}">
+      <img src="${url}" loading="lazy" onclick="openPhotoLightbox('${escapeAttr(url)}','${escapeAttr(p.caption||'')}')" alt="${escapeAttr(p.caption||'фото')}">
+      <button class="photo-del-btn" onclick="event.stopPropagation();deletePhoto(${p.id})">✕</button>
+    </div>`;
+  }).join('');
+}
+
+async function uploadPhoto(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const caption = (document.getElementById('photo-caption-input') || {}).value || '';
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('caption', caption);
+  showToast('⏳ Загрузка...');
+  try {
+    const resp = await fetch(API_BASE + '/photos/upload', {
+      method: 'POST',
+      headers: { 'X-Token': WEBAPP_TOKEN || '' },
+      body: fd
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    input.value = '';
+    const captEl = document.getElementById('photo-caption-input');
+    if (captEl) captEl.value = '';
+    showToast('✅ Фото загружено');
+    loadPhotos();
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+async function deletePhoto(id) {
+  if (!confirm('Удалить фото?')) return;
+  try {
+    await api('/photos/' + id, 'DELETE');
+    const el = document.getElementById('ph-' + id);
+    if (el) el.remove();
+    showToast('🗑 Удалено');
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+function openPhotoLightbox(url, caption) {
+  let lb = document.getElementById('photo-lightbox');
+  if (!lb) {
+    lb = document.createElement('div');
+    lb.id = 'photo-lightbox';
+    lb.className = 'photo-lightbox';
+    lb.onclick = function(e) { if (e.target === lb) lb.remove(); };
+    document.body.appendChild(lb);
+  }
+  lb.innerHTML = `
+    <img src="${url}" alt="${escapeAttr(caption)}">
+    <button class="photo-lightbox-close" onclick="document.getElementById('photo-lightbox').remove()">✕</button>
+    ${caption ? `<div style="position:absolute;bottom:20px;left:0;right:0;text-align:center;color:rgba(255,255,255,0.8);font-size:13px;padding:0 16px">${escapeHtml(caption)}</div>` : ''}
+  `;
 }
 
 // Vacuum
@@ -3716,6 +4300,567 @@ async function runScene(id, btn) {
 }
 
 // ── Alerts config ──────────────────────────────────────────────────────────
+
+// ── Family cards ──────────────────────────────────────────────────────────────
+let _lastFamilyHA  = {};   // {name: {state, lat, lon}} from HA status
+let _familyExtra   = {};   // {statuses, note, cooking, reactions}
+let _familyLoaded  = false;
+
+async function loadFamilyExtra() {
+  try {
+    await _shopGetFamily(); // ensure username mapping is ready before rendering cards
+    _familyExtra = await api('/family-extra');
+    renderFamilyCards();
+    renderFamilyWidgets();
+  } catch(e) {}
+}
+
+function renderFamilyCards() {
+  const el = document.getElementById('family-list');
+  if (!el) return;
+  const fam = _lastFamilyHA;
+  if (!fam || !Object.keys(fam).length) {
+    el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:8px">Нет данных</div>';
+    return;
+  }
+  const statuses = (_familyExtra && _familyExtra.statuses) || {};
+  // Map HA names to webapp usernames (try lowercase match)
+  const webUsers = {};
+  if (window._shopFamilyCache && window._shopFamilyCache.length) {
+    window._shopFamilyCache.forEach(u => { webUsers[u.display_name] = u.username; webUsers[u.username] = u.username; });
+  } else if (window._shopFamilyCache === null) {
+    // Cache not loaded yet — re-render once it's ready so reaction buttons get correct usernames
+    _shopGetFamily().then(() => renderFamilyCards());
+  }
+  el.innerHTML = Object.entries(fam).map(([name, info]) => {
+    const state = (typeof info === 'object') ? info.state : info;
+    const lat   = (typeof info === 'object') ? info.lat   : null;
+    const lon   = (typeof info === 'object') ? info.lon   : null;
+    const isHome = state === 'home';
+    // Find webapp username
+    const username = webUsers[name] || webUsers[name.toLowerCase()] || name.toLowerCase();
+    const st = statuses[username] || {};
+    const emojiStatus = st.emoji || (isHome ? '🏠' : '🚗');
+    const statusText  = st.text  || (isHome ? 'Дома' : 'Не дома');
+    const initials    = name.charAt(0).toUpperCase();
+    const mapUrl      = (lat && lon) ? `https://www.google.com/maps?q=${lat},${lon}` : null;
+    const pulse       = isHome ? '<div class="family-pulse"></div>' : '';
+    const mapLink     = mapUrl ? `<a href="${mapUrl}" target="_blank" rel="noopener" style="font-size:14px;text-decoration:none;color:#64748b">📍</a>` : '';
+    return `<div class="family-card ${isHome?'home':''}">
+      <div class="family-card-top">
+        <div class="family-avatar ${isHome?'home':''}">${pulse}${initials}</div>
+        <div class="family-info">
+          <div class="family-card-name">${escapeHtml(name)}</div>
+          <div class="family-card-status">${escapeHtml(statusText)}</div>
+        </div>
+        <span class="family-card-badge ${isHome?'home':'away'}">${isHome?'🏠 Дома':'🚗 Не дома'}</span>
+        <span class="family-emoji-status" onclick="familySetStatus()" title="Изменить статус">${emojiStatus}</span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div class="family-reactions">
+          ${['🤗','❤️','👋','😘','💪'].map(r =>
+            `<button class="family-react-btn" onclick="familySendReaction('${escapeAttr(name)}','${r}')">${r}</button>`
+          ).join('')}
+        </div>
+        ${mapLink}
+      </div>
+    </div>`;
+  }).join('');
+  // Load extra data once
+  if (!_familyLoaded) { _familyLoaded = true; loadFamilyExtra(); }
+}
+
+function renderFamilyWidgets() {
+  const extra = _familyExtra || {};
+  // Note
+  const noteEl = document.getElementById('family-note-text');
+  const metaEl = document.getElementById('family-note-meta');
+  if (noteEl && extra.note) {
+    if (document.activeElement !== noteEl) noteEl.value = extra.note.content || '';
+    if (metaEl && extra.note.updated_by) {
+      metaEl.textContent = 'Обновил(а): ' + (extra.note.updated_by) + ' в ' + (extra.note.updated_at||'').slice(0,16);
+    }
+  }
+  // Cooking
+  const cookEl = document.getElementById('cooking-list');
+  if (cookEl) {
+    const cooking = extra.cooking || {};
+    const users = window._shopFamilyCache || [];
+    if (!users.length && window._shopFamilyCache === null) { _shopGetFamily().then(() => renderFamilyWidgets()); return; }
+    cookEl.innerHTML = users.map(u =>
+      `<button class="cooking-btn ${cooking.username===u.username?'active':''}"
+        onclick="familySetCooking('${escapeAttr(u.username)}','${escapeAttr(cooking.username)}')">
+        ${cooking.username===u.username?'👩‍🍳 ':''}${escapeHtml(u.display_name)}</button>`
+    ).join('') + `<button class="cooking-btn" onclick="familySetCooking('')" style="opacity:0.5">✕ Никто</button>`;
+  }
+  // Reactions timeline
+  const reactions = extra.reactions || [];
+  const tlEl = document.getElementById('family-timeline');
+  const tlWidget = document.getElementById('family-timeline-widget');
+  if (tlEl && reactions.length) {
+    tlWidget.style.display = '';
+    tlEl.innerHTML = reactions.slice(0,8).map(r => {
+      const from = r.from_user, to = r.to_user;
+      return `<div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <div class="timeline-text">${escapeHtml(from)} → ${escapeHtml(to)} ${escapeHtml(r.reaction)}</div>
+        <div class="timeline-time">${(r.created_at||'').slice(11,16)}</div>
+      </div>`;
+    }).join('');
+  }
+}
+
+async function familySendReaction(haName, reaction) {
+  // Resolve HA display name → webapp username at click time (cache always ready by then)
+  const cache = await _shopGetFamily();
+  const webUsers = {};
+  cache.forEach(u => { webUsers[u.display_name] = u.username; webUsers[u.username] = u.username; });
+  const toUser = webUsers[haName] || webUsers[haName.toLowerCase()] || haName.toLowerCase();
+  if (!toUser || toUser === HA_USERNAME) return;
+  try {
+    await api('/family-reaction', 'POST', {to_user: toUser, reaction});
+    showToast(reaction + ' отправлено!');
+    // add to local timeline optimistically
+    if (!_familyExtra.reactions) _familyExtra.reactions = [];
+    _familyExtra.reactions.unshift({from_user: HA_USERNAME, to_user: toUser, reaction, created_at: new Date().toISOString().replace('T',' ').slice(0,19)});
+    renderFamilyWidgets();
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+function familySetStatus() {
+  const emojis = ['🏠','😊','😴','💼','🚗','🏃','🛒','🍽️','📚','🎮','😷','🏖️'];
+  const sheet  = document.createElement('div');
+  sheet.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:var(--bg-body,#07071a);border-radius:24px 24px 0 0;padding:16px 16px 40px;z-index:960;border-top:1px solid rgba(255,255,255,0.08);transform:translateY(100%);transition:transform 0.3s cubic-bezier(0.32,0.72,0,1)';
+  sheet.innerHTML = `<div style="width:40px;height:4px;background:rgba(255,255,255,0.14);border-radius:2px;margin:0 auto 14px"></div>
+    <div style="font-size:13px;color:#64748b;margin-bottom:12px">Выберите статус</div>
+    <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:12px">
+      ${emojis.map(e => `<button onclick="window._familyStatusPick('${e}')" style="font-size:24px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:10px;cursor:pointer">${e}</button>`).join('')}
+    </div>
+    <input id="fam-status-text" placeholder="Добавить описание..." style="width:100%;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.05);color:#e2e8f0;font-size:14px;font-family:inherit;outline:none;box-sizing:border-box">`;
+  const bd = document.createElement('div');
+  bd.style.cssText = 'position:fixed;inset:0;z-index:959;';
+  bd.onclick = () => { sheet.remove(); bd.remove(); };
+  document.body.appendChild(bd); document.body.appendChild(sheet);
+  requestAnimationFrame(() => { sheet.style.transform = 'translateY(0)'; });
+  window._familyStatusPick = async (emoji) => {
+    const text = document.getElementById('fam-status-text')?.value || '';
+    sheet.remove(); bd.remove();
+    try {
+      await api('/family-status', 'POST', {emoji, text});
+      if (!_familyExtra.statuses) _familyExtra.statuses = {};
+      _familyExtra.statuses[HA_USERNAME] = {emoji, text, updated_at: new Date().toISOString()};
+      renderFamilyCards();
+      showToast('Статус обновлён ' + emoji);
+    } catch(e) { showToast('❌ ' + e.message); }
+  };
+}
+
+async function saveFamilyNote() {
+  const el = document.getElementById('family-note-text');
+  if (!el) return;
+  const content = el.value;
+  try {
+    await api('/family-note', 'POST', {content});
+    if (!_familyExtra.note) _familyExtra.note = {};
+    _familyExtra.note.content = content;
+    _familyExtra.note.updated_by = HA_USERNAME;
+    _familyExtra.note.updated_at = new Date().toISOString().replace('T',' ').slice(0,19);
+    const metaEl = document.getElementById('family-note-meta');
+    if (metaEl) metaEl.textContent = 'Сохранено';
+  } catch(e) {}
+}
+
+async function familySetCooking(username, currentUsername) {
+  if (username === currentUsername) username = ''; // toggle off
+  try {
+    await api('/cooking', 'POST', {username});
+    if (!_familyExtra.cooking) _familyExtra.cooking = {};
+    _familyExtra.cooking.username = username;
+    renderFamilyWidgets();
+    showToast(username ? '👩‍🍳 Назначено!' : '✕ Убрано');
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+// ── Shopping emoji detection ──────────────────────────────────────────────────
+function _shopItemEmoji(name) {
+  const n = name.toLowerCase();
+  const map = [
+    [/молок|кефир|йогурт|сливк|сметан/,'🥛'],[/хлеб|батон|булк|тост/,'🍞'],
+    [/масл/,'🧈'],[/сыр/,'🧀'],[/яйц/,'🥚'],[/мяс|говяд|свинин|баранин/,'🥩'],
+    [/курица|курин|цыплён/,'🍗'],[/рыб|форел|сёмг|сёмга|лосос/,'🐟'],
+    [/сосис|колбас/,'🌭'],[/помидор|томат/,'🍅'],[/огурц/,'🥒'],
+    [/морков/,'🥕'],[/картофел|картошк/,'🥔'],[/лук/,'🧅'],[/чеснок/,'🧄'],
+    [/яблок/,'🍎'],[/банан/,'🍌'],[/апельсин|мандарин/,'🍊'],[/лимон/,'🍋'],
+    [/виноград/,'🍇'],[/клубник/,'🍓'],[/арбуз/,'🍉'],[/груш/,'🍐'],
+    [/сок/,'🧃'],[/вод[аы]/,'💧'],[/чай/,'🍵'],[/кофе/,'☕'],
+    [/пив[оа]/,'🍺'],[/вин[оа]/,'🍷'],[/макарон|паст[аы]/,'🍝'],
+    [/рис/,'🍚'],[/гречк/,'🌾'],[/сахар/,'🍬'],[/соль/,'🧂'],
+    [/мука/,'🌾'],[/торт|пирог/,'🎂'],[/шоколад/,'🍫'],[/конфет/,'🍬'],
+    [/мороженое/,'🍦'],[/печень[ек]/,'🍪'],[/чипс/,'🥔'],[/орех/,'🥜'],
+    [/мед/,'🍯'],[/варень|джем/,'🫙'],[/майонез|кетчуп|соус/,'🥫'],
+    [/масло.растит|подсолнеч/,'🫒'],[/зелен|петрушк|укроп/,'🌿'],
+    [/шампун|мыл|зубн|крем|гель|дезодор/,'🧴'],[/туалет/,'🧻'],
+    [/стир|порошок/,'🧺'],[/губк|моющ/,'🧽'],[/пакет/,'🛍️'],
+    [/батарейк/,'🔋'],[/корм.*(кошк|кот)|кошач/,'🐱'],[/корм.*(собак)|собач/,'🐶'],
+  ];
+  for (const [re, emoji] of map) { if (re.test(n)) return emoji; }
+  return '🛒';
+}
+
+// ── Shopping tabs ─────────────────────────────────────────────────────────────
+let _shopCurrentTab = 'list';
+let _shopMetaCache  = {};   // uid → {priority, quantity}
+
+function shopTab(tab) {
+  _shopCurrentTab = tab;
+  ['list','assigned','history','stats'].forEach(t => {
+    document.getElementById('stab-' + t)?.classList.toggle('active', t === tab);
+    const panel = document.getElementById('shop-panel-' + t);
+    if (panel) panel.style.display = t === tab ? '' : 'none';
+  });
+  const addRow   = document.getElementById('shop-add-row');
+  const quickRow = document.getElementById('shop-quick-row');
+  if (addRow)   addRow.style.display   = tab === 'list' ? 'flex' : 'none';
+  if (quickRow) quickRow.style.display = tab === 'list' ? 'flex' : 'none';
+  if (tab === 'history') loadShopHistory();
+  if (tab === 'stats')   loadShopStats();
+  if (tab === 'assigned' && _shoppingLoaded) renderShopAssigned();
+}
+
+async function loadShopQuick() {
+  const row = document.getElementById('shop-quick-row');
+  if (!row) return;
+  try {
+    const items = await api('/shopping-quick');
+    row.innerHTML = (items||[]).map(i =>
+      `<div class="shop-quick-chip" onclick="shopQuickAdd('${escapeAttr(i.name)}','${escapeAttr(i.emoji||_shopItemEmoji(i.name))}')">
+        ${i.emoji || _shopItemEmoji(i.name)} ${escapeHtml(i.name)}</div>`
+    ).join('') +
+    `<div class="shop-quick-chip add-new" onclick="shopQuickNew()">➕ Добавить</div>`;
+  } catch(e) {}
+}
+
+async function shopQuickAdd(name, emoji) {
+  try {
+    await api('/shopping-items', 'POST', {item: name});
+    showToast((emoji||'') + ' ' + name + ' добавлен');
+    if (_shopCurrentTab === 'list') loadShopping();
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+async function shopQuickNew() {
+  const name = prompt('Название быстрого товара:');
+  if (!name || !name.trim()) return;
+  const n = name.trim();
+  try {
+    await api('/shopping-quick', 'POST', {action:'add', name:n, emoji:_shopItemEmoji(n)});
+    showToast('✅ Добавлен в быстрые');
+    loadShopQuick();
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+async function shopTogglePriority(uid, itemText, currentPriority) {
+  const newPriority = currentPriority ? 0 : 1;
+  try {
+    await api('/shopping-meta', 'POST', {uid, item_text:itemText, priority:newPriority});
+    _shopMetaCache[uid] = {...(_shopMetaCache[uid]||{}), priority:newPriority};
+    loadShopping();
+  } catch(e) {}
+}
+
+async function loadShopHistory() {
+  const el = document.getElementById('shopping-history-list');
+  if (!el) return;
+  el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:12px">Загрузка...</div>';
+  try {
+    const items = await api('/shopping-history');
+    if (!items || !items.length) { el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:20px">История пуста</div>'; return; }
+    // Group by date
+    const byDate = {};
+    items.forEach(i => {
+      const d = (i.created_at||'').slice(0,10) || 'Неизвестно';
+      if (!byDate[d]) byDate[d] = [];
+      byDate[d].push(i);
+    });
+    el.innerHTML = Object.entries(byDate).map(([date, arr]) =>
+      `<div style="font-size:11px;color:#64748b;margin:10px 0 6px;text-transform:uppercase;letter-spacing:0.4px">${date}</div>` +
+      arr.map(i => `<div class="shop-hist-item">
+        <span style="font-size:16px">${_shopItemEmoji(i.item_text)}</span>
+        <span style="flex:1;font-size:13px;color:#e2e8f0">${escapeHtml(i.item_text)}</span>
+        <span style="font-size:11px;color:#64748b">${escapeHtml(i.assigned_to_name)} купил(а)</span>
+      </div>`).join('')
+    ).join('');
+  } catch(e) { el.innerHTML = '<div style="color:#ef4444;font-size:13px;text-align:center;padding:12px">Ошибка</div>'; }
+}
+
+async function loadShopStats() {
+  const el = document.getElementById('shopping-stats-content');
+  if (!el) return;
+  el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:12px">Загрузка...</div>';
+  try {
+    const s = await api('/shopping-stats');
+    const medals = ['🥇','🥈','🥉'];
+    el.innerHTML = `
+      <div style="text-align:center;padding:10px 0 16px">
+        <div style="font-size:36px;font-weight:800;color:#a5b4fc">${s.total}</div>
+        <div style="font-size:12px;color:#64748b">товаров куплено всего</div>
+      </div>
+      ${s.by_buyer && s.by_buyer.length ? `
+      <div class="shop-stat-card">
+        <div style="font-size:12px;color:#64748b;margin-bottom:8px;font-weight:600">🏆 Кто больше всех купил</div>
+        ${s.by_buyer.map((r,i) => `<div class="shop-stat-row">
+          <span class="shop-stat-rank">${medals[i]||'·'}</span>
+          <span class="shop-stat-name">${escapeHtml(r.display_name)}</span>
+          <span class="shop-stat-count">${r.count} шт.</span>
+        </div>`).join('')}
+      </div>` : ''}
+      ${s.this_month && s.this_month.length ? `
+      <div class="shop-stat-card">
+        <div style="font-size:12px;color:#64748b;margin-bottom:8px;font-weight:600">📅 В этом месяце</div>
+        ${s.this_month.map((r,i) => `<div class="shop-stat-row">
+          <span class="shop-stat-rank">${medals[i]||'·'}</span>
+          <span class="shop-stat-name">${escapeHtml(r.display_name)}</span>
+          <span class="shop-stat-count">${r.count} шт.</span>
+        </div>`).join('')}
+      </div>` : ''}`;
+  } catch(e) { el.innerHTML = '<div style="color:#ef4444;font-size:13px;text-align:center;padding:12px">Ошибка</div>'; }
+}
+
+function renderShopAssigned() {
+  // assignments are rendered in the assigned tab
+  const el = document.getElementById('shopping-assignments-list');
+  // Already rendered by loadShopping, just ensure it's in the right panel
+}
+
+// ── Shopping List ─────────────────────────────────────────────────────────────
+let _shoppingLoaded = false;
+let _shopSelected   = new Set();   // selected item summaries (for bulk assign)
+let _shopFamilyCache = null;        // cached [{username, display_name}]
+
+async function _shopGetFamily() {
+  if (_shopFamilyCache && _shopFamilyCache.length) return _shopFamilyCache;
+  try {
+    const users = await api('/family-users');
+    _shopFamilyCache = users || [];
+  } catch(e) {
+    // fallback: build from lastStatus.family keys (HA person names = display names)
+    const fam = (lastStatus && lastStatus.family) ? lastStatus.family : {};
+    _shopFamilyCache = Object.keys(fam).map(n => ({username: n, display_name: n}));
+  }
+  return _shopFamilyCache;
+}
+
+function _shopUpdateBulkBar() {
+  const bar  = document.getElementById('shop-bulk-bar');
+  const cnt  = document.getElementById('shop-sel-count');
+  if (!bar) return;
+  bar.style.display = _shopSelected.size > 0 ? '' : 'none';
+  if (cnt) cnt.textContent = _shopSelected.size;
+}
+
+function shopToggleItem(summary, chk) {
+  if (chk) _shopSelected.add(summary); else _shopSelected.delete(summary);
+  _shopUpdateBulkBar();
+}
+
+async function loadShopping() {
+  _shoppingLoaded = true;
+  _shopSelected.clear();
+  _shopUpdateBulkBar();
+  _shopCheckPushPrompt();
+  loadShopQuick();
+  const itemsEl = document.getElementById('shopping-items-list');
+  const assEl   = document.getElementById('shopping-assignments-list');
+  if (!itemsEl) return;
+  itemsEl.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div>';
+  try {
+    const [items, assignments] = await Promise.all([
+      api('/shopping-items').catch(() => []),
+      api('/shopping-assignments').catch(() => []),
+    ]);
+    // Load meta for current items
+    const uids = (items||[]).map(i=>i.uid).filter(Boolean).join(',');
+    const meta = uids ? await api('/shopping-meta?uids=' + encodeURIComponent(uids)).catch(()=>({})) : {};
+    _shopMetaCache = meta || {};
+
+    const assignedMap = {};
+    (assignments||[]).forEach(a => { assignedMap[a.item_text] = a; });
+    const pending = (items||[]).filter(i => i.status !== 'completed');
+
+    // Sort: urgent first
+    pending.sort((a,b) => ((_shopMetaCache[b.uid]||{}).priority||0) - ((_shopMetaCache[a.uid]||{}).priority||0));
+
+    if (pending.length) {
+      itemsEl.innerHTML = pending.map(item => {
+        const asgn         = assignedMap[item.summary];
+        const cid          = 'shk-' + CSS.escape(item.uid||item.summary);
+        const itemMeta     = _shopMetaCache[item.uid] || {};
+        const priority     = itemMeta.priority || 0;
+        const emoji        = _shopItemEmoji(item.summary);
+        const assigneeName = asgn ? ((window._shopFamilyCache||[]).find(u=>u.username===asgn.assigned_to)?.display_name || asgn.assigned_to) : null;
+        const buyerLetter  = assigneeName ? assigneeName.charAt(0).toUpperCase() : '';
+        return `<div class="shop-item-row" id="shoprow-${escapeAttr(item.uid||item.summary)}">
+          <input type="checkbox" id="${cid}" style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer;flex-shrink:0"
+            onchange="shopToggleItem('${escapeAttr(item.summary)}', this.checked)">
+          <span class="shop-item-emoji">${priority?'🔴':emoji}</span>
+          <div class="shop-item-body">
+            <label for="${cid}" style="cursor:pointer">${escapeHtml(item.summary)}</label>
+          </div>
+          <button class="shop-priority-btn ${priority?'urgent':''}"
+            onclick="shopTogglePriority('${escapeAttr(item.uid||'')}','${escapeAttr(item.summary)}',${priority})">
+            ${priority?'🔴':'⚪'}
+          </button>
+          ${asgn
+            ? `<div class="shop-assign-avatar" title="${escapeHtml(assigneeName||asgn.assigned_to)}">${buyerLetter}</div>`
+            : `<button class="btn btn-neutral" style="padding:6px 10px;font-size:12px;white-space:nowrap"
+                onclick="shopAssign('${escapeAttr(item.summary)}')">Назначить</button>`
+          }
+        </div>`;
+      }).join('');
+    } else {
+      itemsEl.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:20px">Список пуст 🎉</div>';
+    }
+
+    // Render assignments in assigned tab panel
+    if (assEl) {
+      if (assignments && assignments.length) {
+        assEl.innerHTML = '<div style="font-size:11px;color:#64748b;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.4px">Назначено</div>' +
+          assignments.map(a => {
+            const buyerName    = (window._shopFamilyCache||[]).find(u=>u.username===a.assigned_to)?.display_name || a.assigned_to;
+            const assignerName = (window._shopFamilyCache||[]).find(u=>u.username===a.assigned_by)?.display_name || a.assigned_by;
+            const buyerLetter  = buyerName.charAt(0).toUpperCase();
+            return `<div class="shop-asgn-card">
+              <div class="shop-assign-avatar">${buyerLetter}</div>
+              <div class="shop-asgn-info">
+                <div class="shop-asgn-name">${_shopItemEmoji(a.item_text)} ${escapeHtml(a.item_text)}</div>
+                <div class="shop-asgn-by">→ ${escapeHtml(buyerName)} · от ${escapeHtml(assignerName)}</div>
+              </div>
+              <button class="btn btn-neutral" style="padding:5px 10px;font-size:11px;color:#34d399;flex-shrink:0" onclick="shopDone(${a.id})">✓ Готово</button>
+            </div>`;
+          }).join('');
+      } else {
+        assEl.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:20px">Нет активных заданий</div>';
+      }
+    }
+  } catch(e) {
+    itemsEl.innerHTML = '<div style="color:#ef4444;font-size:13px;text-align:center;padding:10px">Ошибка: ' + escapeHtml(String(e.message||e)) + '</div>';
+  }
+}
+
+async function _shopShowPersonPicker(titleHtml, onPick) {
+  const family = await _shopGetFamily();
+  if (!family.length) { showToast('❌ Нет пользователей для назначения'); return; }
+  ['shop-assign-sheet','shop-assign-bd'].forEach(id => document.getElementById(id)?.remove());
+  const sheet = document.createElement('div');
+  sheet.id = 'shop-assign-sheet';
+  sheet.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:var(--bg-body,#07071a);border-radius:24px 24px 0 0;padding:16px 16px 40px;z-index:960;border-top:1px solid rgba(255,255,255,0.08);transform:translateY(100%);transition:transform 0.3s cubic-bezier(0.32,0.72,0,1)';
+  sheet.innerHTML = `<div style="width:40px;height:4px;background:rgba(255,255,255,0.14);border-radius:2px;margin:0 auto 12px"></div>
+    <div style="font-size:13px;color:#64748b;margin-bottom:14px">${titleHtml}</div>
+    ${family.map((u,i) =>
+      `<button onclick="window._shopPickCb && window._shopPickCb('${escapeAttr(u.username)}','${escapeAttr(u.display_name)}')"
+        style="display:block;width:100%;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);
+               background:rgba(255,255,255,0.04);color:#e2e8f0;font-size:15px;cursor:pointer;font-family:inherit;margin-bottom:8px;text-align:left">
+        👤 ${escapeHtml(u.display_name)}</button>`
+    ).join('')}
+    <button onclick="['shop-assign-sheet','shop-assign-bd'].forEach(id=>document.getElementById(id)?.remove())"
+      style="display:block;width:100%;padding:12px;border-radius:12px;border:none;background:rgba(255,255,255,0.06);color:rgba(200,200,220,0.7);font-size:14px;cursor:pointer;font-family:inherit">Отмена</button>`;
+  window._shopPickCb = (username, displayName) => {
+    ['shop-assign-sheet','shop-assign-bd'].forEach(id => document.getElementById(id)?.remove());
+    onPick(username, displayName);
+  };
+  const bd = document.createElement('div');
+  bd.id = 'shop-assign-bd'; bd.style.cssText = 'position:fixed;inset:0;z-index:959;';
+  bd.onclick = () => { sheet.remove(); bd.remove(); };
+  document.body.appendChild(bd); document.body.appendChild(sheet);
+  requestAnimationFrame(() => { sheet.style.transform = 'translateY(0)'; });
+}
+
+async function shopAssign(itemText) {
+  await _shopShowPersonPicker(
+    'Назначить: <span style="color:#e2e8f0;font-weight:600">' + escapeHtml(itemText) + '</span>',
+    async (username, displayName) => {
+      try {
+        const r = await fetch(`${API_BASE}/shopping-assignments`, {
+          method: 'POST',
+          headers: {'Authorization':'Bearer '+API_TOKEN,'Content-Type':'application/json','X-HA-User':HA_USERNAME},
+          body: JSON.stringify({action:'assign', item_text:itemText, assigned_to:username}),
+        });
+        if (r.ok) { showToast('✅ Назначено: ' + displayName); loadShopping(); }
+        else showToast('❌ Ошибка назначения');
+      } catch(e) { showToast('❌ ' + e.message); }
+    }
+  );
+}
+
+async function shopAssignSelected() {
+  if (!_shopSelected.size) return;
+  const items = Array.from(_shopSelected);
+  await _shopShowPersonPicker(
+    'Назначить <b>' + items.length + ' поз.</b> на:',
+    async (username, displayName) => {
+      try {
+        const r = await fetch(`${API_BASE}/shopping-assignments`, {
+          method: 'POST',
+          headers: {'Authorization':'Bearer '+API_TOKEN,'Content-Type':'application/json','X-HA-User':HA_USERNAME},
+          body: JSON.stringify({action:'assign_batch', items: items, assigned_to: username}),
+        });
+        if (r.ok) { showToast('✅ Назначено ' + items.length + ' → ' + displayName); loadShopping(); }
+        else showToast('❌ Ошибка назначения');
+      } catch(e) { showToast('❌ ' + e.message); }
+    }
+  );
+}
+
+async function shopDone(id) {
+  try {
+    const r = await fetch(`${API_BASE}/shopping-assignments`, {
+      method: 'POST',
+      headers: {'Authorization':'Bearer '+API_TOKEN,'Content-Type':'application/json'},
+      body: JSON.stringify({action:'done', id}),
+    });
+    if (r.ok) { showToast('✅ Выполнено!'); loadShopping(); }
+    else showToast('❌ Ошибка');
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+
+async function _shopCheckPushPrompt() {
+  if (localStorage.getItem('ha_push_enabled')) return; // already set up
+  if (localStorage.getItem('ha_push_prompt_dismissed')) return; // user dismissed
+  // Show inline push prompt inside shopping section
+  var existing = document.getElementById('shop-push-banner');
+  if (existing) return;
+  var assEl = document.getElementById('shopping-assignments-list');
+  if (!assEl) return;
+  var banner = document.createElement('div');
+  banner.id = 'shop-push-banner';
+  banner.style.cssText = 'margin-top:12px;padding:10px 12px;background:rgba(99,102,241,0.10);border:1px solid rgba(99,102,241,0.25);border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:8px';
+  banner.innerHTML = '<span style="font-size:13px;color:#a5b4fc">🔔 Включить уведомления, чтобы получать задания</span>' +
+    '<div style="display:flex;gap:6px;flex-shrink:0">' +
+    '<button onclick="pushSubscribe();document.getElementById(\'shop-push-banner\')?.remove()" style="background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border:none;border-radius:8px;padding:6px 10px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Вкл</button>' +
+    '<button onclick="localStorage.setItem(\'ha_push_prompt_dismissed\',\'1\');document.getElementById(\'shop-push-banner\')?.remove()" style="background:none;border:none;color:#64748b;font-size:16px;cursor:pointer;padding:4px">✕</button>' +
+    '</div>';
+  assEl.parentNode.insertBefore(banner, assEl);
+}
+
+async function shopAddItem() {
+  const inp = document.getElementById('shopping-new-input');
+  if (!inp) return;
+  const text = inp.value.trim();
+  if (!text) return;
+  inp.value = '';
+  try {
+    const r = await fetch(`${API_BASE}/shopping-items`, {
+      method: 'POST',
+      headers: {'Authorization':'Bearer '+API_TOKEN,'Content-Type':'application/json'},
+      body: JSON.stringify({item: text}),
+    });
+    if (r.ok) { showToast('✅ Добавлено: ' + text); loadShopping(); }
+    else showToast('❌ Ошибка добавления');
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+// ── Alerts ────────────────────────────────────────────────────────────────────
 let _alertsLoaded = false;
 let _alertsCfg = null;
 
@@ -4894,9 +6039,7 @@ const BUILTIN_SECT_ELEM = {
   'climate':  'sec-climate-body',  'tv':       'sec-tv-body',
   'vacuum':   'sec-vacuum-body',   'prayers':  'sec-prayers-body',
   'weather':  'sec-weather-body',  'scenes':   'sec-scenes-body',
-  'alerts':   'sec-alerts-body',   'nightmode':'sec-nightmode-body',
-  'server':   'sec-server-body',   'logbook':  'sec-logbook-body',
-  'activity': 'sec-activity-body',
+  // alerts/nightmode/server/logbook/activity/devices merged into Admin panel — not in visibility map
 };
 
 // Применяет флаги hidden ко всем статическим разделам
@@ -5814,15 +6957,25 @@ let _admPerms = {};
 let _admSelectedUser = null;
 
 function admShowTab(tab) {
-    const pp = document.getElementById('adm-perms-panel');
-    const lp = document.getElementById('adm-log-panel');
-    const tp = document.getElementById('adm-tab-perms');
-    const tl = document.getElementById('adm-tab-log');
-    if (pp) pp.style.display = tab === 'perms' ? '' : 'none';
-    if (lp) lp.style.display = tab === 'log'   ? '' : 'none';
-    if (tp) tp.className = 'btn ' + (tab === 'perms' ? 'btn-primary' : 'btn-neutral');
-    if (tl) tl.className = 'btn ' + (tab === 'log'   ? 'btn-primary' : 'btn-neutral');
-    if (tab === 'log') admLoadLog();
+    const tabs = ['perms','devices','alerts','night','server','logbook','log','fab'];
+    const panels = {
+        'perms':   'adm-perms-panel',   'devices': 'adm-devices-panel',
+        'alerts':  'adm-alerts-panel',  'night':   'adm-night-panel',
+        'server':  'adm-server-panel',  'logbook': 'adm-logbook-panel',
+        'log':     'adm-log-panel',     'fab':     'adm-fab-panel',
+    };
+    tabs.forEach(t => {
+        const panel = document.getElementById(panels[t]);
+        const btn   = document.getElementById('adm-tab-' + t);
+        if (panel) panel.style.display = (t === tab) ? '' : 'none';
+        if (btn)   btn.className = 'btn ' + (t === tab ? 'btn-primary' : 'btn-neutral');
+    });
+    if (tab === 'log')     admLoadLog();
+    if (tab === 'fab')     renderFabAdmin();
+    if (tab === 'alerts'  && !_alertsLoaded)      loadAlerts();
+    if (tab === 'night'   && !_nightModeLoaded)   loadNightMode();
+    if (tab === 'server'  && !_serverStatsLoaded) loadServerStats();
+    if (tab === 'logbook' && !_logbookLoaded)     loadLogbook();
 }
 
 async function admInitPerms() {
@@ -6127,6 +7280,29 @@ window.addEventListener('offline', function() {
 })();
 
 // ── FAB ────────────────────────────────────────────────────────────────────
+// ── FAB config & rendering ────────────────────────────────────────────────────
+var _fabDefaults = [
+  {icon:'💡', label:'Весь свет выкл',   action:'lights_off'},
+  {icon:'🚪', label:'Ухожу домой',      action:'away'},
+  {icon:'🤖', label:'Пылесос запуск',   action:'vacuum'},
+  {icon:'🔄', label:'Обновить данные',  action:'refresh'},
+];
+function _getFabConfig() {
+  try { return JSON.parse(localStorage.getItem('ha_fab_config')) || _fabDefaults; } catch(e) { return _fabDefaults; }
+}
+function _saveFabConfig(cfg) {
+  localStorage.setItem('ha_fab_config', JSON.stringify(cfg));
+  renderFab();
+}
+function renderFab() {
+  var items = _getFabConfig();
+  var el = document.getElementById('fab-items');
+  if (!el) return;
+  el.innerHTML = items.map(function(item) {
+    return '<div class="fab-row"><span class="fab-label">' + escapeHtml(item.icon) + ' ' + escapeHtml(item.label) +
+           '</span><button class="fab-ic" onclick="fabAction(\'' + escapeAttr(item.action) + '\')">' + escapeHtml(item.icon) + '</button></div>';
+  }).join('');
+}
 function fabToggle() {
   haptic(10);
   document.body.classList.toggle('fab-open');
@@ -6134,7 +7310,10 @@ function fabToggle() {
 function fabClose() { document.body.classList.remove('fab-open'); }
 async function fabAction(act) {
   fabClose(); haptic(12);
-  if (act === 'lights_off') {
+  if (act.startsWith('scene:')) {
+    var sceneId = act.slice(6);
+    try { await api('/action', 'POST', {service:'scene.turn_on', entity_id:sceneId, extra:{}}); showToast('🎬 Сцена активирована'); } catch(e) { showToast('❌ Ошибка'); }
+  } else if (act === 'lights_off') {
     for (var eid of Object.keys(LIGHTS_MAP)) {
       try { await api('/action', { method:'POST', body: JSON.stringify({ service: LIGHTS_DOMAIN[eid] + '.turn_off', entity_id: eid, extra: {} }) }); } catch(e) {}
     }
@@ -6149,6 +7328,82 @@ async function fabAction(act) {
     loadStatus();
     showToast('🔄 Обновление...');
   }
+}
+
+// ── FAB Admin (configure FAB actions) ────────────────────────────────────────
+var _FAB_PRESETS = [
+  {icon:'💡', label:'Весь свет выкл',  action:'lights_off'},
+  {icon:'🚪', label:'Ухожу домой',     action:'away'},
+  {icon:'🤖', label:'Пылесос запуск',  action:'vacuum'},
+  {icon:'🔄', label:'Обновить данные', action:'refresh'},
+];
+function renderFabAdmin() {
+  var cfg = _getFabConfig();
+  var el = document.getElementById('fab-admin-list');
+  if (!el) return;
+  if (!cfg.length) { el.innerHTML = '<div style="color:#64748b;font-size:13px;text-align:center;padding:10px">Нет действий. Добавьте новое.</div>'; return; }
+  el.innerHTML = cfg.map(function(item, i) {
+    return '<div style="display:flex;align-items:center;gap:8px;padding:8px;background:rgba(255,255,255,0.04);border-radius:10px;margin-bottom:6px">' +
+      '<span style="font-size:20px;min-width:28px">' + escapeHtml(item.icon) + '</span>' +
+      '<span style="flex:1;font-size:13px;color:#e2e8f0">' + escapeHtml(item.label) + '</span>' +
+      '<button onclick="fabAdminMove(' + i + ',-1)" style="background:none;border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#94a3b8;padding:4px 8px;cursor:pointer;font-size:14px"' + (i===0?' disabled':'') + '>↑</button>' +
+      '<button onclick="fabAdminMove(' + i + ',1)" style="background:none;border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#94a3b8;padding:4px 8px;cursor:pointer;font-size:14px"' + (i===cfg.length-1?' disabled':'') + '>↓</button>' +
+      '<button onclick="fabAdminRemove(' + i + ')" style="background:none;border:1px solid rgba(248,113,113,0.25);border-radius:6px;color:#f87171;padding:4px 8px;cursor:pointer;font-size:14px">✕</button>' +
+    '</div>';
+  }).join('');
+}
+function fabAdminMove(idx, dir) {
+  var cfg = _getFabConfig();
+  var ni = idx + dir;
+  if (ni < 0 || ni >= cfg.length) return;
+  var tmp = cfg[idx]; cfg[idx] = cfg[ni]; cfg[ni] = tmp;
+  _saveFabConfig(cfg);
+  renderFabAdmin();
+}
+function fabAdminRemove(idx) {
+  var cfg = _getFabConfig();
+  cfg.splice(idx, 1);
+  _saveFabConfig(cfg);
+  renderFabAdmin();
+}
+async function fabAdminAdd() {
+  // Show all presets + scenes (allow duplicates, user decides)
+  var options = _FAB_PRESETS.slice(); // all presets always available
+  // Load scenes from HA
+  try {
+    var scenes = await api('/scenes');
+    (scenes||[]).forEach(function(s) {
+      options.push({icon:'🎬', label: s.name || s.entity_id, action:'scene:'+s.entity_id});
+    });
+  } catch(e) {}
+  if (!options.length) { showToast('Нет доступных действий'); return; }
+  // Show picker sheet
+  var sheet = document.createElement('div');
+  sheet.id = 'fab-add-sheet';
+  sheet.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:var(--bg-body,#07071a);border-radius:24px 24px 0 0;padding:16px 16px 40px;z-index:970;border-top:1px solid rgba(255,255,255,0.08);max-height:75vh;overflow-y:auto;transform:translateY(100%);transition:transform 0.3s cubic-bezier(0.32,0.72,0,1)';
+  sheet.innerHTML = '<div style="width:40px;height:4px;background:rgba(255,255,255,0.14);border-radius:2px;margin:0 auto 12px"></div>' +
+    '<div style="font-size:14px;font-weight:600;color:#e2e8f0;margin-bottom:14px">Выберите действие</div>' +
+    options.map(function(opt, i) {
+      return '<button onclick="fabAdminPick(' + i + ')" style="display:block;width:100%;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);color:#e2e8f0;font-size:14px;cursor:pointer;font-family:inherit;margin-bottom:7px;text-align:left">' +
+        escapeHtml(opt.icon) + ' ' + escapeHtml(opt.label) + '</button>';
+    }).join('') +
+    '<button onclick="document.getElementById(\'fab-add-sheet\')?.remove();document.getElementById(\'fab-add-bd\')?.remove()" style="display:block;width:100%;padding:12px;border-radius:12px;border:none;background:rgba(255,255,255,0.06);color:rgba(200,200,220,0.7);font-size:14px;cursor:pointer;font-family:inherit">Отмена</button>';
+  window._fabAddOptions = options;
+  var bd = document.createElement('div');
+  bd.id = 'fab-add-bd'; bd.style.cssText = 'position:fixed;inset:0;z-index:969;';
+  bd.onclick = function() { sheet.remove(); bd.remove(); };
+  document.body.appendChild(bd); document.body.appendChild(sheet);
+  requestAnimationFrame(function() { sheet.style.transform = 'translateY(0)'; });
+}
+function fabAdminPick(idx) {
+  document.getElementById('fab-add-sheet')?.remove();
+  document.getElementById('fab-add-bd')?.remove();
+  var opt = (window._fabAddOptions||[])[idx];
+  if (!opt) return;
+  var cfg = _getFabConfig();
+  cfg.push({icon: opt.icon, label: opt.label, action: opt.action});
+  _saveFabConfig(cfg);
+  renderFabAdmin();
 }
 
 // ── Device timer ───────────────────────────────────────────────────────────
@@ -6492,13 +7747,10 @@ async function pushSubscribe() {
     });
     _pushSubscription = sub;
     var subJson = sub.toJSON();
-    await api('/push-subscribe', {
-      method: 'POST',
-      body: JSON.stringify({
-        username: HA_USERNAME,
-        endpoint: subJson.endpoint,
-        keys: { p256dh: subJson.keys.p256dh, auth: subJson.keys.auth }
-      })
+    await api('/push-subscribe', 'POST', {
+      username: HA_USERNAME,
+      endpoint: subJson.endpoint,
+      keys: { p256dh: subJson.keys.p256dh, auth: subJson.keys.auth }
     });
     showToast('🔔 Push-уведомления включены', 2500);
     localStorage.setItem('ha_push_enabled', '1');
@@ -6514,10 +7766,7 @@ async function pushUnsubscribe() {
     var reg = await navigator.serviceWorker.ready;
     var sub = await reg.pushManager.getSubscription();
     if (sub) {
-      await api('/push-subscribe', {
-        method: 'DELETE',
-        body: JSON.stringify({ endpoint: sub.endpoint })
-      });
+      await api('/push-subscribe', 'DELETE', { endpoint: sub.endpoint });
       await sub.unsubscribe();
     }
     localStorage.removeItem('ha_push_enabled');

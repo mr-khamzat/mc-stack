@@ -148,12 +148,14 @@ WEBAPP_DIR   = Path(os.environ.get("WEBAPP_DIR", "/opt/ha-bot/webapp"))
 _HA_WEBAPP_ADMINS = {u.strip().lower() for u in os.environ.get("HA_WEBAPP_ADMINS", "").split(",") if u.strip()}
 
 FAMILY_USERS_FILE  = Path("/opt/ha-bot/family_users.json")
+PHOTOS_DIR         = Path("/opt/ha-bot/photos")
+PHOTOS_DIR.mkdir(exist_ok=True)
 
 # ── VAPID keys (Web Push) ──────────────────────────────────────────────────────
 VAPID_PRIVATE_PEM_FILE = Path("/opt/ha-bot/vapid_private.pem")
 VAPID_PUBLIC_FILE      = Path("/opt/ha-bot/vapid_public.txt")
 VAPID_PUBLIC_KEY: str  = VAPID_PUBLIC_FILE.read_text().strip() if VAPID_PUBLIC_FILE.exists() else ""
-VAPID_CLAIMS = {"sub": "mailto:admin@ha-bot.local"}
+VAPID_CLAIMS = {"sub": "https://hub.office.mooo.com"}
 
 # ── Пути к файлам данных ───────────────────────────────────────────────────────
 DB_FILE            = Path("/opt/ha-bot/ha_bot.db")      # SQLite (основное хранилище)
@@ -247,6 +249,66 @@ def _db_init():
             notified_at TEXT,
             done        INTEGER NOT NULL DEFAULT 0
         );
+CREATE TABLE IF NOT EXISTS family_statuses (
+    username     TEXT PRIMARY KEY,
+    status_emoji TEXT NOT NULL DEFAULT '😊',
+    status_text  TEXT NOT NULL DEFAULT '',
+    updated_at   TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS family_note (
+    id         INTEGER PRIMARY KEY DEFAULT 1,
+    content    TEXT NOT NULL DEFAULT '',
+    updated_by TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS family_reactions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_user  TEXT NOT NULL,
+    to_user    TEXT NOT NULL,
+    reaction   TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS cooking_schedule (
+    date       TEXT PRIMARY KEY,
+    username   TEXT NOT NULL DEFAULT '',
+    updated_by TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS shopping_item_meta (
+    item_uid  TEXT PRIMARY KEY,
+    item_text TEXT NOT NULL DEFAULT '',
+    priority  INTEGER NOT NULL DEFAULT 0,
+    quantity  TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS shopping_quick_items (
+    id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    name  TEXT NOT NULL UNIQUE,
+    emoji TEXT NOT NULL DEFAULT '',
+    ord   INTEGER NOT NULL DEFAULT 99
+);
+CREATE TABLE IF NOT EXISTS reminders (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    username   TEXT NOT NULL,
+    text       TEXT NOT NULL,
+    remind_at  TEXT NOT NULL,
+    is_global  INTEGER NOT NULL DEFAULT 0,
+    done       INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    username   TEXT NOT NULL,
+    text       TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT '',
+    edited     INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS photos (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    username   TEXT NOT NULL,
+    filename   TEXT NOT NULL UNIQUE,
+    caption    TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT ''
+);
     """)
     c.commit()
     # Schema migration: add username column to activity_log
@@ -4055,7 +4117,9 @@ async def _web_activity_clear(request: aiohttp_web.Request) -> aiohttp_web.Respo
 async def push_notify(username: str | None, title: str, body: str, url: str = "/ha-app/") -> int:
     """Send Web Push notification to all subscriptions for username (or all if None).
     Returns count of successful sends."""
+    log.info(f"push_notify: called for username={username!r} title={title!r}")
     if not VAPID_PRIVATE_PEM_FILE.exists() or not VAPID_PUBLIC_KEY:
+        log.warning("push_notify: VAPID files missing, skipping")
         return 0
     try:
         from pywebpush import webpush, WebPushException
@@ -4162,6 +4226,78 @@ async def _web_vapid_key(request: aiohttp_web.Request) -> aiohttp_web.Response:
         content_type="application/json", headers=_CORS_HEADERS)
 
 
+async def _web_shopping_items(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/shopping-items — fetch todo items from HA.
+       POST /ha-app/api/shopping-items — add new item to HA todo list.
+    """
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    if request.method == "POST":
+        try:
+            body = await request.json()
+            item_text = body.get("item", "").strip()
+            if not item_text:
+                return aiohttp_web.Response(status=400, text='{"error":"empty item"}',
+                                            content_type="application/json", headers=_CORS_HEADERS)
+            # Call HA WS to add item
+            ws_url = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
+            ssl_ctx = _ssl.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = _ssl.CERT_NONE
+            import websockets as _ws2
+            async with _ws2.connect(ws_url, ssl=ssl_ctx, family=socket.AF_INET) as ws:
+                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+                if msg.get("type") != "auth_required":
+                    return aiohttp_web.Response(status=502, text="HA auth failed", headers=_CORS_HEADERS)
+                await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
+                auth_resp = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+                if auth_resp.get("type") != "auth_ok":
+                    return aiohttp_web.Response(status=502, text="HA auth failed", headers=_CORS_HEADERS)
+                await ws.send(json.dumps({
+                    "id": 1, "type": "call_service",
+                    "domain": "todo", "service": "add_item",
+                    "service_data": {"entity_id": SHOP_EID, "item": item_text},
+                }))
+                await asyncio.wait_for(ws.recv(), timeout=10)
+            return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                        headers=_CORS_HEADERS)
+        except Exception as e:
+            return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+    # GET
+    try:
+        items = await ha_ws_get_todo_items(SHOP_EID)
+        return aiohttp_web.Response(
+            text=json.dumps(items, ensure_ascii=False),
+            content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _ha_todo_complete_item(entity_id: str, item_text: str) -> None:
+    """Mark a todo item as completed in Home Assistant via WebSocket."""
+    ws_url = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
+    ssl_ctx = _ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = _ssl.CERT_NONE
+    try:
+        async with websockets.connect(ws_url, ssl=ssl_ctx, family=socket.AF_INET) as ws:
+            msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+            if msg.get("type") != "auth_required":
+                return
+            await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
+            auth_resp = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+            if auth_resp.get("type") != "auth_ok":
+                return
+            await ws.send(json.dumps({
+                "id": 1, "type": "call_service",
+                "domain": "todo", "service": "update_item",
+                "service_data": {"entity_id": entity_id, "item": item_text, "status": "completed"},
+            }))
+            await asyncio.wait_for(ws.recv(), timeout=10)
+    except Exception as e:
+        log.warning(f"_ha_todo_complete_item: {e}")
+
+
 async def _web_shopping_assignments_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/api/shopping-assignments — active assignments."""
     if not _check_token(request):
@@ -4178,16 +4314,48 @@ async def _web_shopping_assignments_get(request: aiohttp_web.Request) -> aiohttp
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
 
+def _get_display_name(username: str) -> str:
+    """Lookup user's display_name from webapp_users, fallback to username."""
+    if not username:
+        return "дом"
+    try:
+        row = _db().execute(
+            "SELECT display_name FROM webapp_users WHERE username=?", (username,)
+        ).fetchone()
+        return (row[0] or username) if row else username
+    except Exception:
+        return username
+
+
+def _shop_push_text(items: list[str], assignee_name: str, assigner_name: str) -> tuple[str, str]:
+    """Build push notification title + body for shopping assignment."""
+    title = f"🛒 {assignee_name}, купи!"
+    if len(items) == 1:
+        body = f"• {items[0]}\n\nОт {assigner_name}"
+    else:
+        # Show up to 5 items, then "и ещё N"
+        shown = items[:5]
+        rest  = len(items) - len(shown)
+        lines = "\n".join(f"• {i}" for i in shown)
+        if rest:
+            lines += f"\n  и ещё {rest}..."
+        body = f"{lines}\n\nОт {assigner_name}"
+    return title, body
+
+
 async def _web_shopping_assignments_post(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """POST /ha-app/api/shopping-assignments — create assignment or mark done.
-    Body: {action: 'assign'|'done', item_text?, list_entity?, assigned_to?, id?}
+    Body: {action: 'assign'|'assign_batch'|'done', ...}
+      assign:       {item_text, list_entity?, assigned_to}
+      assign_batch: {items: [...], assigned_to}
+      done:         {id}
     """
     if not _check_token(request):
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
     try:
         body = await request.json()
         ha_user = request.headers.get("X-HA-User", "")
-        action = body.get("action", "assign")
+        action  = body.get("action", "assign")
         from datetime import datetime as _dt
         now_str = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -4205,12 +4373,32 @@ async def _web_shopping_assignments_post(request: aiohttp_web.Request) -> aiohtt
                     (item_text, list_entity, assigned_to, ha_user, now_str)
                 )
                 c.commit()
-            # Send push to assigned user
-            asyncio.create_task(push_notify(
-                assigned_to, "🛒 Купить",
-                f"{item_text} — от {ha_user or 'дома'}",
-                "/ha-app/"
-            ))
+            assignee_name = _get_display_name(assigned_to)
+            assigner_name = _get_display_name(ha_user)
+            title, notif_body = _shop_push_text([item_text], assignee_name, assigner_name)
+            asyncio.create_task(push_notify(assigned_to, title, notif_body, "/ha-app/"))
+            return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                        headers=_CORS_HEADERS)
+
+        elif action == "assign_batch":
+            items       = [i.strip() for i in body.get("items", []) if str(i).strip()]
+            assigned_to = body.get("assigned_to", "")
+            if not items or not assigned_to:
+                return aiohttp_web.Response(status=400, text='{"error":"missing fields"}',
+                                            content_type="application/json", headers=_CORS_HEADERS)
+            with _DB_LOCK:
+                c = _db()
+                for item_text in items:
+                    c.execute(
+                        "INSERT INTO shopping_assignments(item_text,list_entity,assigned_to,assigned_by,created_at) VALUES(?,?,?,?,?)",
+                        (item_text, "", assigned_to, ha_user, now_str)
+                    )
+                c.commit()
+            # One consolidated push notification
+            assignee_name = _get_display_name(assigned_to)
+            assigner_name = _get_display_name(ha_user)
+            title, notif_body = _shop_push_text(items, assignee_name, assigner_name)
+            asyncio.create_task(push_notify(assigned_to, title, notif_body, "/ha-app/"))
             return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
                                         headers=_CORS_HEADERS)
 
@@ -4221,8 +4409,13 @@ async def _web_shopping_assignments_post(request: aiohttp_web.Request) -> aiohtt
                                             content_type="application/json", headers=_CORS_HEADERS)
             with _DB_LOCK:
                 c = _db()
+                row = c.execute(
+                    "SELECT item_text, list_entity FROM shopping_assignments WHERE id=?", (row_id,)
+                ).fetchone()
                 c.execute("UPDATE shopping_assignments SET done=1 WHERE id=?", (row_id,))
                 c.commit()
+            if row:
+                asyncio.create_task(_ha_todo_complete_item(row[1] or SHOP_EID, row[0]))
             return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
                                         headers=_CORS_HEADERS)
 
@@ -4230,6 +4423,253 @@ async def _web_shopping_assignments_post(request: aiohttp_web.Request) -> aiohtt
                                     content_type="application/json", headers=_CORS_HEADERS)
     except Exception as e:
         log.error(f"shopping_assignments: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+# ── Family extra endpoints ─────────────────────────────────────────────────────
+
+async def _web_family_extra(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/family-extra — statuses, note, cooking, reactions."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        from datetime import datetime as _dt
+        c = _db()
+        rows = c.execute("SELECT username, status_emoji, status_text, updated_at FROM family_statuses").fetchall()
+        statuses = {r[0]: {"emoji": r[1], "text": r[2], "updated_at": r[3]} for r in rows}
+        note_row = c.execute("SELECT content, updated_by, updated_at FROM family_note WHERE id=1").fetchone()
+        note = {"content": note_row[0], "updated_by": note_row[1], "updated_at": note_row[2]} if note_row else {"content": "", "updated_by": "", "updated_at": ""}
+        today = _dt.now().strftime("%Y-%m-%d")
+        cook_row = c.execute("SELECT username FROM cooking_schedule WHERE date=?", (today,)).fetchone()
+        cooking = {"username": cook_row[0] if cook_row else "", "display_name": _get_display_name(cook_row[0]) if cook_row else ""}
+        reactions = [dict(r) for r in c.execute("SELECT from_user, to_user, reaction, created_at FROM family_reactions ORDER BY id DESC LIMIT 20").fetchall()]
+        return aiohttp_web.Response(
+            text=json.dumps({"statuses": statuses, "note": note, "cooking": cooking, "reactions": reactions}, ensure_ascii=False),
+            content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_family_status_post(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/family-status — set my status emoji."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        from datetime import datetime as _dt
+        body = await request.json()
+        username = request.headers.get("X-HA-User", "")
+        if not username:
+            return aiohttp_web.Response(status=400, text='{"error":"no user"}', content_type="application/json", headers=_CORS_HEADERS)
+        emoji   = body.get("emoji", "😊")[:8]
+        text    = body.get("text", "")[:50]
+        now_str = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+        with _DB_LOCK:
+            c = _db()
+            c.execute("INSERT OR REPLACE INTO family_statuses(username, status_emoji, status_text, updated_at) VALUES(?,?,?,?)",
+                      (username, emoji, text, now_str))
+            c.commit()
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_family_reaction(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/family-reaction — send a reaction push to another user."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        from datetime import datetime as _dt
+        body      = await request.json()
+        from_user = request.headers.get("X-HA-User", "")
+        to_user   = body.get("to_user", "")
+        reaction  = body.get("reaction", "🤗")[:8]
+        if not to_user:
+            return aiohttp_web.Response(status=400, text='{"error":"no to_user"}', content_type="application/json", headers=_CORS_HEADERS)
+        # Normalize: HA display name → webapp username (case-insensitive fallback)
+        c = _db()
+        norm = c.execute(
+            "SELECT username FROM webapp_users WHERE username=? OR LOWER(display_name)=LOWER(?)",
+            (to_user, to_user)
+        ).fetchone()
+        if norm:
+            to_user = norm[0]
+        now_str = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+        with _DB_LOCK:
+            c = _db()
+            c.execute("INSERT INTO family_reactions(from_user, to_user, reaction, created_at) VALUES(?,?,?,?)",
+                      (from_user, to_user, reaction, now_str))
+            # keep only last 100
+            c.execute("DELETE FROM family_reactions WHERE id NOT IN (SELECT id FROM family_reactions ORDER BY id DESC LIMIT 100)")
+            c.commit()
+        from_name = _get_display_name(from_user)
+        to_name   = _get_display_name(to_user)
+        log.info(f"family_reaction: {from_user} → {to_user} ({reaction}), sending push")
+        sent = await push_notify(to_user, f"{reaction} {to_name}!", f"{from_name} послал(а) тебе {reaction}", "/ha-app/")
+        log.info(f"family_reaction: push sent={sent} for to_user={to_user!r}")
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_family_note(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET/POST /ha-app/api/family-note — shared family note."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    if request.method == "POST":
+        try:
+            from datetime import datetime as _dt
+            body     = await request.json()
+            username = request.headers.get("X-HA-User", "")
+            content  = body.get("content", "")[:500]
+            now_str  = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+            with _DB_LOCK:
+                c = _db()
+                c.execute("INSERT OR REPLACE INTO family_note(id, content, updated_by, updated_at) VALUES(1,?,?,?)",
+                          (content, username, now_str))
+                c.commit()
+            return aiohttp_web.Response(text='{"ok":true}', content_type="application/json", headers=_CORS_HEADERS)
+        except Exception as e:
+            return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+    try:
+        c = _db()
+        row = c.execute("SELECT content, updated_by, updated_at FROM family_note WHERE id=1").fetchone()
+        result = {"content": row[0], "updated_by": row[1], "updated_at": row[2]} if row else {"content": "", "updated_by": "", "updated_at": ""}
+        return aiohttp_web.Response(text=json.dumps(result, ensure_ascii=False), content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_cooking(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET/POST /ha-app/api/cooking — who's cooking today."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    from datetime import datetime as _dt
+    today = _dt.now().strftime("%Y-%m-%d")
+    if request.method == "POST":
+        try:
+            body       = await request.json()
+            username   = body.get("username", "")
+            updated_by = request.headers.get("X-HA-User", "")
+            now_str    = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+            with _DB_LOCK:
+                c = _db()
+                if username:
+                    c.execute("INSERT OR REPLACE INTO cooking_schedule(date,username,updated_by,updated_at) VALUES(?,?,?,?)",
+                              (today, username, updated_by, now_str))
+                else:
+                    c.execute("DELETE FROM cooking_schedule WHERE date=?", (today,))
+                c.commit()
+            return aiohttp_web.Response(text='{"ok":true}', content_type="application/json", headers=_CORS_HEADERS)
+        except Exception as e:
+            return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+    try:
+        c = _db()
+        row = c.execute("SELECT username FROM cooking_schedule WHERE date=?", (today,)).fetchone()
+        username = row[0] if row else ""
+        return aiohttp_web.Response(
+            text=json.dumps({"username": username, "display_name": _get_display_name(username) if username else ""}, ensure_ascii=False),
+            content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_shopping_meta(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET/POST /ha-app/api/shopping-meta — item metadata (priority, quantity)."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    if request.method == "POST":
+        try:
+            body      = await request.json()
+            uid       = body.get("uid", "")
+            item_text = body.get("item_text", "")
+            priority  = int(body.get("priority", 0))
+            quantity  = str(body.get("quantity", ""))[:20]
+            if not uid:
+                return aiohttp_web.Response(status=400, text='{"error":"no uid"}', content_type="application/json", headers=_CORS_HEADERS)
+            with _DB_LOCK:
+                c = _db()
+                c.execute("INSERT OR REPLACE INTO shopping_item_meta(item_uid,item_text,priority,quantity) VALUES(?,?,?,?)",
+                          (uid, item_text, priority, quantity))
+                c.commit()
+            return aiohttp_web.Response(text='{"ok":true}', content_type="application/json", headers=_CORS_HEADERS)
+        except Exception as e:
+            return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+    try:
+        uids = [u.strip() for u in request.rel_url.query.get("uids","").split(",") if u.strip()]
+        c = _db()
+        result = {}
+        if uids:
+            placeholders = ",".join("?"*len(uids))
+            rows = c.execute(f"SELECT item_uid,priority,quantity FROM shopping_item_meta WHERE item_uid IN ({placeholders})", uids).fetchall()
+            for r in rows:
+                result[r[0]] = {"priority": r[1], "quantity": r[2]}
+        return aiohttp_web.Response(text=json.dumps(result), content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_shopping_quick(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET/POST /ha-app/api/shopping-quick — quick-add items."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    if request.method == "POST":
+        try:
+            body   = await request.json()
+            action = body.get("action", "add")
+            with _DB_LOCK:
+                c = _db()
+                if action == "add":
+                    name  = body.get("name","").strip()[:50]
+                    emoji = body.get("emoji","")[:4]
+                    if not name:
+                        return aiohttp_web.Response(status=400, text='{"error":"no name"}', content_type="application/json", headers=_CORS_HEADERS)
+                    c.execute("INSERT OR IGNORE INTO shopping_quick_items(name,emoji) VALUES(?,?)", (name, emoji))
+                elif action == "delete":
+                    item_id = body.get("id")
+                    if item_id is not None:
+                        c.execute("DELETE FROM shopping_quick_items WHERE id=?", (item_id,))
+                c.commit()
+            return aiohttp_web.Response(text='{"ok":true}', content_type="application/json", headers=_CORS_HEADERS)
+        except Exception as e:
+            return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+    try:
+        c = _db()
+        rows = c.execute("SELECT id,name,emoji FROM shopping_quick_items ORDER BY ord,id").fetchall()
+        result = [{"id": r[0], "name": r[1], "emoji": r[2]} for r in rows]
+        return aiohttp_web.Response(text=json.dumps(result, ensure_ascii=False), content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_shopping_stats(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/shopping-stats."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        from datetime import datetime as _dt
+        c = _db()
+        month_start = _dt.now().strftime("%Y-%m-01")
+        all_rows    = c.execute("SELECT assigned_to,COUNT(*) FROM shopping_assignments WHERE done=1 GROUP BY assigned_to ORDER BY COUNT(*) DESC").fetchall()
+        month_rows  = c.execute("SELECT assigned_to,COUNT(*) FROM shopping_assignments WHERE done=1 AND created_at>=? GROUP BY assigned_to ORDER BY COUNT(*) DESC",(month_start,)).fetchall()
+        assigner_rows = c.execute("SELECT assigned_by,COUNT(*) FROM shopping_assignments WHERE done=1 GROUP BY assigned_by ORDER BY COUNT(*) DESC").fetchall()
+        def enrich(rows):
+            return [{"username":r[0],"display_name":_get_display_name(r[0]),"count":r[1]} for r in rows if r[0]]
+        result = {"total": sum(r[1] for r in all_rows), "by_buyer": enrich(all_rows), "this_month": enrich(month_rows), "by_assigner": enrich(assigner_rows)}
+        return aiohttp_web.Response(text=json.dumps(result, ensure_ascii=False), content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_shopping_history(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/shopping-history — recent done assignments."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        c = _db()
+        rows = c.execute("SELECT id,item_text,assigned_to,assigned_by,created_at FROM shopping_assignments WHERE done=1 ORDER BY id DESC LIMIT 50").fetchall()
+        result = [{"id":r[0],"item_text":r[1],"assigned_to":r[2],"assigned_to_name":_get_display_name(r[2]),"assigned_by":r[3],"assigned_by_name":_get_display_name(r[3]),"created_at":r[4]} for r in rows]
+        return aiohttp_web.Response(text=json.dumps(result, ensure_ascii=False), content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
 
@@ -5292,8 +5732,10 @@ async def _web_ha_login(request: aiohttp_web.Request) -> aiohttp_web.Response:
             text=json.dumps({"ok": False, "error": "Неверный логин или пароль"}),
             content_type="application/json", headers=_CORS_HEADERS)
 
+    # Normalize username to lowercase to avoid duplicate records
+    username = username.lower()
     # Роль определяется по списку HA_WEBAPP_ADMINS в .env
-    role = "admin" if username.lower() in _HA_WEBAPP_ADMINS else "viewer"
+    role = "admin" if username in _HA_WEBAPP_ADMINS else "viewer"
     now_str = datetime.now(MSK).strftime("%Y-%m-%d %H:%M:%S")
 
     # Сохранить / обновить пользователя в webapp_users
@@ -5335,6 +5777,7 @@ _PERM_DEFAULTS = {
     "faces": False, "energy": True, "lights": True,
     "climate": True, "tv": True, "vacuum": True,
     "prayers": True, "weather": True, "scenes": True,
+    "shopping": True,
     "alerts": False, "nightmode": True, "server": False,
     "logbook": False, "activity": False,
     "devices": False, "cameras": False,
@@ -5359,6 +5802,23 @@ def _user_perms_save(username: str, perms: dict):
         c.execute("UPDATE webapp_users SET permissions=? WHERE username=?",
                   (json.dumps(perms), username))
         c.commit()
+
+async def _web_family_users(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/family-users — список пользователей для назначения покупок (любой авторизованный)."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        c = _db()
+        rows = c.execute(
+            "SELECT username, display_name FROM webapp_users ORDER BY display_name"
+        ).fetchall()
+        result = [{"username": r[0], "display_name": r[1] or r[0]} for r in rows]
+    except Exception:
+        result = []
+    return aiohttp_web.Response(
+        text=json.dumps(result, ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS)
+
 
 async def _web_webapp_users(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/api/webapp-users — список пользователей мини апс (admin only)."""
@@ -6045,6 +6505,384 @@ async def _web_night_mode_post(request: aiohttp_web.Request) -> aiohttp_web.Resp
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
 
+# ── Presence notify (HA → webhook) ────────────────────────────────────────────
+async def _web_presence_notify(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/presence-notify — called from HA automation."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body    = await request.json()
+        person  = body.get("person", "")   # HA display name e.g. "Камила"
+        state   = body.get("state", "")    # "home" or "not_home"
+        username = body.get("username", "")
+        if not person:
+            return aiohttp_web.Response(status=400, text='{"error":"no person"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        # Normalize username from webapp_users
+        c = _db()
+        if not username:
+            row = c.execute(
+                "SELECT username FROM webapp_users WHERE username=? OR LOWER(display_name)=LOWER(?)",
+                (person, person)
+            ).fetchone()
+            if row: username = row[0]
+        emoji = "🏠" if state == "home" else "🚗"
+        verb  = "пришёл(а) домой" if state == "home" else "покинул(а) дом"
+        display = _get_display_name(username) if username else person
+        title = f"{emoji} {display}"
+        notif_body = f"{display} {verb}"
+        # Push to everyone except the person themselves
+        rows = c.execute(
+            "SELECT DISTINCT username FROM push_subscriptions"
+        ).fetchall()
+        tasks = []
+        for row in rows:
+            u = row[0]
+            if u != username:
+                tasks.append(asyncio.create_task(
+                    push_notify(u, title, notif_body, "/ha-app/")
+                ))
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        log.info(f"presence_notify: {display} → {state}, notified {len(tasks)} users")
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    except Exception as e:
+        log.error(f"presence_notify: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+# ── TV ADB key commands ────────────────────────────────────────────────────────
+_TV_KEY_MAP = {
+    "up":     "KEYCODE_DPAD_UP",
+    "down":   "KEYCODE_DPAD_DOWN",
+    "left":   "KEYCODE_DPAD_LEFT",
+    "right":  "KEYCODE_DPAD_RIGHT",
+    "ok":     "KEYCODE_DPAD_CENTER",
+    "home":   "KEYCODE_HOME",
+    "back":   "KEYCODE_BACK",
+    "menu":   "KEYCODE_MENU",
+    "power":  "KEYCODE_POWER",
+    "mute":   "KEYCODE_MUTE",
+    "vol_up": "KEYCODE_VOLUME_UP",
+    "vol_dn": "KEYCODE_VOLUME_DOWN",
+    "play":   "KEYCODE_MEDIA_PLAY_PAUSE",
+    "prev":   "KEYCODE_MEDIA_PREVIOUS",
+    "next":   "KEYCODE_MEDIA_NEXT",
+}
+
+async def _web_tv_key(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/tv/key — send ADB keyevent to Android TV."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body = await request.json()
+        key  = body.get("key", "")
+        keycode = _TV_KEY_MAP.get(key)
+        if not keycode:
+            return aiohttp_web.Response(status=400, text='{"error":"unknown key"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        # Try androidtv.adb_command first, fall back to media_player service
+        try:
+            await ha_post("services/androidtv/adb_command",
+                          {"entity_id": TV_EID, "command": f"input keyevent {keycode}"})
+        except Exception:
+            # Fallback: map basic keys to media_player services
+            fallback = {
+                "KEYCODE_DPAD_UP": ("media_player", "media_next_track"),
+                "KEYCODE_DPAD_DOWN": ("media_player", "media_previous_track"),
+                "KEYCODE_HOME": ("media_player", "select_source", {"source": "Home"}),
+                "KEYCODE_MEDIA_PLAY_PAUSE": ("media_player", "media_play_pause"),
+            }
+            if keycode in fallback:
+                fb = fallback[keycode]
+                await ha_call(fb[0], fb[1], TV_EID, fb[2] if len(fb) > 2 else {})
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+# ── Reminders ─────────────────────────────────────────────────────────────────
+async def _web_reminders(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET/POST /ha-app/api/reminders"""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    username = request.headers.get("X-HA-User", "")
+    if request.method == "POST":
+        try:
+            from datetime import datetime as _dt
+            body       = await request.json()
+            text       = body.get("text", "")[:200]
+            remind_at  = body.get("remind_at", "").replace("T", " ")[:16]  # normalize "YYYY-MM-DDTHH:MM" → "YYYY-MM-DD HH:MM"
+            is_global  = int(bool(body.get("is_global", False)))
+            if not text or not remind_at:
+                return aiohttp_web.Response(status=400, text='{"error":"missing fields"}',
+                                            content_type="application/json", headers=_CORS_HEADERS)
+            now_str = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+            with _DB_LOCK:
+                c = _db()
+                c.execute(
+                    "INSERT INTO reminders(username,text,remind_at,is_global,created_at) VALUES(?,?,?,?,?)",
+                    (username, text, remind_at, is_global, now_str)
+                )
+                rid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+                c.commit()
+            return aiohttp_web.Response(
+                text=json.dumps({"ok": True, "id": rid}, ensure_ascii=False),
+                content_type="application/json", headers=_CORS_HEADERS)
+        except Exception as e:
+            return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+    # GET
+    try:
+        c = _db()
+        rows = c.execute(
+            "SELECT id,username,text,remind_at,is_global,done,created_at FROM reminders "
+            "WHERE done=0 AND (username=? OR is_global=1) ORDER BY remind_at",
+            (username,)
+        ).fetchall()
+        result = [{"id": r[0], "username": r[1], "text": r[2], "remind_at": r[3],
+                   "is_global": bool(r[4]), "done": bool(r[5])} for r in rows]
+        return aiohttp_web.Response(text=json.dumps(result, ensure_ascii=False),
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_reminders_delete(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """DELETE /ha-app/api/reminders/{id}"""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        rid      = int(request.match_info["id"])
+        username = request.headers.get("X-HA-User", "")
+        with _DB_LOCK:
+            c = _db()
+            # Admin can delete any; user can delete own
+            if username in _HA_WEBAPP_ADMINS:
+                c.execute("DELETE FROM reminders WHERE id=?", (rid,))
+            else:
+                c.execute("DELETE FROM reminders WHERE id=? AND username=?", (rid, username))
+            c.commit()
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _reminders_check_loop():
+    """Background task: check due reminders every 60s and send push."""
+    await asyncio.sleep(10)  # initial delay
+    while True:
+        try:
+            from datetime import datetime as _dt
+            now = _dt.now().strftime("%Y-%m-%d %H:%M")
+            c   = _db()
+            rows = c.execute(
+                "SELECT id, username, text, is_global FROM reminders "
+                "WHERE done=0 AND remind_at<=?", (now,)
+            ).fetchall()
+            for row in rows:
+                rid, uname, text, is_global = row[0], row[1], row[2], row[3]
+                title = "⏰ Напоминание"
+                body  = text
+                if is_global:
+                    await push_notify(None, title, body, "/ha-app/")
+                else:
+                    await push_notify(uname, title, body, "/ha-app/")
+                with _DB_LOCK:
+                    _db().execute("UPDATE reminders SET done=1 WHERE id=?", (rid,))
+                    _db().commit()
+                log.info(f"reminder fired: id={rid} user={uname!r} text={text!r}")
+        except Exception as e:
+            log.error(f"reminders_check_loop: {e}")
+        await asyncio.sleep(60)
+
+
+# ── Family Chat ───────────────────────────────────────────────────────────────
+async def _sse_broadcast_chat(msg_data: dict):
+    """Push chat message to all SSE clients."""
+    payload = json.dumps({"type": "chat", "msg": msg_data}, ensure_ascii=False)
+    dead = set()
+    for q in _sse_clients:
+        try:
+            q.put_nowait(payload)
+        except asyncio.QueueFull:
+            dead.add(q)
+    _sse_clients -= dead
+
+
+async def _web_chat(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET/POST /ha-app/api/chat"""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    username = request.headers.get("X-HA-User", "")
+    if request.method == "POST":
+        try:
+            from datetime import datetime as _dt
+            body = await request.json()
+            text = body.get("text", "").strip()[:500]
+            if not text:
+                return aiohttp_web.Response(status=400, text='{"error":"empty"}',
+                                            content_type="application/json", headers=_CORS_HEADERS)
+            now_str = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+            with _DB_LOCK:
+                c = _db()
+                c.execute(
+                    "INSERT INTO chat_messages(username,text,created_at) VALUES(?,?,?)",
+                    (username, text, now_str)
+                )
+                mid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+                c.commit()
+            display_name = _get_display_name(username)
+            msg_data = {"id": mid, "username": username, "display_name": display_name,
+                        "text": text, "created_at": now_str}
+            asyncio.create_task(_sse_broadcast_chat(msg_data))
+            # Push to others who are not online
+            rows = _db().execute(
+                "SELECT DISTINCT username FROM push_subscriptions WHERE username!=?", (username,)
+            ).fetchall()
+            for row in rows:
+                asyncio.create_task(push_notify(
+                    row[0], f"💬 {display_name}", text, "/ha-app/"
+                ))
+            return aiohttp_web.Response(
+                text=json.dumps({"ok": True, "id": mid}, ensure_ascii=False),
+                content_type="application/json", headers=_CORS_HEADERS)
+        except Exception as e:
+            return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+    # GET — last N messages
+    try:
+        limit = min(int(request.rel_url.query.get("limit", "50")), 200)
+        c = _db()
+        rows = c.execute(
+            "SELECT id,username,text,created_at FROM chat_messages "
+            "ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        rows = list(reversed(rows))
+        result = [{"id": r[0], "username": r[1],
+                   "display_name": _get_display_name(r[1]),
+                   "text": r[2], "created_at": r[3]} for r in rows]
+        return aiohttp_web.Response(text=json.dumps(result, ensure_ascii=False),
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+# ── Photo Album ───────────────────────────────────────────────────────────────
+async def _web_photos_upload(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/photos/upload — multipart file upload."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        import uuid as _uuid
+        from datetime import datetime as _dt
+        username = request.headers.get("X-HA-User", "")
+        reader   = await request.multipart()
+        filename = None
+        caption  = ""
+        async for part in reader:
+            if part.name == "photo":
+                ext = (part.filename or "img.jpg").rsplit(".", 1)[-1].lower()
+                if ext not in ("jpg", "jpeg", "png", "gif", "webp", "heic"):
+                    continue
+                safe_name = f"{_uuid.uuid4().hex}.{ext}"
+                path = PHOTOS_DIR / safe_name
+                with open(path, "wb") as f:
+                    while True:
+                        chunk = await part.read_chunk(65536)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                filename = safe_name
+            elif part.name == "caption":
+                caption = (await part.read()).decode("utf-8", errors="replace")[:200]
+        if not filename:
+            return aiohttp_web.Response(status=400, text='{"error":"no file"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        now_str = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+        with _DB_LOCK:
+            c = _db()
+            c.execute(
+                "INSERT INTO photos(username,filename,caption,created_at) VALUES(?,?,?,?)",
+                (username, filename, caption, now_str)
+            )
+            pid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+            c.commit()
+        return aiohttp_web.Response(
+            text=json.dumps({"ok": True, "id": pid, "filename": filename}, ensure_ascii=False),
+            content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        log.error(f"photos_upload: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_photos_list(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/photos"""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        limit = min(int(request.rel_url.query.get("limit", "40")), 100)
+        c = _db()
+        rows = c.execute(
+            "SELECT id,username,filename,caption,created_at FROM photos ORDER BY id DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+        result = [{"id": r[0], "username": r[1], "display_name": _get_display_name(r[1]),
+                   "url": f"/ha-app/api/photos/img/{r[2]}",
+                   "caption": r[3], "created_at": r[4]} for r in rows]
+        return aiohttp_web.Response(text=json.dumps(result, ensure_ascii=False),
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_photos_serve(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/photos/img/{filename} — serve photo."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    filename = request.match_info.get("filename", "")
+    # Sanitize: only allow safe filenames
+    if not filename or "/" in filename or ".." in filename:
+        return aiohttp_web.Response(status=400, text="Bad filename", headers=_CORS_HEADERS)
+    path = PHOTOS_DIR / filename
+    if not path.exists():
+        return aiohttp_web.Response(status=404, text="Not found", headers=_CORS_HEADERS)
+    ext = filename.rsplit(".", 1)[-1].lower()
+    ct  = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+           "gif": "image/gif", "webp": "image/webp", "heic": "image/heic"}.get(ext, "image/jpeg")
+    return aiohttp_web.Response(body=path.read_bytes(), content_type=ct,
+                                headers={**_CORS_HEADERS, "Cache-Control": "max-age=86400"})
+
+
+async def _web_photos_delete(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """DELETE /ha-app/api/photos/{id}"""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        pid      = int(request.match_info["id"])
+        username = request.headers.get("X-HA-User", "")
+        c = _db()
+        row = c.execute("SELECT username,filename FROM photos WHERE id=?", (pid,)).fetchone()
+        if not row:
+            return aiohttp_web.Response(status=404, text='{"error":"not found"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        if row[0] != username and username not in _HA_WEBAPP_ADMINS:
+            return aiohttp_web.Response(status=403, text='{"error":"forbidden"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        try:
+            (PHOTOS_DIR / row[1]).unlink(missing_ok=True)
+        except Exception:
+            pass
+        with _DB_LOCK:
+            _db().execute("DELETE FROM photos WHERE id=?", (pid,))
+            _db().commit()
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
 async def _start_web():
     """Запустить aiohttp веб-сервер для Mini App на 127.0.0.1:8766.
 
@@ -6134,6 +6972,30 @@ async def _start_web():
     app.router.add_route("OPTIONS", "/ha-app/api/scenes",            _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/scenes/{scene_id}", _web_options)
     app.router.add_get("/ha-app/api/user-avatar/{username}", _web_user_avatar)
+    app.router.add_get("/ha-app/api/family-users",  _web_family_users)
+    app.router.add_route("OPTIONS", "/ha-app/api/family-users", _web_options)
+    app.router.add_get("/ha-app/api/family-extra",     _web_family_extra)
+    app.router.add_post("/ha-app/api/family-status",   _web_family_status_post)
+    app.router.add_post("/ha-app/api/family-reaction",  _web_family_reaction)
+    app.router.add_get("/ha-app/api/family-note",       _web_family_note)
+    app.router.add_post("/ha-app/api/family-note",      _web_family_note)
+    app.router.add_get("/ha-app/api/cooking",           _web_cooking)
+    app.router.add_post("/ha-app/api/cooking",          _web_cooking)
+    app.router.add_get("/ha-app/api/shopping-meta",     _web_shopping_meta)
+    app.router.add_post("/ha-app/api/shopping-meta",    _web_shopping_meta)
+    app.router.add_get("/ha-app/api/shopping-quick",    _web_shopping_quick)
+    app.router.add_post("/ha-app/api/shopping-quick",   _web_shopping_quick)
+    app.router.add_get("/ha-app/api/shopping-stats",    _web_shopping_stats)
+    app.router.add_get("/ha-app/api/shopping-history",  _web_shopping_history)
+    app.router.add_route("OPTIONS", "/ha-app/api/family-extra",     _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/family-status",    _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/family-reaction",  _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/family-note",      _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/cooking",          _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/shopping-meta",    _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/shopping-quick",   _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/shopping-stats",   _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/shopping-history", _web_options)
     app.router.add_get("/ha-app/api/webapp-users",  _web_webapp_users)
     app.router.add_get("/ha-app/api/user-perms",    _web_user_perms_get)
     app.router.add_post("/ha-app/api/user-perms",   _web_user_perms_post)
@@ -6147,9 +7009,33 @@ async def _start_web():
     app.router.add_delete("/ha-app/api/push-subscribe",   _web_push_unsubscribe)
     app.router.add_route("OPTIONS", "/ha-app/api/push-subscribe", _web_options)
     # Shopping assignments
+    app.router.add_get("/ha-app/api/shopping-items",           _web_shopping_items)
+    app.router.add_post("/ha-app/api/shopping-items",          _web_shopping_items)
+    app.router.add_route("OPTIONS", "/ha-app/api/shopping-items", _web_options)
     app.router.add_get("/ha-app/api/shopping-assignments",    _web_shopping_assignments_get)
     app.router.add_post("/ha-app/api/shopping-assignments",   _web_shopping_assignments_post)
     app.router.add_route("OPTIONS", "/ha-app/api/shopping-assignments", _web_options)
+    # ── Presence / TV / Reminders / Chat / Photos ──────────────────────────
+    app.router.add_post("/ha-app/api/presence-notify",        _web_presence_notify)
+    app.router.add_route("OPTIONS", "/ha-app/api/presence-notify", _web_options)
+    app.router.add_post("/ha-app/api/tv/key",                 _web_tv_key)
+    app.router.add_route("OPTIONS", "/ha-app/api/tv/key",     _web_options)
+    app.router.add_get("/ha-app/api/reminders",               _web_reminders)
+    app.router.add_post("/ha-app/api/reminders",              _web_reminders)
+    app.router.add_delete("/ha-app/api/reminders/{id}",       _web_reminders_delete)
+    app.router.add_route("OPTIONS", "/ha-app/api/reminders",  _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/reminders/{id}", _web_options)
+    app.router.add_get("/ha-app/api/chat",                    _web_chat)
+    app.router.add_post("/ha-app/api/chat",                   _web_chat)
+    app.router.add_route("OPTIONS", "/ha-app/api/chat",       _web_options)
+    app.router.add_post("/ha-app/api/photos/upload",          _web_photos_upload)
+    app.router.add_get("/ha-app/api/photos",                  _web_photos_list)
+    app.router.add_get("/ha-app/api/photos/img/{filename}",   _web_photos_serve)
+    app.router.add_delete("/ha-app/api/photos/{id}",          _web_photos_delete)
+    app.router.add_route("OPTIONS", "/ha-app/api/photos/upload", _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/photos",     _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/photos/img/{filename}", _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/photos/{id}", _web_options)
     runner = aiohttp_web.AppRunner(app)
     await runner.setup()
     site = aiohttp_web.TCPSite(runner, "127.0.0.1", 8766)
@@ -6313,10 +7199,11 @@ async def main():
     _db_init()             # создать таблицы SQLite + однократная миграция из JSON
     _dev_init()            # загрузить devices из DB → заполнить LIGHTS/LIGHTS_ICON
     await _refresh_lights()  # сканировать HA, добавить новые устройства
-    asyncio.create_task(alert_loop())          # фоновая проверка алертов
-    asyncio.create_task(_start_web())          # HTTP сервер Mini App
-    asyncio.create_task(_frigate_event_loop()) # слушать события Frigate
+    asyncio.create_task(alert_loop())           # фоновая проверка алертов
+    asyncio.create_task(_start_web())           # HTTP сервер Mini App
+    asyncio.create_task(_frigate_event_loop())  # слушать события Frigate
     asyncio.create_task(_ha_state_watch_loop()) # SSE real-time обновления
+    asyncio.create_task(_reminders_check_loop()) # проверка напоминаний каждые 60с
     _activity_log("bot_start", f"v{_BOT_VERSION}")
     await bot.send_message(
         ADMIN_ID,
