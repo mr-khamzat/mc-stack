@@ -6906,6 +6906,30 @@ async def _web_turn_creds(request: aiohttp_web.Request) -> aiohttp_web.Response:
                                 content_type="application/json", headers=_CORS_HEADERS)
 
 
+# ── WebRTC pending calls (missed offer storage) ────────────────────────────────
+# {to_user: {from_user, from_display, payload, expires_at}}
+_pending_calls: dict = {}
+
+async def _web_call_pending(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/call/pending — check if there's a waiting call offer."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    username = request.headers.get("X-HA-User", "")
+    import time as _time
+    now = _time.time()
+    # Clean up expired
+    expired = [u for u, c in _pending_calls.items() if c["expires_at"] < now]
+    for u in expired:
+        del _pending_calls[u]
+    call = _pending_calls.get(username)
+    if call and call["expires_at"] > now:
+        return aiohttp_web.Response(
+            text=json.dumps(call, ensure_ascii=False),
+            content_type="application/json", headers=_CORS_HEADERS)
+    return aiohttp_web.Response(text='null', content_type="application/json",
+                                headers=_CORS_HEADERS)
+
+
 # ── WebRTC Call Signaling ──────────────────────────────────────────────────────
 async def _web_call_signal(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """POST /ha-app/api/call/signal — relay WebRTC signaling via SSE."""
@@ -6937,15 +6961,29 @@ async def _web_call_signal(request: aiohttp_web.Request) -> aiohttp_web.Response
             "signal_type": sig_type,
             "payload": payload,
         }, ensure_ascii=False)
-        global _sse_clients
+        global _sse_clients, _pending_calls
         dead = set()
         for q in _sse_clients:
             try: q.put_nowait(event_data)
             except asyncio.QueueFull: dead.add(q)
         _sse_clients -= dead
-        # For incoming call — send push to wake up target
+        # For incoming call — store pending offer (60s TTL) and send push
+        import time as _time
         if sig_type == "offer":
+            _pending_calls[to_user] = {
+                "from_user":    from_user,
+                "from_display": display,
+                "payload":      payload,
+                "call_type":    payload.get("callType", "audio"),
+                "expires_at":   _time.time() + 60,
+            }
             asyncio.create_task(push_notify(to_user, f"📞 {display} звонит", "Входящий звонок", "/ha-app/"))
+        elif sig_type in ("hangup", "reject"):
+            # Clear pending offer if caller hung up
+            _pending_calls.pop(to_user, None)
+        elif sig_type == "answer":
+            # Callee answered — clear pending
+            _pending_calls.pop(from_user, None)
         return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
                                     headers=_CORS_HEADERS)
     except Exception as e:
@@ -7107,6 +7145,8 @@ async def _start_web():
     app.router.add_route("OPTIONS", "/ha-app/api/photos/{id}", _web_options)
     app.router.add_post("/ha-app/api/call/signal",            _web_call_signal)
     app.router.add_route("OPTIONS", "/ha-app/api/call/signal", _web_options)
+    app.router.add_get("/ha-app/api/call/pending",            _web_call_pending)
+    app.router.add_route("OPTIONS", "/ha-app/api/call/pending", _web_options)
     app.router.add_get("/ha-app/api/turn-creds",              _web_turn_creds)
     app.router.add_route("OPTIONS", "/ha-app/api/turn-creds", _web_options)
     runner = aiohttp_web.AppRunner(app)

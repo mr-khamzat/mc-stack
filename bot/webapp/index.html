@@ -3326,6 +3326,8 @@ async function init() {
   if (!_statusIntervalId) _statusIntervalId = setInterval(loadStatus, 30000);
   // Start SSE for real-time updates
   startSSE();
+  // Check for missed incoming call (e.g. opened app from push notification)
+  setTimeout(_checkPendingCall, 1200);
 }
 
 // ── Actions ────────────────────────────────────────────────────────────────
@@ -3744,7 +3746,7 @@ function _attachRemoteStream(stream) {
   // Video element if exists
   const remoteVideo = document.getElementById('call-remote-video');
   if (remoteVideo) { remoteVideo.srcObject = stream; remoteVideo.play().catch(()=>{}); }
-  // Always also attach to audio element (critical for audio-only calls)
+  // Always also attach to audio element (critical for audio-only calls + iOS)
   let audioEl = document.getElementById('call-remote-audio');
   if (!audioEl) {
     audioEl = document.createElement('audio');
@@ -3755,6 +3757,21 @@ function _attachRemoteStream(stream) {
   }
   audioEl.srcObject = stream;
   audioEl.play().catch(()=>{});
+}
+
+async function _checkPendingCall() {
+  // Called on app open — checks if there's a missed incoming call offer
+  if (_rtcPeer) return; // already in a call
+  try {
+    const call = await api('/call/pending');
+    if (!call || !call.from_user) return;
+    // There's a waiting offer — set it up and show incoming call UI
+    _rtcCallTarget = { username: call.from_user, display: call.from_display || call.from_user };
+    _rtcCallType   = call.call_type || 'audio';
+    _rtcIsIncoming = true;
+    _rtcOfferSdp   = call.payload;
+    _showCallUI('incoming', call.from_display || call.from_user, _rtcCallType);
+  } catch(e) {}
 }
 
 async function _getIceServers() {
@@ -3782,6 +3799,13 @@ async function startCall(haName, displayName, type) {
   _rtcCallTarget = { username, display: displayName };
   _rtcIsIncoming = false;
   _showCallUI('outgoing', displayName, type);
+  // Unlock audio context on iOS while inside user gesture
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = ctx.createBuffer(1, 1, 22050);
+    const src = ctx.createBufferSource();
+    src.buffer = buf; src.connect(ctx.destination); src.start(0);
+  } catch(_) {}
   try {
     _rtcLocalStream = await navigator.mediaDevices.getUserMedia(
       type === 'video' ? { video: true, audio: true } : { audio: true }
@@ -3840,6 +3864,26 @@ async function _handleCallSignal(sig) {
 
 async function acceptCall() {
   if (!_rtcOfferSdp) return;
+  // Create audio element NOW while inside user gesture (tap on "Принять")
+  // This unlocks autoplay on iOS before we get the remote stream
+  let audioEl = document.getElementById('call-remote-audio');
+  if (!audioEl) {
+    audioEl = document.createElement('audio');
+    audioEl.id = 'call-remote-audio';
+    audioEl.autoplay = true;
+    audioEl.setAttribute('playsinline', '');
+    document.body.appendChild(audioEl);
+  }
+  // Play a silent buffer to unlock audio context on iOS
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = ctx.createBuffer(1, 1, 22050);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    src.start(0);
+  } catch(_) {}
+
   try {
     _rtcLocalStream = await navigator.mediaDevices.getUserMedia(
       _rtcCallType === 'video' ? { video: true, audio: true } : { audio: true }
@@ -7481,6 +7525,12 @@ window.addEventListener('online',  function() {
   var b = document.getElementById('offline-banner'); if (b) b.classList.remove('show');
   loadStatus();
   showToast('🌐 Соединение восстановлено', 2500);
+});
+// Check for pending call when user switches back to tab / app
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'visible' && !_rtcPeer && HA_USERNAME) {
+    _checkPendingCall();
+  }
 });
 window.addEventListener('offline', function() {
   var b = document.getElementById('offline-banner');
