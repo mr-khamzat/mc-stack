@@ -5453,10 +5453,14 @@ let _admPerms = {};
 let _admSelectedUser = null;
 
 function admShowTab(tab) {
-    document.getElementById('adm-perms-panel').style.display = tab === 'perms' ? '' : 'none';
-    document.getElementById('adm-log-panel').style.display   = tab === 'log'   ? '' : 'none';
-    document.getElementById('adm-tab-perms').className = 'btn ' + (tab === 'perms' ? 'btn-primary' : 'btn-neutral');
-    document.getElementById('adm-tab-log').className   = 'btn ' + (tab === 'log'   ? 'btn-primary' : 'btn-neutral');
+    const pp = document.getElementById('adm-perms-panel');
+    const lp = document.getElementById('adm-log-panel');
+    const tp = document.getElementById('adm-tab-perms');
+    const tl = document.getElementById('adm-tab-log');
+    if (pp) pp.style.display = tab === 'perms' ? '' : 'none';
+    if (lp) lp.style.display = tab === 'log'   ? '' : 'none';
+    if (tp) tp.className = 'btn ' + (tab === 'perms' ? 'btn-primary' : 'btn-neutral');
+    if (tl) tl.className = 'btn ' + (tab === 'log'   ? 'btn-primary' : 'btn-neutral');
     if (tab === 'log') admLoadLog();
 }
 
@@ -5596,14 +5600,17 @@ function themeSet(name) {
 function themePickerToggle() {
   const p = document.getElementById('theme-picker');
   const o = document.getElementById('theme-overlay');
+  if (!p || !o) return;
   const open = p.style.display !== 'none';
   p.style.display = open ? 'none' : 'flex';
   o.style.display = open ? 'none' : 'block';
 }
 
 function themePickerClose() {
-  document.getElementById('theme-picker').style.display = 'none';
-  document.getElementById('theme-overlay').style.display = 'none';
+  const p = document.getElementById('theme-picker');
+  const o = document.getElementById('theme-overlay');
+  if (p) p.style.display = 'none';
+  if (o) o.style.display = 'none';
 }
 
 // Apply saved theme immediately
