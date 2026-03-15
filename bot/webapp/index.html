@@ -819,7 +819,7 @@ body::before {
 
 /* ── Chat ── */
 .chat-messages-wrap {
-  max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
+  max-height: 460px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
   padding-bottom: 6px; margin-bottom: 10px;
   scrollbar-width: none;
 }
@@ -2189,6 +2189,8 @@ body.fab-open .fab-backdrop { display: block; }
           </div>
           <div id="chat-messages" class="chat-messages-wrap"></div>
           <div class="chat-input-row">
+            <input id="chat-image-input" type="file" accept="image/*" style="display:none" onchange="sendChatImage(this)">
+            <button class="chat-voice-btn" onclick="document.getElementById('chat-image-input').click()" title="Отправить фото" style="font-size:17px">📷</button>
             <input id="chat-input" type="text" placeholder="Сообщение..." class="chat-input-field" autocomplete="off" onkeydown="if(event.key==='Enter')sendChatMessage()">
             <button class="btn btn-accent chat-send-btn" onclick="sendChatMessage()">↑</button>
             <span id="voice-timer" style="display:none;font-size:11px;color:#f87171;min-width:34px;text-align:center;font-variant-numeric:tabular-nums"></span>
@@ -3720,6 +3722,9 @@ function renderChat() {
     if (m.msg_type === 'voice' && m.voice_file) {
       const src = `${API_BASE}/chat/voice/${encodeURIComponent(m.voice_file)}?token=${encodeURIComponent(API_TOKEN)}`;
       body = `<audio controls src="${src}" style="width:100%;max-width:220px;height:36px"></audio>`;
+    } else if (m.msg_type === 'image' && m.voice_file) {
+      const src = `${API_BASE}/chat/voice/${encodeURIComponent(m.voice_file)}?token=${encodeURIComponent(API_TOKEN)}`;
+      body = `<img src="${src}" style="max-width:220px;max-height:200px;border-radius:10px;cursor:pointer;display:block" onclick="openPhotoLightbox('${src}','')">`;
     } else {
       body = `<div class="chat-msg-text">${escapeHtml(m.text)}</div>`;
     }
@@ -3743,6 +3748,22 @@ async function clearChat() {
     _chatMessages = [];
     renderChat();
     showToast('🗑 Чат очищен');
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+async function sendChatImage(input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';
+  try {
+    const fd = new FormData();
+    fd.append('image', file, file.name);
+    const res = await fetch(`${API_BASE}/chat/image`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${API_TOKEN}`, 'X-HA-User': HA_USERNAME, 'X-HA-User-Role': HA_USER_ROLE },
+      body: fd
+    });
+    if (!res.ok) throw new Error(await res.text());
   } catch(e) { showToast('❌ ' + e.message); }
 }
 
@@ -3861,30 +3882,58 @@ async function loadCallHistory() {
 }
 
 // ── Activity Timeline ─────────────────────────────────────────────────────────
-let _timelineLoaded = false;
+let _timelineLoaded = false, _timelineItems = [], _timelinePage = 0;
+const _TIMELINE_PAGE = 3;
 
 async function loadTimeline() {
   _timelineLoaded = true;
+  _timelinePage = 0;
   const el = document.getElementById('timeline-content');
   if (!el) return;
   el.innerHTML = '<div style="color:#60608a;text-align:center;padding:12px">Загрузка...</div>';
   try {
-    const items = await api('/timeline');
-    if (!items.length) {
-      el.innerHTML = '<div style="color:#60608a;text-align:center;padding:16px">Нет событий</div>';
-      return;
-    }
-    el.innerHTML = items.map(e => {
-      const dt = e.ts ? e.ts.slice(5,16) : '';
-      return `<div class="timeline-entry">
-        <div class="timeline-entry-icon">${escapeHtml(e.icon)}</div>
-        <div class="timeline-entry-body">
-          <div class="timeline-entry-title">${escapeHtml(e.title)}</div>
-          <div class="timeline-entry-time">${dt}</div>
-        </div>
-      </div>`;
-    }).join('');
+    _timelineItems = await api('/timeline');
+    _renderTimelinePage(el);
   } catch(e) { el.innerHTML = '<div style="color:#ef4444;text-align:center;padding:12px">Ошибка</div>'; }
+}
+
+function _renderTimelinePage(el) {
+  const items = _timelineItems;
+  if (!items.length) {
+    el.innerHTML = '<div style="color:#60608a;text-align:center;padding:16px">Нет событий</div>';
+    return;
+  }
+  const total = items.length;
+  const start = _timelinePage * _TIMELINE_PAGE;
+  const slice = items.slice(start, start + _TIMELINE_PAGE);
+  const hasPrev = start > 0;
+  const hasNext = start + _TIMELINE_PAGE < total;
+
+  const rows = slice.map(e => {
+    const dt = e.ts ? e.ts.slice(5,16) : '';
+    return `<div class="timeline-entry">
+      <div class="timeline-entry-icon">${escapeHtml(e.icon)}</div>
+      <div class="timeline-entry-body">
+        <div class="timeline-entry-title">${escapeHtml(e.title)}</div>
+        <div class="timeline-entry-time">${dt}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const nav = `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;margin-top:4px">
+    <button onclick="_timelinePrev()" style="background:none;border:none;color:${hasPrev?'#8b8bc0':'#3a3a5a'};cursor:${hasPrev?'pointer':'default'};font-size:12px;padding:4px 8px">◀ Назад</button>
+    <span style="font-size:11px;color:#50508a">${start+1}–${Math.min(start+_TIMELINE_PAGE,total)} из ${total}</span>
+    <button onclick="_timelineNext()" style="background:none;border:none;color:${hasNext?'#8b8bc0':'#3a3a5a'};cursor:${hasNext?'pointer':'default'};font-size:12px;padding:4px 8px">Далее ▶</button>
+  </div>`;
+
+  el.innerHTML = rows + (total > _TIMELINE_PAGE ? nav : '');
+}
+
+function _timelinePrev() {
+  if (_timelinePage > 0) { _timelinePage--; _renderTimelinePage(document.getElementById('timeline-content')); }
+}
+function _timelineNext() {
+  if ((_timelinePage + 1) * _TIMELINE_PAGE < _timelineItems.length) { _timelinePage++; _renderTimelinePage(document.getElementById('timeline-content')); }
 }
 
 // ── Photo Album ─────────────────────────────────────────────────────────────

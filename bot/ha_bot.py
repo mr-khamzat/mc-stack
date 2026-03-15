@@ -6888,6 +6888,11 @@ async def _chat_cleanup_loop():
                     (VOICES_DIR / vf).unlink(missing_ok=True)
                 except Exception:
                     pass
+            # Also clean activity_log older than 3 days
+            with _DB_LOCK:
+                c = _db()
+                c.execute("DELETE FROM activity_log WHERE ts < ?", (cutoff,))
+                c.commit()
         except Exception as e:
             log.warning(f"chat_cleanup_loop: {e}")
 
@@ -7057,7 +7062,7 @@ async def _web_chat_voice_upload(request: aiohttp_web.Request) -> aiohttp_web.Re
 
 
 async def _web_chat_voice_serve(request: aiohttp_web.Request) -> aiohttp_web.Response:
-    """GET /ha-app/api/chat/voice/{filename} — serve voice file."""
+    """GET /ha-app/api/chat/voice/{filename} — serve voice/image file."""
     if not _check_token_qs(request):
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
     filename = request.match_info.get("filename", "")
@@ -7068,8 +7073,60 @@ async def _web_chat_voice_serve(request: aiohttp_web.Request) -> aiohttp_web.Res
         return aiohttp_web.Response(status=404, text="not found", headers=_CORS_HEADERS)
     ext = filename.rsplit(".", 1)[-1].lower()
     ct = {"webm": "audio/webm", "ogg": "audio/ogg", "mp4": "audio/mp4",
-          "m4a": "audio/mp4", "aac": "audio/aac", "wav": "audio/wav"}.get(ext, "audio/webm")
+          "m4a": "audio/mp4", "aac": "audio/aac", "wav": "audio/wav",
+          "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+          "webp": "image/webp", "gif": "image/gif", "heic": "image/heic"}.get(ext, "application/octet-stream")
     return aiohttp_web.Response(body=path.read_bytes(), content_type=ct, headers=_CORS_HEADERS)
+
+
+async def _web_chat_image_upload(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/chat/image — upload image to chat."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        import uuid as _uuid
+        from datetime import datetime as _dt
+        username = request.headers.get("X-HA-User", "")
+        reader   = await request.multipart()
+        filename = None
+        async for part in reader:
+            if part.name == "image":
+                orig_name = part.filename or "photo.jpg"
+                orig_ext  = orig_name.rsplit(".", 1)[-1].lower()
+                ext = orig_ext if orig_ext in ("jpg","jpeg","png","webp","gif","heic") else "jpg"
+                safe_name = f"{_uuid.uuid4().hex}.{ext}"
+                path = VOICES_DIR / safe_name
+                with open(path, "wb") as f:
+                    while True:
+                        chunk = await part.read_chunk(65536)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                filename = safe_name
+                break
+        if not filename:
+            return aiohttp_web.Response(status=400, text='{"error":"no file"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        now_str = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+        with _DB_LOCK:
+            c = _db()
+            c.execute(
+                "INSERT INTO chat_messages(username,text,created_at,msg_type,voice_file) VALUES(?,?,?,?,?)",
+                (username, "", now_str, "image", filename)
+            )
+            mid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+            c.commit()
+        display = _get_display_name(username)
+        msg_data = {"id": mid, "username": username, "display_name": display,
+                    "text": "", "msg_type": "image", "voice_file": filename, "created_at": now_str}
+        await _sse_broadcast_chat(msg_data)
+        asyncio.create_task(push_notify(None, f"📷 {display}", "Фото в чате", "/ha-app/"))
+        return aiohttp_web.Response(
+            text=json.dumps({"ok": True, "id": mid, "filename": filename}, ensure_ascii=False),
+            content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        log.error(f"image_upload: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
 
 # ── Call history ──────────────────────────────────────────────────────────────
@@ -7448,6 +7505,7 @@ async def _start_web():
     app.router.add_get("/ha-app/api/photos/img/{filename}",   _web_photos_serve)
     app.router.add_delete("/ha-app/api/photos/{id}",          _web_photos_delete)
     app.router.add_post("/ha-app/api/chat/voice",             _web_chat_voice_upload)
+    app.router.add_post("/ha-app/api/chat/image",             _web_chat_image_upload)
     app.router.add_get("/ha-app/api/chat/voice/{filename}",   _web_chat_voice_serve)
     app.router.add_get("/ha-app/api/call-history",            _web_call_history)
     app.router.add_get("/ha-app/api/timeline",                _web_timeline)
