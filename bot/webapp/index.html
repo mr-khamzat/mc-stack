@@ -4732,29 +4732,32 @@ function renderFamilyCards() {
     const state = (typeof info === 'object') ? info.state : info;
     const lat   = (typeof info === 'object') ? info.lat   : null;
     const lon   = (typeof info === 'object') ? info.lon   : null;
-    const isHome = state === 'home';
+    const isHome    = state === 'home';
+    const isUnknown = state === 'unknown';
     // Find webapp username
     const username = webUsers[name] || webUsers[name.toLowerCase()] || name.toLowerCase();
     const st = statuses[username] || {};
-    const emojiStatus = st.emoji || (isHome ? '🏠' : '🚗');
-    const statusText  = st.text  || (isHome ? 'Дома' : 'Не дома');
+    const emojiStatus = st.emoji || (isUnknown ? '👤' : isHome ? '🏠' : '🚗');
+    const statusText  = st.text  || (isUnknown ? 'Не отслеживается' : isHome ? 'Дома' : 'Не дома');
     const initials    = name.charAt(0).toUpperCase();
     const mapUrl      = (lat && lon) ? `https://www.google.com/maps?q=${lat},${lon}` : null;
     const pulse       = isHome ? '<div class="family-pulse"></div>' : '';
     const mapLink     = mapUrl ? `<a href="${mapUrl}" target="_blank" rel="noopener" style="font-size:14px;text-decoration:none;color:#64748b">📍</a>` : '';
     const isSelf = (username === HA_USERNAME);
-    // Pass HA display name — startCall resolves to webapp username at click time (like familySendReaction)
     const callBtns = !isSelf ? `
       <button class="family-call-btn" onclick="startCall('${escapeAttr(name)}','${escapeAttr(name)}','audio')" title="Аудио звонок">📞</button>
       <button class="family-call-btn video" onclick="startCall('${escapeAttr(name)}','${escapeAttr(name)}','video')" title="Видео звонок">📹</button>` : '';
+    const badgeHtml = isUnknown
+      ? `<span class="family-card-badge away" style="opacity:0.5">👤 Без трекинга</span>`
+      : `<span class="family-card-badge ${isHome?'home':'away'}">${isHome?'🏠 Дома':'🚗 Не дома'}</span>`;
     return `<div class="family-card ${isHome?'home':''}">
       <div class="family-card-top">
-        <div class="family-avatar ${isHome?'home':''}">${pulse}${initials}</div>
+        <div class="family-avatar ${isHome?'home':''}" style="${isUnknown?'opacity:0.7':''}">${pulse}${initials}</div>
         <div class="family-info">
           <div class="family-card-name">${escapeHtml(name)}</div>
           <div class="family-card-status">${escapeHtml(statusText)}</div>
         </div>
-        <span class="family-card-badge ${isHome?'home':'away'}">${isHome?'🏠 Дома':'🚗 Не дома'}</span>
+        ${badgeHtml}
         <span class="family-emoji-status" onclick="familySetStatus()" title="Изменить статус">${emojiStatus}</span>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">

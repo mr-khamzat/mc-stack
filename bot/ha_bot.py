@@ -1035,7 +1035,13 @@ async def get_family() -> dict:
                 # Если состав семьи изменился — уведомить всех SSE-клиентов
                 if new_keys != prev_keys:
                     log.info(f"Family members changed: {prev_keys} → {new_keys}")
-                    _sse_broadcast({"type": "family_members_changed", "members": list(new_keys)})
+                    payload = json.dumps({"type": "family_members_changed", "members": list(new_keys)}, ensure_ascii=False)
+                    global _sse_clients
+                    dead = set()
+                    for _q in _sse_clients:
+                        try: _q.put_nowait(payload)
+                        except asyncio.QueueFull: dead.add(_q)
+                    _sse_clients -= dead
                 return members
     except Exception as e:
         log.error(f"get_family: {e}")
@@ -4880,6 +4886,19 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
                 "lat":   attrs_f.get("latitude"),
                 "lon":   attrs_f.get("longitude"),
             }
+
+        # Добавить webapp-пользователей у которых нет HA person entity
+        try:
+            ha_names_lower = {n.lower() for n in family_data}
+            wb_rows = _db().execute(
+                "SELECT username, display_name FROM webapp_users ORDER BY display_name"
+            ).fetchall()
+            for wb_user, wb_display in wb_rows:
+                display = wb_display or wb_user
+                if display.lower() not in ha_names_lower and wb_user.lower() not in ha_names_lower:
+                    family_data[display] = {"state": "unknown", "lat": None, "lon": None}
+        except Exception:
+            pass
 
         lights_data = {}
         for (name, (domain, eid)), d in zip(LIGHTS.items(), lights_results):
