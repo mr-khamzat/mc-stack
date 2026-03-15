@@ -112,10 +112,6 @@
 [data-theme="cyber"] #loading { background: #010a06 !important; }
 
 /* ─── Light: полноценный Premium Glass дизайн ─── */
-@keyframes lightFloat {
-  0%,100% { transform: translateY(0px);   box-shadow: 0 6px 24px rgba(99,102,241,0.09), 0 2px 8px rgba(0,0,0,0.05), inset 0 1px 0 rgba(255,255,255,0.95); }
-  50%      { transform: translateY(-4px);  box-shadow: 0 14px 40px rgba(99,102,241,0.14), 0 4px 14px rgba(0,0,0,0.07), inset 0 1px 0 rgba(255,255,255,0.95); }
-}
 @keyframes lightShimmer {
   0%   { background-position: -200% center; }
   100% { background-position: 200% center; }
@@ -162,20 +158,20 @@
     inset 0 1px 0 rgba(255,255,255,0.95) !important;
   backdrop-filter: blur(28px) saturate(180%) !important;
   -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
-  animation: sectionIn 0.4s ease both, lightFloat 8s ease-in-out infinite !important;
-  animation-delay: var(--sec-delay, 0s), calc(var(--sec-delay, 0s) + 0.5s) !important;
+  animation: sectionIn 0.4s ease both !important;
+  animation-delay: var(--sec-delay, 0s) !important;
 }
 /* Стаггер анимации по nth-child */
 [data-theme="light"] .section:nth-child(1)  { --sec-delay: 0.00s; }
-[data-theme="light"] .section:nth-child(2)  { --sec-delay: 0.06s; --float-offset: 1.2s; }
-[data-theme="light"] .section:nth-child(3)  { --sec-delay: 0.12s; --float-offset: 2.4s; }
-[data-theme="light"] .section:nth-child(4)  { --sec-delay: 0.18s; --float-offset: 3.6s; }
-[data-theme="light"] .section:nth-child(5)  { --sec-delay: 0.24s; --float-offset: 4.8s; }
-[data-theme="light"] .section:nth-child(6)  { --sec-delay: 0.30s; --float-offset: 0.4s; }
-[data-theme="light"] .section:nth-child(7)  { --sec-delay: 0.36s; --float-offset: 1.6s; }
-[data-theme="light"] .section:nth-child(8)  { --sec-delay: 0.42s; --float-offset: 2.8s; }
-[data-theme="light"] .section:nth-child(9)  { --sec-delay: 0.48s; --float-offset: 4.0s; }
-[data-theme="light"] .section:nth-child(n+10) { --sec-delay: 0.54s; --float-offset: 0.8s; }
+[data-theme="light"] .section:nth-child(2)  { --sec-delay: 0.06s; }
+[data-theme="light"] .section:nth-child(3)  { --sec-delay: 0.12s; }
+[data-theme="light"] .section:nth-child(4)  { --sec-delay: 0.18s; }
+[data-theme="light"] .section:nth-child(5)  { --sec-delay: 0.24s; }
+[data-theme="light"] .section:nth-child(6)  { --sec-delay: 0.30s; }
+[data-theme="light"] .section:nth-child(7)  { --sec-delay: 0.36s; }
+[data-theme="light"] .section:nth-child(8)  { --sec-delay: 0.42s; }
+[data-theme="light"] .section:nth-child(9)  { --sec-delay: 0.48s; }
+[data-theme="light"] .section:nth-child(n+10) { --sec-delay: 0.54s; }
 /* Левый акцентный бордюр */
 [data-theme="light"] .section {
   border-left: 3px solid var(--accent) !important;
@@ -267,6 +263,232 @@
 }
 [data-theme="light"] .login-orbit { border-color: rgba(79,110,247,0.35) !important; }
 [data-theme="light"] .login-orbit::after { background: var(--accent) !important; box-shadow: 0 0 8px var(--accent) !important; }
+
+/* ═══════════════════════════════════════════════════════
+   ── INNER-CARD ANIMATIONS — GPU-only (no translateY) ──
+   All animations use only: box-shadow, opacity, filter
+   Never animate layout/position → no repaint lag
+   ═══════════════════════════════════════════════════════ */
+
+/* TV dot — живой зелёный пульс */
+@keyframes tvDotPulse {
+  0%,100% { box-shadow: 0 0 6px rgba(52,211,153,0.6), 0 0 14px rgba(52,211,153,0.28); opacity: 1; }
+  50%     { box-shadow: 0 0 12px rgba(52,211,153,0.95), 0 0 26px rgba(52,211,153,0.5); opacity: 0.92; }
+}
+.tv-dot.on { animation: tvDotPulse 2s ease-in-out infinite; }
+
+/* Лампочки включённые — янтарное дыхание */
+@keyframes lightBtnGlow {
+  0%,100% { box-shadow: 0 0 18px rgba(251,191,36,0.20), 0 4px 16px rgba(0,0,0,0.28), 0 1px 0 rgba(255,220,80,0.16) inset; }
+  50%     { box-shadow: 0 0 32px rgba(251,191,36,0.40), 0 4px 16px rgba(0,0,0,0.28), 0 1px 0 rgba(255,220,80,0.28) inset; }
+}
+.light-btn.on { animation: lightBtnGlow 2.8s ease-in-out infinite; }
+
+/* Дома — зелёный пульс бейджа */
+@keyframes homeBadgeGlow {
+  0%,100% { box-shadow: 0 0 8px rgba(52,211,153,0.14); }
+  50%     { box-shadow: 0 0 18px rgba(52,211,153,0.34); }
+}
+.badge-home { animation: homeBadgeGlow 3s ease-in-out infinite; }
+
+/* Следующий намаз — accent glow */
+@keyframes nextPrayerGlow {
+  0%,100% { box-shadow: 0 0 24px rgba(99,102,241,0.20), 0 4px 16px rgba(0,0,0,0.28), 0 1px 0 rgba(167,139,250,0.14) inset; }
+  50%     { box-shadow: 0 0 40px rgba(99,102,241,0.38), 0 4px 16px rgba(0,0,0,0.28), 0 1px 0 rgba(167,139,250,0.26) inset; }
+}
+.prayer-item.next { animation: nextPrayerGlow 2.6s ease-in-out infinite; }
+
+/* Флеш при обновлении значений (добавляется JS-ом) */
+@keyframes statFlash {
+  0%   { opacity: 1; }
+  20%  { opacity: 0.38; }
+  60%  { opacity: 1; }
+}
+.stat-flash { animation: statFlash 0.45s ease; }
+
+/* Progress/Namaz shimmer — overlay через ::after, не трогает inline background */
+@keyframes barShimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+.srv-progress-bg,
+.namaz-progress-bg { position: relative; overflow: hidden; }
+.srv-progress-fill::after,
+.namaz-progress-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 30%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.28), transparent);
+  animation: barShimmer 2.2s ease-in-out infinite;
+}
+
+/* ── Эмодзи / иконки в хедерах секций — объём и чёткость ── */
+/* Default dark: мягкое purple-blue свечение */
+.section-header > span:first-child {
+  filter: drop-shadow(0 1px 3px rgba(0,0,0,0.55)) drop-shadow(0 0 6px rgba(99,102,241,0.22));
+}
+/* OLED: нет фона — сильнее контраст */
+[data-theme="oled"] .section-header > span:first-child {
+  filter: drop-shadow(0 0 8px rgba(99,102,241,0.55)) drop-shadow(0 1px 2px rgba(0,0,0,0.9)) !important;
+}
+/* Cyber: неоново-зелёное свечение */
+[data-theme="cyber"] .section-header > span:first-child {
+  filter: drop-shadow(0 0 8px rgba(0,255,159,0.75)) drop-shadow(0 1px 2px rgba(0,0,0,0.7)) !important;
+}
+/* Light: цветная тень, подчёркивает глубину */
+[data-theme="light"] .section-header > span:first-child {
+  filter: drop-shadow(0 2px 5px rgba(0,0,0,0.22)) drop-shadow(0 0 8px rgba(79,110,247,0.30)) !important;
+}
+
+/* ═══════════════════════════════════════════════════════
+   ── DARK THEME UPGRADE — более "вау" карточки ──
+   ═══════════════════════════════════════════════════════ */
+/* Секции — рicher gradient + левый accent strip */
+:root:not([data-theme]) .section,
+:root[data-theme=""] .section {
+  border-left: 2px solid rgba(99,102,241,0.38);
+}
+/* Номер/заголовок — ярче */
+.section-header {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── OLED upgrade ── */
+[data-theme="oled"] .section {
+  background: linear-gradient(155deg, rgba(255,255,255,0.055) 0%, rgba(255,255,255,0.015) 100%) !important;
+  border: 0.5px solid rgba(99,102,241,0.22) !important;
+  border-top-color: rgba(150,150,255,0.28) !important;
+  border-left: 2px solid rgba(99,102,241,0.45) !important;
+  box-shadow:
+    0 0 0 0.5px rgba(99,102,241,0.08),
+    0 12px 36px rgba(0,0,0,0.75),
+    0 1px 0 rgba(180,180,255,0.08) inset !important;
+}
+[data-theme="oled"] .section-header {
+  color: rgba(230,230,255,0.95) !important;
+  text-shadow: 0 0 14px rgba(99,102,241,0.22);
+}
+[data-theme="oled"] body {
+  background: #000 !important;
+}
+[data-theme="oled"] .stat-card {
+  background: linear-gradient(145deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.015) 100%) !important;
+  border: 0.5px solid rgba(99,102,241,0.18) !important;
+  border-top-color: rgba(150,150,255,0.22) !important;
+}
+[data-theme="oled"] .stat-value { color: #fff !important; }
+[data-theme="oled"] .stat-label { color: rgba(160,160,220,0.65) !important; }
+
+/* ── Cyber upgrade — добавляем анимацию рамки секций ── */
+@keyframes cyberBorderPulse {
+  0%,100% { border-color: rgba(0,255,159,0.28); border-top-color: rgba(0,255,159,0.42); }
+  50%     { border-color: rgba(0,255,159,0.45); border-top-color: rgba(0,255,159,0.70); }
+}
+[data-theme="cyber"] .section { animation: sectionIn 0.4s ease both, cyberBorderPulse 3s ease-in-out infinite !important; }
+[data-theme="cyber"] .section-header > span:not(.chevron) {
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+[data-theme="cyber"] .stat-value {
+  color: #00ff9f !important;
+  text-shadow: 0 0 12px rgba(0,255,159,0.5);
+}
+[data-theme="cyber"] .stat-label {
+  color: rgba(0,255,159,0.55) !important;
+  letter-spacing: 0.8px;
+}
+[data-theme="cyber"] .clim-val {
+  color: #00ff9f !important;
+  text-shadow: 0 0 10px rgba(0,255,159,0.45);
+}
+[data-theme="cyber"] .family-name { color: rgba(200,255,230,0.9) !important; }
+[data-theme="cyber"] .prayer-name { color: rgba(200,255,230,0.85) !important; }
+[data-theme="cyber"] .tv-status-text { color: rgba(180,255,210,0.85) !important; }
+/* Cyber scan-line overlay */
+[data-theme="cyber"] body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,255,159,0.012) 2px,
+    rgba(0,255,159,0.012) 4px
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Light upgrade — clean energy, больший contrast ── */
+[data-theme="light"] .section-header {
+  letter-spacing: -0.4px !important;
+}
+[data-theme="light"] .stat-value {
+  color: var(--lt-text) !important;
+  font-weight: 800 !important;
+}
+[data-theme="light"] .clim-val {
+  color: var(--lt-text) !important;
+  font-weight: 800 !important;
+}
+[data-theme="light"] .stat-card {
+  background: rgba(255,255,255,0.72) !important;
+  border: 1px solid rgba(79,110,247,0.12) !important;
+  border-top-color: rgba(255,255,255,0.98) !important;
+  box-shadow: 0 4px 16px rgba(79,110,247,0.09), 0 1px 0 rgba(255,255,255,0.95) inset !important;
+}
+[data-theme="light"] .stat-label {
+  color: var(--lt-text3) !important;
+  font-weight: 700 !important;
+}
+[data-theme="light"] .family-item {
+  background: rgba(255,255,255,0.65) !important;
+  border: 1px solid rgba(79,110,247,0.10) !important;
+  border-top-color: rgba(255,255,255,0.95) !important;
+  box-shadow: 0 2px 10px rgba(79,110,247,0.08), 0 1px 0 rgba(255,255,255,0.9) inset !important;
+}
+[data-theme="light"] .family-name { color: var(--lt-text) !important; }
+[data-theme="light"] .clim-card {
+  background: rgba(255,255,255,0.65) !important;
+  border: 1px solid rgba(79,110,247,0.10) !important;
+  border-top-color: rgba(255,255,255,0.95) !important;
+  box-shadow: 0 3px 12px rgba(79,110,247,0.08), 0 1px 0 rgba(255,255,255,0.9) inset !important;
+}
+[data-theme="light"] .clim-label { color: var(--lt-text3) !important; }
+[data-theme="light"] .prayer-item {
+  background: rgba(255,255,255,0.55) !important;
+  border: 1px solid rgba(79,110,247,0.10) !important;
+  box-shadow: 0 2px 8px rgba(79,110,247,0.07) !important;
+}
+[data-theme="light"] .prayer-item.next {
+  background: linear-gradient(135deg, rgba(79,110,247,0.12) 0%, rgba(124,92,246,0.08) 100%) !important;
+  border-color: rgba(79,110,247,0.30) !important;
+  border-top-color: rgba(167,139,250,0.45) !important;
+  box-shadow: 0 0 28px rgba(79,110,247,0.18), 0 4px 16px rgba(0,0,0,0.06) !important;
+}
+[data-theme="light"] .prayer-name { color: var(--lt-text2) !important; }
+[data-theme="light"] .prayer-time { color: var(--lt-text) !important; }
+[data-theme="light"] .prayer-item.next .prayer-name { color: #4f6ef7 !important; }
+[data-theme="light"] .prayer-item.next .prayer-time { color: #4f6ef7 !important; }
+[data-theme="light"] .light-btn.off {
+  background: rgba(255,255,255,0.55) !important;
+  border-color: rgba(79,110,247,0.12) !important;
+  color: var(--lt-text3) !important;
+}
+[data-theme="light"] .light-btn.on {
+  background: linear-gradient(145deg, rgba(255,185,0,0.18) 0%, rgba(255,160,0,0.10) 100%) !important;
+  border-color: rgba(255,185,0,0.45) !important;
+  color: #c87800 !important;
+  box-shadow: 0 0 20px rgba(255,185,0,0.22), 0 4px 14px rgba(0,0,0,0.08) !important;
+}
+[data-theme="light"] .tv-status {
+  background: rgba(255,255,255,0.60) !important;
+  border: 1px solid rgba(79,110,247,0.10) !important;
+  box-shadow: 0 2px 10px rgba(79,110,247,0.07) !important;
+}
 
 body {
   font-family: -apple-system, 'SF Pro Display', 'Inter', BlinkMacSystemFont, sans-serif;
@@ -910,7 +1132,7 @@ body::before {
 .srv-progress-row { margin-bottom: 9px; }
 .srv-progress-label { display: flex; justify-content: space-between; font-size: 12px; color: rgba(165,165,212,0.8); margin-bottom: 4px; font-weight: 500; }
 .srv-progress-bg { background: rgba(255,255,255,0.07); border-radius: 6px; height: 8px; overflow: hidden; }
-.srv-progress-fill { height: 100%; border-radius: 6px; transition: width 0.5s ease; }
+.srv-progress-fill { height: 100%; border-radius: 6px; transition: width 0.5s ease; position: relative; overflow: hidden; }
 .srv-svc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .srv-svc-item { display: flex; align-items: center; gap: 7px; padding: 7px 10px; background: rgba(255,255,255,0.05); border-radius: 9px; font-size: 12px; }
 .srv-svc-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
@@ -940,7 +1162,7 @@ body::before {
 .namaz-widget-label { font-size: 11px; color: rgba(165,150,230,0.8); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
 .namaz-countdown { font-size: 28px; font-weight: 700; color: #c4b5fd; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
 .namaz-progress-bg { background: rgba(255,255,255,0.07); border-radius: 4px; height: 4px; overflow: hidden; margin-top: 8px; }
-.namaz-progress-fill { height: 100%; background: linear-gradient(90deg, #6366f1, #8b5cf6); border-radius: 4px; transition: width 1s linear; }
+.namaz-progress-fill { height: 100%; background: linear-gradient(90deg, #6366f1, #8b5cf6); border-radius: 4px; transition: width 1s linear; position: relative; overflow: hidden; }
 
 /* ── Night Mode ── */
 .night-mode-card {
@@ -1855,6 +2077,15 @@ function hideLoading() {
   } catch(e) {}
 }
 
+// ── Flash animation helper ──────────────────────────────────────────────────
+function flashEl(el) {
+  if (!el) return;
+  el.classList.remove('stat-flash');
+  void el.offsetWidth; // reflow to restart animation
+  el.classList.add('stat-flash');
+  el.addEventListener('animationend', () => el.classList.remove('stat-flash'), { once: true });
+}
+
 // ── Apply status ───────────────────────────────────────────────────────────
 function applyStatus(d) {
   lastStatus = d;
@@ -1864,11 +2095,13 @@ function applyStatus(d) {
   if (d.power != null) {
     const w = parseFloat(d.power);
     powerEl.innerHTML = '<span>' + Math.round(w) + '</span><span class="stat-unit"> Вт</span>';
+    flashEl(powerEl);
   }
 
   const tempEl = document.getElementById('stat-temp');
   if (d.temp_detskaia != null) {
     tempEl.innerHTML = '<span>' + parseFloat(d.temp_detskaia).toFixed(1) + '</span><span class="stat-unit"> °C</span>';
+    flashEl(tempEl);
   }
 
   const inetEl = document.getElementById('stat-internet');
