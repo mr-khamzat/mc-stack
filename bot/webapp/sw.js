@@ -1,5 +1,5 @@
 // Service Worker — Умный Дом PWA
-const CACHE = 'smarthome-v18';
+const CACHE = 'smarthome-v19';
 
 self.addEventListener('install', function(e) {
   self.skipWaiting();

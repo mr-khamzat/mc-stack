@@ -4516,7 +4516,7 @@ async def _web_family_reaction(request: aiohttp_web.Request) -> aiohttp_web.Resp
         from_name = _get_display_name(from_user)
         to_name   = _get_display_name(to_user)
         log.info(f"family_reaction: {from_user} → {to_user} ({reaction}), sending push")
-        sent = await push_notify(to_user, f"{reaction} {to_name}!", f"{from_name} послал(а) тебе {reaction}", "/ha-app/")
+        sent = await push_notify(to_user, f"{from_name}: {reaction}", reaction, "/ha-app/")
         log.info(f"family_reaction: push sent={sent} for to_user={to_user!r}")
         return aiohttp_web.Response(text='{"ok":true}', content_type="application/json", headers=_CORS_HEADERS)
     except Exception as e:

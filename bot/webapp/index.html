@@ -1880,6 +1880,14 @@ body.fab-open .fab-backdrop { display: block; }
 .family-card-badge.away { background:rgba(100,116,139,0.15); color:#94a3b8; }
 .family-emoji-status { font-size:22px; flex-shrink:0; cursor:pointer; }
 .family-reactions { display:flex; gap:6px; flex-wrap:wrap; }
+.family-ping-btn {
+  padding:5px 10px; border-radius:20px; border:1px solid rgba(99,102,241,0.25);
+  background:rgba(99,102,241,0.08); color:#c4b5fd; font-size:12px; font-weight:600;
+  cursor:pointer; touch-action:manipulation; transition:all .15s; white-space:nowrap;
+}
+.family-ping-btn:active { transform:scale(0.92); background:rgba(99,102,241,0.22); }
+.family-ping-btn.urgent { border-color:rgba(239,68,68,0.35); background:rgba(239,68,68,0.08); color:#fca5a5; }
+.family-ping-btn.home   { border-color:rgba(52,211,153,0.35); background:rgba(52,211,153,0.08); color:#6ee7b7; }
 .family-react-btn {
   background: rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08);
   border-radius:20px; padding:6px 11px; font-size:15px; cursor:pointer;
@@ -4761,9 +4769,16 @@ function renderFamilyCards() {
         <span class="family-emoji-status" onclick="familySetStatus()" title="Изменить статус">${emojiStatus}</span>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
-        <div class="family-reactions">
-          ${['🤗','❤️','👋','😘','💪'].map(r =>
-            `<button class="family-react-btn" onclick="familySendReaction('${escapeAttr(name)}','${r}')">${r}</button>`
+        <div class="family-reactions" style="display:flex;flex-wrap:wrap;gap:5px;align-items:center">
+          ${isSelf ? '' : [
+            {t:'🏠 Дома',       cls:'home',   msg:'🏠 Дома'},
+            {t:'💼 На работе',  cls:'',        msg:'💼 На работе'},
+            {t:'🏫 В школе',    cls:'',        msg:'🏫 В школе'},
+            {t:'🏃 Давай домой',cls:'',        msg:'🏃 Давай домой!'},
+            {t:'🚨 Срочно',     cls:'urgent',  msg:'🚨 Срочно! Ответь!'},
+            {t:'🤔 Ты где?',    cls:'',        msg:'🤔 Ты где?'},
+          ].map(p =>
+            `<button class="family-ping-btn ${p.cls}" onclick="familySendReaction('${escapeAttr(name)}','${escapeAttr(p.msg)}')" title="${escapeAttr(p.msg)}">${p.t}</button>`
           ).join('')}
           ${callBtns}
         </div>
