@@ -844,6 +844,26 @@ body::before {
 }
 .chat-input-field::placeholder { color: rgba(130,130,175,0.5); }
 .chat-send-btn { padding: 10px 16px; font-size: 18px; line-height: 1; flex-shrink: 0; }
+.chat-voice-btn {
+  width:38px; height:38px; border-radius:50%; border:1px solid rgba(99,102,241,0.3);
+  background:rgba(99,102,241,0.1); color:#a5b4fc; font-size:17px; flex-shrink:0;
+  cursor:pointer; touch-action:none; transition:all .15s; display:flex; align-items:center; justify-content:center;
+}
+.chat-voice-btn.recording { background:rgba(239,68,68,0.25); border-color:rgba(239,68,68,0.5); color:#fca5a5; animation:callPulse 1s infinite; }
+/* Timeline */
+.timeline-entry { display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.05); }
+.timeline-entry:last-child { border-bottom:none; }
+.timeline-entry-icon { font-size:18px; flex-shrink:0; width:26px; text-align:center; }
+.timeline-entry-body { flex:1; min-width:0; }
+.timeline-entry-title { font-size:13px; color:#e2e8f0; }
+.timeline-entry-time { font-size:11px; color:#475569; margin-top:2px; }
+/* Call history */
+.call-hist-item { display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); }
+.call-hist-icon { font-size:20px; flex-shrink:0; }
+.call-hist-info { flex:1; min-width:0; }
+.call-hist-names { font-size:13px; font-weight:600; color:#e2e8f0; }
+.call-hist-meta { font-size:11px; color:#64748b; margin-top:2px; }
+.call-hist-status { font-size:13px; flex-shrink:0; }
 
 /* ── Reminders ── */
 .reminder-item {
@@ -2155,11 +2175,12 @@ body.fab-open .fab-backdrop { display: block; }
           <div class="family-widget-title">⏱ Активность</div>
           <div class="family-timeline" id="family-timeline"></div>
         </div>
-        <!-- Family tabs: Chat | Reminders | Photos -->
+        <!-- Family tabs: Chat | Reminders | Photos | Calls -->
         <div class="family-tabs-bar">
           <button class="family-tab-btn active" id="ftab-chat-btn" onclick="familyTab('chat')">💬 Чат</button>
-          <button class="family-tab-btn" id="ftab-remind-btn" onclick="familyTab('remind')">🔔 Напоминания</button>
-          <button class="family-tab-btn" id="ftab-photos-btn" onclick="familyTab('photos')">📸 Фото</button>
+          <button class="family-tab-btn" id="ftab-remind-btn" onclick="familyTab('remind')">🔔</button>
+          <button class="family-tab-btn" id="ftab-photos-btn" onclick="familyTab('photos')">📸</button>
+          <button class="family-tab-btn" id="ftab-calls-btn" onclick="familyTab('calls')">📞</button>
         </div>
         <!-- Tab: Chat -->
         <div id="ftab-chat" class="family-tab-pane">
@@ -2167,6 +2188,9 @@ body.fab-open .fab-backdrop { display: block; }
           <div class="chat-input-row">
             <input id="chat-input" type="text" placeholder="Сообщение..." class="chat-input-field" autocomplete="off" onkeydown="if(event.key==='Enter')sendChatMessage()">
             <button class="btn btn-accent chat-send-btn" onclick="sendChatMessage()">↑</button>
+            <button class="chat-voice-btn" id="chat-voice-btn"
+              onpointerdown="voiceStart(event)" onpointerup="voiceStop(event)" onpointercancel="voiceStop(event)"
+              title="Держи для записи">🎤</button>
           </div>
         </div>
         <!-- Tab: Reminders -->
@@ -2194,6 +2218,25 @@ body.fab-open .fab-backdrop { display: block; }
           <div id="photos-grid" class="photos-grid">
             <div style="color:#60608a;font-size:13px;text-align:center;padding:10px;grid-column:span 3">Загрузка...</div>
           </div>
+        </div>
+        <!-- Tab: Calls -->
+        <div id="ftab-calls" class="family-tab-pane" style="display:none">
+          <div id="call-history-list" style="display:flex;flex-direction:column;gap:6px;padding:4px 0"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TIMELINE -->
+  <div class="section" id="sec-timeline">
+    <div class="section-header" onclick="toggleSection('sec-timeline-body');if(!_timelineLoaded)loadTimeline()">
+      <span>⏱ Лента активности</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body" id="sec-timeline-body" style="display:none">
+      <div class="section-content">
+        <div id="timeline-content">
+          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Откройте для загрузки</div>
         </div>
       </div>
     </div>
@@ -3667,9 +3710,16 @@ function renderChat() {
     const isMe = m.username === me;
     const dt = new Date(m.created_at);
     const timeStr = dt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    let body;
+    if (m.msg_type === 'voice' && m.voice_file) {
+      const src = `${API_BASE}/chat/voice/${encodeURIComponent(m.voice_file)}?token=${encodeURIComponent(API_TOKEN)}`;
+      body = `<audio controls src="${src}" style="width:100%;max-width:220px;height:36px"></audio>`;
+    } else {
+      body = `<div class="chat-msg-text">${escapeHtml(m.text)}</div>`;
+    }
     return `<div class="chat-msg ${isMe ? 'me' : ''}">
       <div class="chat-msg-author">${escapeHtml(m.display_name || m.username)}</div>
-      <div class="chat-msg-text">${escapeHtml(m.text)}</div>
+      ${body}
       <div class="chat-msg-time">${timeStr}</div>
     </div>`;
   }).join('');
@@ -3693,6 +3743,113 @@ function onChatSSE(msgData) {
   _chatMessages.push(msgData);
   if (_chatMessages.length > 100) _chatMessages = _chatMessages.slice(-100);
   renderChat();
+}
+
+// ── Voice recording ──────────────────────────────────────────────────────────
+let _voiceRecorder = null, _voiceChunks = [], _voiceStream = null;
+
+async function voiceStart(e) {
+  if (_voiceRecorder) return;
+  try {
+    _voiceStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    });
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus' : 'audio/ogg;codecs=opus';
+    _voiceRecorder = new MediaRecorder(_voiceStream, { mimeType });
+    _voiceChunks = [];
+    _voiceRecorder.ondataavailable = ev => { if (ev.data.size > 0) _voiceChunks.push(ev.data); };
+    _voiceRecorder.onstop = _voiceSend;
+    _voiceRecorder.start(100);
+    const btn = document.getElementById('chat-voice-btn');
+    if (btn) btn.classList.add('recording');
+  } catch(err) { showToast('🎤 Нет доступа к микрофону'); }
+}
+
+function voiceStop(e) {
+  if (!_voiceRecorder || _voiceRecorder.state === 'inactive') return;
+  _voiceRecorder.stop();
+  _voiceRecorder = null;
+  if (_voiceStream) { _voiceStream.getTracks().forEach(t => t.stop()); _voiceStream = null; }
+  const btn = document.getElementById('chat-voice-btn');
+  if (btn) btn.classList.remove('recording');
+}
+
+async function _voiceSend() {
+  if (!_voiceChunks.length) return;
+  try {
+    const mimeType = _voiceChunks[0].type || 'audio/webm';
+    const ext = mimeType.includes('ogg') ? 'ogg' : 'webm';
+    const blob = new Blob(_voiceChunks, { type: mimeType });
+    if (blob.size < 1000) { showToast('Слишком короткое'); return; }
+    const fd = new FormData();
+    fd.append('voice', blob, `voice.${ext}`);
+    const res = await fetch(`${API_BASE}/chat/voice`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${API_TOKEN}`, 'X-HA-User': HA_USERNAME, 'X-HA-User-Role': HA_USER_ROLE },
+      body: fd
+    });
+    if (!res.ok) throw new Error(await res.text());
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+// ── Call history ──────────────────────────────────────────────────────────────
+let _callHistLoaded = false;
+
+async function loadCallHistory() {
+  _callHistLoaded = true;
+  const el = document.getElementById('call-history-list');
+  if (!el) return;
+  el.innerHTML = '<div style="color:#60608a;text-align:center;padding:12px">Загрузка...</div>';
+  try {
+    const items = await api('/call-history');
+    if (!items.length) {
+      el.innerHTML = '<div style="color:#60608a;text-align:center;padding:16px">Звонков ещё не было</div>';
+      return;
+    }
+    el.innerHTML = items.map(c => {
+      const statusIcon = { answered:'✅', missed:'📵', rejected:'❌' }[c.status] || '📞';
+      const typeIcon = c.call_type === 'video' ? '📹' : '📞';
+      const dur = c.duration_sec ? `${Math.floor(c.duration_sec/60)}:${String(c.duration_sec%60).padStart(2,'0')}` : '—';
+      const dt = c.started_at ? c.started_at.slice(5,16) : '';
+      const isMy = c.from_user === HA_USERNAME;
+      return `<div class="call-hist-item">
+        <div class="call-hist-icon">${typeIcon}</div>
+        <div class="call-hist-info">
+          <div class="call-hist-names">${isMy ? '→' : '←'} ${escapeHtml(isMy ? c.to_display : c.from_display)}</div>
+          <div class="call-hist-meta">${dt} · ${dur}</div>
+        </div>
+        <div class="call-hist-status">${statusIcon}</div>
+      </div>`;
+    }).join('');
+  } catch(e) { el.innerHTML = '<div style="color:#ef4444;text-align:center;padding:12px">Ошибка</div>'; }
+}
+
+// ── Activity Timeline ─────────────────────────────────────────────────────────
+let _timelineLoaded = false;
+
+async function loadTimeline() {
+  _timelineLoaded = true;
+  const el = document.getElementById('timeline-content');
+  if (!el) return;
+  el.innerHTML = '<div style="color:#60608a;text-align:center;padding:12px">Загрузка...</div>';
+  try {
+    const items = await api('/timeline');
+    if (!items.length) {
+      el.innerHTML = '<div style="color:#60608a;text-align:center;padding:16px">Нет событий</div>';
+      return;
+    }
+    el.innerHTML = items.map(e => {
+      const dt = e.ts ? e.ts.slice(5,16) : '';
+      return `<div class="timeline-entry">
+        <div class="timeline-entry-icon">${escapeHtml(e.icon)}</div>
+        <div class="timeline-entry-body">
+          <div class="timeline-entry-title">${escapeHtml(e.title)}</div>
+          <div class="timeline-entry-time">${dt}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) { el.innerHTML = '<div style="color:#ef4444;text-align:center;padding:12px">Ошибка</div>'; }
 }
 
 // ── Photo Album ─────────────────────────────────────────────────────────────
@@ -4814,7 +4971,7 @@ function renderFamilyWidgets() {
 }
 
 function familyTab(tab) {
-  ['chat','remind','photos'].forEach(t => {
+  ['chat','remind','photos','calls'].forEach(t => {
     const pane = document.getElementById('ftab-' + t);
     const btn  = document.getElementById('ftab-' + t + '-btn');
     if (!pane || !btn) return;
@@ -4822,6 +4979,7 @@ function familyTab(tab) {
     pane.style.display = active ? '' : 'none';
     btn.classList.toggle('active', active);
   });
+  if (tab === 'calls' && !_callHistLoaded) loadCallHistory();
 }
 
 async function familySendReaction(haName, reaction) {
@@ -7762,15 +7920,54 @@ async function fabAction(act) {
   } else if (act === 'refresh') {
     loadStatus();
     showToast('🔄 Обновление...');
+  } else if (act === 'night_mode') {
+    try {
+      const cfg = await api('/night-mode');
+      await api('/night-mode', 'POST', { enabled: !cfg.enabled, start: cfg.start || '23:00', end: cfg.end || '07:00', volume: cfg.volume || 20 });
+      showToast(cfg.enabled ? '🌙 Ночной режим выкл' : '🌙 Ночной режим вкл');
+    } catch(e) { showToast('❌ Ошибка'); }
+  } else if (act === 'cinema_mode') {
+    // Dim all lights to 20% + turn on TV
+    for (var eid of Object.keys(LIGHTS_MAP)) {
+      try { await api('/action', 'POST', {service: (LIGHTS_DOMAIN[eid]||'light') + '.turn_on', entity_id: eid, extra:{brightness_pct:15}}); } catch(e) {}
+    }
+    showToast('🎬 Режим кино');
+    setTimeout(loadStatus, 800);
+  } else if (act === 'morning_mode') {
+    for (var eid of Object.keys(LIGHTS_MAP)) {
+      try { await api('/action', 'POST', {service: (LIGHTS_DOMAIN[eid]||'light') + '.turn_on', entity_id: eid, extra:{brightness_pct:100, color_temp:4000}}); } catch(e) {}
+    }
+    showToast('☀️ Доброе утро!');
+    setTimeout(loadStatus, 800);
+  } else if (act === 'ping_all') {
+    try {
+      await fetch(API_BASE + '/family-reaction', {
+        method:'POST',
+        headers:{'Authorization':'Bearer '+API_TOKEN,'Content-Type':'application/json','X-HA-User':HA_USERNAME,'X-HA-User-Role':HA_USER_ROLE},
+        body: JSON.stringify({to_user:'__all__', reaction:'📢 Все домой!'})
+      });
+      showToast('📢 Пинг отправлен всем');
+    } catch(e) { showToast('❌ Ошибка'); }
+  } else if (act === 'vacuum_home') {
+    callService('vacuum.return_to_base', 'vacuum.pylik');
+    showToast('🤖 Пылесос домой');
+  } else if (act === 'climate_off') {
+    try { await api('/action', 'POST', {service:'climate.turn_off', entity_id:'climate.teplyi_pol_lodzhiia', extra:{}}); showToast('❄️ Климат выкл'); } catch(e) { showToast('❌ Ошибка'); }
   }
 }
 
 // ── FAB Admin (configure FAB actions) ────────────────────────────────────────
 var _FAB_PRESETS = [
   {icon:'💡', label:'Весь свет выкл',  action:'lights_off'},
-  {icon:'🚪', label:'Ухожу домой',     action:'away'},
+  {icon:'🚪', label:'Ухожу',           action:'away'},
   {icon:'🤖', label:'Пылесос запуск',  action:'vacuum'},
-  {icon:'🔄', label:'Обновить данные', action:'refresh'},
+  {icon:'🤖', label:'Пылесос домой',   action:'vacuum_home'},
+  {icon:'🔄', label:'Обновить',        action:'refresh'},
+  {icon:'🌙', label:'Ночной режим',    action:'night_mode'},
+  {icon:'🎬', label:'Режим кино',      action:'cinema_mode'},
+  {icon:'☀️', label:'Доброе утро',     action:'morning_mode'},
+  {icon:'📢', label:'Все домой!',      action:'ping_all'},
+  {icon:'❄️', label:'Климат выкл',    action:'climate_off'},
 ];
 function renderFabAdmin() {
   var cfg = _getFabConfig();

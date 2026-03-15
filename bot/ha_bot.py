@@ -150,6 +150,8 @@ _HA_WEBAPP_ADMINS = {u.strip().lower() for u in os.environ.get("HA_WEBAPP_ADMINS
 FAMILY_USERS_FILE  = Path("/opt/ha-bot/family_users.json")
 PHOTOS_DIR         = Path("/opt/ha-bot/photos")
 PHOTOS_DIR.mkdir(exist_ok=True)
+VOICES_DIR         = Path("/opt/ha-bot/voices")
+VOICES_DIR.mkdir(exist_ok=True)
 
 # ── VAPID keys (Web Push) ──────────────────────────────────────────────────────
 VAPID_PRIVATE_PEM_FILE = Path("/opt/ha-bot/vapid_private.pem")
@@ -311,12 +313,28 @@ CREATE TABLE IF NOT EXISTS photos (
 );
     """)
     c.commit()
-    # Schema migration: add username column to activity_log
-    try:
-        c.execute("ALTER TABLE activity_log ADD COLUMN username TEXT NOT NULL DEFAULT ''")
-        c.commit()
-    except Exception:
-        pass  # already exists
+    # Schema migrations
+    for migration in [
+        "ALTER TABLE activity_log ADD COLUMN username TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE chat_messages ADD COLUMN msg_type TEXT NOT NULL DEFAULT 'text'",
+        "ALTER TABLE chat_messages ADD COLUMN voice_file TEXT NOT NULL DEFAULT ''",
+        """CREATE TABLE IF NOT EXISTS call_log (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_user    TEXT NOT NULL,
+            to_user      TEXT NOT NULL,
+            call_type    TEXT NOT NULL DEFAULT 'audio',
+            started_at   TEXT NOT NULL,
+            answered_at  TEXT,
+            ended_at     TEXT,
+            duration_sec INTEGER,
+            status       TEXT NOT NULL DEFAULT 'missed'
+        )""",
+    ]:
+        try:
+            c.execute(migration)
+            c.commit()
+        except Exception:
+            pass
     _db_migrate()
 
 def _db_migrate():
@@ -4494,9 +4512,15 @@ async def _web_family_reaction(request: aiohttp_web.Request) -> aiohttp_web.Resp
         body      = await request.json()
         from_user = request.headers.get("X-HA-User", "")
         to_user   = body.get("to_user", "")
-        reaction  = body.get("reaction", "🤗")[:8]
+        reaction  = body.get("reaction", "🤗")[:80]
         if not to_user:
             return aiohttp_web.Response(status=400, text='{"error":"no to_user"}', content_type="application/json", headers=_CORS_HEADERS)
+        # Broadcast to all users
+        if to_user == "__all__":
+            from_name = _get_display_name(from_user)
+            sent = await push_notify(None, f"{from_name}: {reaction}", reaction, "/ha-app/")
+            return aiohttp_web.Response(text=json.dumps({"ok": True, "sent": sent}),
+                                        content_type="application/json", headers=_CORS_HEADERS)
         # Normalize: HA display name → webapp username (case-insensitive fallback)
         c = _db()
         norm = c.execute(
@@ -6802,13 +6826,14 @@ async def _web_chat(request: aiohttp_web.Request) -> aiohttp_web.Response:
         limit = min(int(request.rel_url.query.get("limit", "50")), 200)
         c = _db()
         rows = c.execute(
-            "SELECT id,username,text,created_at FROM chat_messages "
+            "SELECT id,username,text,created_at,msg_type,voice_file FROM chat_messages "
             "ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
         rows = list(reversed(rows))
         result = [{"id": r[0], "username": r[1],
                    "display_name": _get_display_name(r[1]),
-                   "text": r[2], "created_at": r[3]} for r in rows]
+                   "text": r[2], "created_at": r[3],
+                   "msg_type": r[4] or "text", "voice_file": r[5] or ""} for r in rows]
         return aiohttp_web.Response(text=json.dumps(result, ensure_ascii=False),
                                     content_type="application/json", headers=_CORS_HEADERS)
     except Exception as e:
@@ -6929,6 +6954,151 @@ async def _web_photos_delete(request: aiohttp_web.Request) -> aiohttp_web.Respon
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
 
+# ── Voice messages ───────────────────────────────────────────────────────────
+async def _web_chat_voice_upload(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/chat/voice — upload voice message (webm/ogg/mp4 audio)."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        import uuid as _uuid
+        from datetime import datetime as _dt
+        username = request.headers.get("X-HA-User", "")
+        reader   = await request.multipart()
+        filename = None
+        async for part in reader:
+            if part.name == "voice":
+                orig_ext = (part.filename or "voice.webm").rsplit(".", 1)[-1].lower()
+                ext = orig_ext if orig_ext in ("webm", "ogg", "mp4", "m4a", "aac", "wav") else "webm"
+                safe_name = f"{_uuid.uuid4().hex}.{ext}"
+                path = VOICES_DIR / safe_name
+                with open(path, "wb") as f:
+                    while True:
+                        chunk = await part.read_chunk(65536)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                filename = safe_name
+                break
+        if not filename:
+            return aiohttp_web.Response(status=400, text='{"error":"no file"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        now_str = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+        with _DB_LOCK:
+            c = _db()
+            c.execute(
+                "INSERT INTO chat_messages(username,text,created_at,msg_type,voice_file) VALUES(?,?,?,?,?)",
+                (username, "", now_str, "voice", filename)
+            )
+            mid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+            c.commit()
+        display = _get_display_name(username)
+        msg_data = {"id": mid, "username": username, "display_name": display,
+                    "text": "", "msg_type": "voice", "voice_file": filename, "created_at": now_str}
+        await _sse_broadcast_chat(msg_data)
+        asyncio.create_task(push_notify(None, f"🎤 {display}", "Голосовое сообщение", "/ha-app/"))
+        return aiohttp_web.Response(
+            text=json.dumps({"ok": True, "id": mid, "filename": filename}, ensure_ascii=False),
+            content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        log.error(f"voice_upload: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_chat_voice_serve(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/chat/voice/{filename} — serve voice file."""
+    if not _check_token_qs(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    filename = request.match_info.get("filename", "")
+    if not filename or "/" in filename or ".." in filename:
+        return aiohttp_web.Response(status=400, text="bad", headers=_CORS_HEADERS)
+    path = VOICES_DIR / filename
+    if not path.exists():
+        return aiohttp_web.Response(status=404, text="not found", headers=_CORS_HEADERS)
+    ext = filename.rsplit(".", 1)[-1].lower()
+    ct = {"webm": "audio/webm", "ogg": "audio/ogg", "mp4": "audio/mp4",
+          "m4a": "audio/mp4", "aac": "audio/aac", "wav": "audio/wav"}.get(ext, "audio/webm")
+    return aiohttp_web.Response(body=path.read_bytes(), content_type=ct, headers=_CORS_HEADERS)
+
+
+# ── Call history ──────────────────────────────────────────────────────────────
+async def _web_call_history(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/call-history — last 50 calls."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        rows = _db().execute(
+            "SELECT id,from_user,to_user,call_type,started_at,answered_at,ended_at,duration_sec,status "
+            "FROM call_log ORDER BY id DESC LIMIT 50"
+        ).fetchall()
+        result = [{"id": r[0], "from_user": r[1], "to_user": r[2], "call_type": r[3],
+                   "from_display": _get_display_name(r[1]), "to_display": _get_display_name(r[2]),
+                   "started_at": r[4], "answered_at": r[5], "ended_at": r[6],
+                   "duration_sec": r[7], "status": r[8]} for r in rows]
+    except Exception as e:
+        result = []
+    return aiohttp_web.Response(text=json.dumps(result, ensure_ascii=False),
+                                content_type="application/json", headers=_CORS_HEADERS)
+
+
+# ── Activity Timeline ─────────────────────────────────────────────────────────
+async def _web_timeline(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/timeline — unified activity timeline."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        c = _db()
+        events = []
+        # Activity log
+        for r in c.execute(
+            "SELECT ts,action,detail,username FROM activity_log ORDER BY id DESC LIMIT 100"
+        ).fetchall():
+            ts, action, detail, uname = r
+            icon, title = _timeline_fmt(action, detail, uname)
+            events.append({"ts": ts, "icon": icon, "title": title, "type": action})
+        # Call log
+        for r in c.execute(
+            "SELECT started_at,from_user,to_user,call_type,status,duration_sec FROM call_log ORDER BY id DESC LIMIT 30"
+        ).fetchall():
+            started, fu, tu, ctype, status, dur = r
+            fi = _get_display_name(fu); ti = _get_display_name(tu)
+            status_icons = {"answered": "✅", "missed": "📵", "rejected": "❌"}
+            cicon = "📹" if ctype == "video" else "📞"
+            dur_str = f" ({dur//60}:{dur%60:02d})" if dur else ""
+            events.append({"ts": started, "icon": cicon, "type": "call",
+                           "title": f"{status_icons.get(status,'📞')} {fi} → {ti}{dur_str}"})
+        # Sort all by timestamp DESC
+        events.sort(key=lambda x: x["ts"], reverse=True)
+        result = events[:80]
+    except Exception as e:
+        result = []
+    return aiohttp_web.Response(text=json.dumps(result, ensure_ascii=False),
+                                content_type="application/json", headers=_CORS_HEADERS)
+
+
+def _timeline_fmt(action: str, detail: str, username: str) -> tuple[str, str]:
+    """Format activity_log row into (icon, title) for timeline."""
+    name = _get_display_name(username) if username else detail
+    m = {
+        "person_home":        ("🏠", f"{detail} вернулся домой"),
+        "person_away":        ("🚗", f"{detail} ушёл из дома"),
+        "bot_start":          ("🤖", "Бот перезапущен"),
+        "night_mode_saved":   ("🌙", f"Ночной режим: {detail}"),
+        "webapp:turn_on":     ("💡", f"{name} включил {detail}"),
+        "webapp:turn_off":    ("💡", f"{name} выключил {detail}"),
+        "webapp:vacuum:start":("🤖", f"{name} запустил пылесос"),
+        "webapp:scene":       ("🎬", f"{name} активировал сцену {detail}"),
+        "user_joined_invite": ("👤", f"Новый пользователь: {detail}"),
+        "user_approved":      ("✅", f"Пользователь одобрен: {detail}"),
+        "faces_detected":     ("📸", f"Распознано лицо: {detail}"),
+    }
+    if action in m:
+        return m[action]
+    if action.startswith("webapp:"):
+        svc = action.replace("webapp:", "")
+        return ("⚡", f"{name}: {svc} {detail}")
+    return ("📋", f"{action}: {detail}")
+
+
 # ── WebRTC TURN credentials ───────────────────────────────────────────────────
 _TURN_SECRET = "ha_turn_secret_2026_kh"
 _TURN_HOST   = "144.31.89.167"
@@ -6955,6 +7125,7 @@ async def _web_turn_creds(request: aiohttp_web.Request) -> aiohttp_web.Response:
 # ── WebRTC pending calls (missed offer storage) ────────────────────────────────
 # {to_user: {from_user, from_display, payload, expires_at}}
 _pending_calls: dict = {}
+_call_sessions: dict = {}  # call_log_id → {from_user, to_user, answered_at}
 
 async def _web_call_pending(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/api/call/pending — check if there's a waiting call offer."""
@@ -7007,29 +7178,66 @@ async def _web_call_signal(request: aiohttp_web.Request) -> aiohttp_web.Response
             "signal_type": sig_type,
             "payload": payload,
         }, ensure_ascii=False)
-        global _sse_clients, _pending_calls
+        global _sse_clients, _pending_calls, _call_sessions
         dead = set()
         for q in _sse_clients:
             try: q.put_nowait(event_data)
             except asyncio.QueueFull: dead.add(q)
         _sse_clients -= dead
-        # For incoming call — store pending offer (60s TTL) and send push
         import time as _time
+        call_type = payload.get("callType", "audio")
+        now_str = datetime.now(MSK).strftime("%Y-%m-%d %H:%M:%S")
         if sig_type == "offer":
             _pending_calls[to_user] = {
                 "from_user":    from_user,
                 "from_display": display,
                 "payload":      payload,
-                "call_type":    payload.get("callType", "audio"),
+                "call_type":    call_type,
                 "expires_at":   _time.time() + 60,
             }
+            # Log call start
+            with _DB_LOCK:
+                c2 = _db()
+                c2.execute(
+                    "INSERT INTO call_log(from_user,to_user,call_type,started_at,status) VALUES(?,?,?,?,'missed')",
+                    (from_user, to_user, call_type, now_str)
+                )
+                cid = c2.execute("SELECT last_insert_rowid()").fetchone()[0]
+                c2.commit()
+            _call_sessions[f"{from_user}:{to_user}"] = {"id": cid, "answered_at": None}
             asyncio.create_task(push_notify(to_user, f"📞 {display} звонит", "Входящий звонок", "/ha-app/"))
-        elif sig_type in ("hangup", "reject"):
-            # Clear pending offer if caller hung up
-            _pending_calls.pop(to_user, None)
         elif sig_type == "answer":
-            # Callee answered — clear pending
             _pending_calls.pop(from_user, None)
+            key = f"{to_user}:{from_user}"  # to_user is caller, from_user is callee
+            if key in _call_sessions:
+                _call_sessions[key]["answered_at"] = now_str
+                with _DB_LOCK:
+                    c2 = _db()
+                    c2.execute("UPDATE call_log SET answered_at=?,status='answered' WHERE id=?",
+                               (now_str, _call_sessions[key]["id"]))
+                    c2.commit()
+        elif sig_type in ("hangup", "reject"):
+            _pending_calls.pop(to_user, None)
+            key1 = f"{from_user}:{to_user}"
+            key2 = f"{to_user}:{from_user}"
+            key = key1 if key1 in _call_sessions else key2
+            if key in _call_sessions:
+                sess = _call_sessions.pop(key)
+                dur = None
+                if sess["answered_at"]:
+                    from datetime import datetime as _dt2
+                    try:
+                        t0 = _dt2.strptime(sess["answered_at"], "%Y-%m-%d %H:%M:%S")
+                        t1 = _dt2.strptime(now_str, "%Y-%m-%d %H:%M:%S")
+                        dur = int((t1 - t0).total_seconds())
+                    except Exception:
+                        pass
+                final_status = "rejected" if sig_type == "reject" else ("answered" if dur is not None else "missed")
+                with _DB_LOCK:
+                    c2 = _db()
+                    c2.execute("UPDATE call_log SET ended_at=?,duration_sec=?,status=? WHERE id=?",
+                               (now_str, dur, final_status, sess["id"]))
+                    c2.commit()
         return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
                                     headers=_CORS_HEADERS)
     except Exception as e:
@@ -7186,6 +7394,11 @@ async def _start_web():
     app.router.add_get("/ha-app/api/photos",                  _web_photos_list)
     app.router.add_get("/ha-app/api/photos/img/{filename}",   _web_photos_serve)
     app.router.add_delete("/ha-app/api/photos/{id}",          _web_photos_delete)
+    app.router.add_post("/ha-app/api/chat/voice",             _web_chat_voice_upload)
+    app.router.add_get("/ha-app/api/chat/voice/{filename}",   _web_chat_voice_serve)
+    app.router.add_get("/ha-app/api/call-history",            _web_call_history)
+    app.router.add_get("/ha-app/api/timeline",                _web_timeline)
+    app.router.add_route("OPTIONS", "/ha-app/api/chat/voice", _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/photos/upload", _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/photos",     _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/photos/img/{filename}", _web_options)
