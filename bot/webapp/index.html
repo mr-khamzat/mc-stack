@@ -111,158 +111,189 @@
 [data-theme="cyber"] .spinner { border-top-color: #00ff9f !important; border-color: rgba(0,255,159,0.18) !important; }
 [data-theme="cyber"] #loading { background: #010a06 !important; }
 
-/* ─── Light: полноценный Premium Glass дизайн ─── */
-@keyframes lightShimmer {
-  0%   { background-position: -200% center; }
-  100% { background-position: 200% center; }
+/* ─── Aurora: северное сияние — тёмная радужная тема ─── */
+:root[data-theme="aurora"] {
+  --bg-body: #060818;
+  --accent: #a78bfa;
+  --accent2: #2dd4bf;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --glow1: rgba(45,212,191,0.20);
+  --glow2: rgba(167,139,250,0.16);
+  --glow3: rgba(244,114,182,0.09);
 }
 
-:root[data-theme="light"] {
-  --bg-body: #eef1f8;
-  --accent: #4f6ef7;
-  --accent2: #7c5cf6;
-  --success: #2dbd71;
-  --warning: #f09c0a;
-  --danger: #e53935;
-  --glow1: rgba(79,110,247,0.10);
-  --glow2: rgba(124,92,246,0.07);
-  --glow3: rgba(99,102,241,0.04);
-  --lt-text: #1a1a2e;
-  --lt-text2: #4a4a6a;
-  --lt-text3: #7878a0;
-  --lt-border: rgba(79,110,247,0.13);
-  --lt-card: rgba(255,255,255,0.68);
-  --lt-card-tint: rgba(235,240,255,0.50);
-}
-
-/* Фон — пастельный градиент */
-[data-theme="light"] body {
-  color: var(--lt-text);
+/* Aurora фон — три волны цвета */
+[data-theme="aurora"] body {
   background: var(--bg-body) !important;
 }
-[data-theme="light"] body::before {
+[data-theme="aurora"] body::before {
   background:
-    radial-gradient(ellipse 80% 50% at 15% -5%, rgba(79,110,247,0.13) 0%, transparent 65%),
-    radial-gradient(ellipse 60% 40% at 85% 105%, rgba(124,92,246,0.09) 0%, transparent 65%),
-    radial-gradient(ellipse 50% 40% at 55% 45%, rgba(99,180,246,0.07) 0%, transparent 55%) !important;
+    radial-gradient(ellipse 75% 55% at 8%  -8%,  rgba(45,212,191,0.22) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 92% 110%, rgba(167,139,250,0.18) 0%, transparent 60%),
+    radial-gradient(ellipse 45% 40% at 50%  55%, rgba(244,114,182,0.10) 0%, transparent 55%) !important;
 }
 
-/* Плитки: стекло в воздухе */
-[data-theme="light"] .section {
-  background: linear-gradient(155deg, var(--lt-card) 0%, var(--lt-card-tint) 100%) !important;
-  border: 1px solid var(--lt-border) !important;
-  border-top-color: rgba(255,255,255,0.95) !important;
+/* Секции — тёмное стекло с радужным левым штрихом */
+@keyframes auroraBorder {
+  0%   { border-left-color: rgba(45,212,191,0.65); }
+  33%  { border-left-color: rgba(167,139,250,0.65); }
+  66%  { border-left-color: rgba(244,114,182,0.65); }
+  100% { border-left-color: rgba(45,212,191,0.65); }
+}
+[data-theme="aurora"] .section {
+  background: linear-gradient(155deg,
+    rgba(45,212,191,0.045) 0%,
+    rgba(167,139,250,0.055) 50%,
+    rgba(244,114,182,0.030) 100%) !important;
+  border: 0.5px solid rgba(167,139,250,0.22) !important;
+  border-top-color: rgba(45,212,191,0.30) !important;
+  border-left: 2.5px solid rgba(45,212,191,0.55) !important;
   box-shadow:
-    0 6px 24px rgba(79,110,247,0.09),
-    0 2px 8px rgba(0,0,0,0.05),
-    inset 0 1px 0 rgba(255,255,255,0.95) !important;
-  backdrop-filter: blur(28px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
-  animation: sectionIn 0.4s ease both !important;
-  animation-delay: var(--sec-delay, 0s) !important;
+    0 14px 44px rgba(0,0,0,0.55),
+    0 0 0 0.5px rgba(167,139,250,0.06),
+    0 0 30px rgba(45,212,191,0.04),
+    0 1px 0 rgba(45,212,191,0.12) inset !important;
+  backdrop-filter: blur(28px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(160%) !important;
+  animation: sectionIn 0.4s ease both, auroraBorder 8s ease-in-out infinite !important;
+  animation-delay: var(--sec-delay, 0s), calc(var(--sec-delay, 0s) + 1s) !important;
 }
-/* Стаггер анимации по nth-child */
-[data-theme="light"] .section:nth-child(1)  { --sec-delay: 0.00s; }
-[data-theme="light"] .section:nth-child(2)  { --sec-delay: 0.06s; }
-[data-theme="light"] .section:nth-child(3)  { --sec-delay: 0.12s; }
-[data-theme="light"] .section:nth-child(4)  { --sec-delay: 0.18s; }
-[data-theme="light"] .section:nth-child(5)  { --sec-delay: 0.24s; }
-[data-theme="light"] .section:nth-child(6)  { --sec-delay: 0.30s; }
-[data-theme="light"] .section:nth-child(7)  { --sec-delay: 0.36s; }
-[data-theme="light"] .section:nth-child(8)  { --sec-delay: 0.42s; }
-[data-theme="light"] .section:nth-child(9)  { --sec-delay: 0.48s; }
-[data-theme="light"] .section:nth-child(n+10) { --sec-delay: 0.54s; }
-/* Левый акцентный бордюр */
-[data-theme="light"] .section {
-  border-left: 3px solid var(--accent) !important;
-  border-left-color: var(--accent) !important;
-}
+/* Стаггер */
+[data-theme="aurora"] .section:nth-child(1)  { --sec-delay: 0.00s; }
+[data-theme="aurora"] .section:nth-child(2)  { --sec-delay: 0.06s; }
+[data-theme="aurora"] .section:nth-child(3)  { --sec-delay: 0.12s; }
+[data-theme="aurora"] .section:nth-child(4)  { --sec-delay: 0.18s; }
+[data-theme="aurora"] .section:nth-child(5)  { --sec-delay: 0.24s; }
+[data-theme="aurora"] .section:nth-child(6)  { --sec-delay: 0.30s; }
+[data-theme="aurora"] .section:nth-child(7)  { --sec-delay: 0.36s; }
+[data-theme="aurora"] .section:nth-child(8)  { --sec-delay: 0.42s; }
+[data-theme="aurora"] .section:nth-child(n+9) { --sec-delay: 0.48s; }
 
-/* Типографика — чёткие контрастные цвета */
-[data-theme="light"] .section-header {
-  color: var(--lt-text) !important;
+/* Хедеры — радужный градиентный текст */
+[data-theme="aurora"] .section-header {
   font-weight: 700 !important;
   letter-spacing: -0.3px !important;
 }
-[data-theme="light"] .section-header:active { background: rgba(79,110,247,0.06) !important; }
-[data-theme="light"] .chevron             { color: var(--lt-text3) !important; }
-[data-theme="light"] .section-body        { background: rgba(255,255,255,0.28) !important; }
-[data-theme="light"] .section-content,
-[data-theme="light"] .section-content *:not(.btn):not(button):not(input):not(select) {
-  color: var(--lt-text2);
+[data-theme="aurora"] .section-header > span:first-child {
+  background: linear-gradient(110deg, #2dd4bf 0%, #a78bfa 55%, #f472b6 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: none !important;
 }
-/* Восстанавливаем цвета кнопок и статусов */
-[data-theme="light"] .badge-on  { color: #fff !important; }
-[data-theme="light"] .badge-off { color: rgba(255,255,255,0.7) !important; }
-[data-theme="light"] .badge-unknown { color: var(--lt-text3) !important; }
+[data-theme="aurora"] .chevron { color: rgba(167,139,250,0.55) !important; }
+[data-theme="aurora"] .section-header:active { background: rgba(167,139,250,0.06) !important; }
 
-/* Все "серые" подписи — читаемые */
-[data-theme="light"] .stat-sub,
-[data-theme="light"] .activity-ts,
-[data-theme="light"] .logbook-time,
-[data-theme="light"] .last-updated       { color: var(--lt-text3) !important; }
-[data-theme="light"] .tv-status-text     { color: var(--lt-text2) !important; }
-[data-theme="light"] .weather-cond       { color: var(--lt-text2) !important; }
+/* Внутренности */
+[data-theme="aurora"] .stat-value { color: #f0f0ff !important; font-weight: 700 !important; }
+[data-theme="aurora"] .stat-label { color: rgba(167,139,250,0.65) !important; }
+[data-theme="aurora"] .stat-sub   { color: rgba(167,139,250,0.45) !important; }
+[data-theme="aurora"] .clim-val   { color: #f0f0ff !important; font-weight: 700 !important; }
+[data-theme="aurora"] .clim-label { color: rgba(45,212,191,0.55) !important; }
+[data-theme="aurora"] .family-name { color: rgba(230,230,255,0.95) !important; }
+[data-theme="aurora"] .prayer-name { color: rgba(210,210,255,0.90) !important; }
+[data-theme="aurora"] .prayer-time { color: #f0f0ff !important; }
+[data-theme="aurora"] .tv-status-text { color: rgba(210,210,255,0.88) !important; }
+[data-theme="aurora"] .weather-cond   { color: rgba(210,210,255,0.85) !important; }
 
-/* Header бейдж */
-[data-theme="light"] #user-badge {
-  background: rgba(79,110,247,0.09) !important;
-  border-color: rgba(79,110,247,0.18) !important;
+/* Карточки внутри секций */
+[data-theme="aurora"] .stat-card {
+  background: linear-gradient(145deg, rgba(45,212,191,0.06) 0%, rgba(167,139,250,0.04) 100%) !important;
+  border: 0.5px solid rgba(167,139,250,0.18) !important;
+  border-top-color: rgba(45,212,191,0.22) !important;
 }
-[data-theme="light"] #user-display-name  { color: var(--lt-text2) !important; }
-[data-theme="light"] .last-updated       { color: var(--lt-text3) !important; }
-[data-theme="light"] #theme-btn {
-  background: rgba(79,110,247,0.09) !important;
-  border-color: rgba(79,110,247,0.18) !important;
+[data-theme="aurora"] .clim-card {
+  background: linear-gradient(145deg, rgba(167,139,250,0.07) 0%, rgba(45,212,191,0.04) 100%) !important;
+  border: 0.5px solid rgba(167,139,250,0.16) !important;
+  border-top-color: rgba(45,212,191,0.20) !important;
 }
-
-/* Spinner и загрузка */
-[data-theme="light"] #loading            { background: #eef1f8 !important; }
-[data-theme="light"] #loading p          { color: var(--lt-text3) !important; }
-[data-theme="light"] .spinner { border-top-color: var(--accent) !important; border-color: rgba(79,110,247,0.15) !important; }
+[data-theme="aurora"] .family-item {
+  background: linear-gradient(135deg, rgba(45,212,191,0.05) 0%, rgba(167,139,250,0.04) 100%) !important;
+  border: 0.5px solid rgba(167,139,250,0.16) !important;
+  border-top-color: rgba(45,212,191,0.20) !important;
+}
+[data-theme="aurora"] .prayer-item {
+  background: linear-gradient(135deg, rgba(167,139,250,0.05) 0%, rgba(244,114,182,0.03) 100%) !important;
+  border: 0.5px solid rgba(167,139,250,0.14) !important;
+}
+[data-theme="aurora"] .prayer-item.next {
+  background: linear-gradient(135deg, rgba(167,139,250,0.16) 0%, rgba(244,114,182,0.10) 100%) !important;
+  border-color: rgba(167,139,250,0.40) !important;
+  border-top-color: rgba(244,114,182,0.50) !important;
+  box-shadow: 0 0 30px rgba(167,139,250,0.22), 0 4px 16px rgba(0,0,0,0.35) !important;
+}
+[data-theme="aurora"] .prayer-item.next .prayer-name { color: #c4b5fd !important; }
+[data-theme="aurora"] .prayer-item.next .prayer-time { color: #f0abfc !important; }
+[data-theme="aurora"] .tv-status {
+  background: linear-gradient(135deg, rgba(45,212,191,0.05) 0%, rgba(167,139,250,0.04) 100%) !important;
+  border: 0.5px solid rgba(167,139,250,0.16) !important;
+}
 
 /* Кнопки */
-[data-theme="light"] .btn-neutral {
-  background: rgba(79,110,247,0.08) !important;
-  border-color: rgba(79,110,247,0.18) !important;
-  color: var(--lt-text2) !important;
+[data-theme="aurora"] .btn-primary {
+  background: linear-gradient(135deg, #a78bfa, #f472b6) !important;
+  box-shadow: 0 4px 20px rgba(167,139,250,0.45) !important;
 }
-[data-theme="light"] .btn-danger {
-  background: rgba(229,57,53,0.08) !important;
-  color: #e53935 !important;
-  border-color: rgba(229,57,53,0.2) !important;
+[data-theme="aurora"] .btn-neutral {
+  border-color: rgba(167,139,250,0.28) !important;
+  color: rgba(210,210,255,0.88) !important;
 }
 
-/* ── Login form ── */
-[data-theme="light"] .login-screen       { background: #eef1f8 !important; }
-[data-theme="light"] .login-card {
-  background: linear-gradient(155deg, rgba(255,255,255,0.82), rgba(230,236,255,0.65)) !important;
-  border: 1px solid rgba(79,110,247,0.18) !important;
-  border-top-color: rgba(255,255,255,0.98) !important;
-  box-shadow: 0 16px 56px rgba(79,110,247,0.14), 0 4px 16px rgba(0,0,0,0.07), inset 0 1px 0 rgba(255,255,255,0.95) !important;
-  backdrop-filter: blur(32px) saturate(200%) !important;
-  -webkit-backdrop-filter: blur(32px) saturate(200%) !important;
+/* Header бейдж */
+[data-theme="aurora"] #user-badge {
+  background: rgba(167,139,250,0.09) !important;
+  border-color: rgba(167,139,250,0.22) !important;
 }
-[data-theme="light"] .login-title  { color: var(--lt-text)  !important; font-weight: 800 !important; }
-[data-theme="light"] .login-sub    { color: var(--lt-text3) !important; }
-[data-theme="light"] .login-input {
-  background: rgba(255,255,255,0.7) !important;
-  border: 1.5px solid rgba(79,110,247,0.15) !important;
-  color: var(--lt-text) !important;
-  font-weight: 500 !important;
+[data-theme="aurora"] #theme-btn {
+  background: rgba(167,139,250,0.09) !important;
+  border-color: rgba(167,139,250,0.22) !important;
 }
-[data-theme="light"] .login-input::placeholder { color: var(--lt-text3) !important; }
-[data-theme="light"] .login-input:focus {
-  background: rgba(255,255,255,0.9) !important;
-  border-color: var(--accent) !important;
-  box-shadow: 0 0 0 3px rgba(79,110,247,0.16) !important;
+[data-theme="aurora"] .last-updated { color: rgba(167,139,250,0.45) !important; }
+
+/* Spinner */
+[data-theme="aurora"] #loading { background: #060818 !important; }
+[data-theme="aurora"] .spinner {
+  border-top-color: #a78bfa !important;
+  border-color: rgba(167,139,250,0.18) !important;
+  box-shadow: 0 0 20px rgba(167,139,250,0.35) !important;
 }
-[data-theme="light"] .login-btn {
-  background: linear-gradient(135deg, #4f6ef7, #7c5cf6) !important;
-  box-shadow: 0 6px 22px rgba(79,110,247,0.4) !important;
+
+/* Login */
+[data-theme="aurora"] .login-screen { background: #060818 !important; }
+[data-theme="aurora"] .login-card {
+  background: linear-gradient(155deg,
+    rgba(45,212,191,0.06) 0%,
+    rgba(167,139,250,0.08) 50%,
+    rgba(244,114,182,0.05) 100%) !important;
+  border: 0.5px solid rgba(167,139,250,0.30) !important;
+  border-top-color: rgba(45,212,191,0.40) !important;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.55), 0 0 40px rgba(167,139,250,0.12), inset 0 1px 0 rgba(45,212,191,0.15) !important;
 }
-[data-theme="light"] .login-orbit { border-color: rgba(79,110,247,0.35) !important; }
-[data-theme="light"] .login-orbit::after { background: var(--accent) !important; box-shadow: 0 0 8px var(--accent) !important; }
+[data-theme="aurora"] .login-title {
+  background: linear-gradient(110deg, #2dd4bf 0%, #a78bfa 60%, #f472b6 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+[data-theme="aurora"] .login-sub { color: rgba(167,139,250,0.55) !important; }
+[data-theme="aurora"] .login-input {
+  background: rgba(255,255,255,0.05) !important;
+  border: 1px solid rgba(167,139,250,0.22) !important;
+  color: rgba(230,230,255,0.95) !important;
+}
+[data-theme="aurora"] .login-input::placeholder { color: rgba(167,139,250,0.38) !important; }
+[data-theme="aurora"] .login-input:focus {
+  border-color: rgba(45,212,191,0.55) !important;
+  box-shadow: 0 0 0 3px rgba(45,212,191,0.12) !important;
+}
+[data-theme="aurora"] .login-btn {
+  background: linear-gradient(135deg, #2dd4bf, #a78bfa, #f472b6) !important;
+  box-shadow: 0 6px 24px rgba(167,139,250,0.42) !important;
+}
+[data-theme="aurora"] .login-orbit { border-color: rgba(45,212,191,0.40) !important; }
+[data-theme="aurora"] .login-orbit::after { background: #a78bfa !important; box-shadow: 0 0 10px #a78bfa !important; }
 
 /* ═══════════════════════════════════════════════════════
    ── INNER-CARD ANIMATIONS — GPU-only (no translateY) ──
@@ -336,9 +367,9 @@
 [data-theme="cyber"] .section-header > span:first-child {
   filter: drop-shadow(0 0 8px rgba(0,255,159,0.75)) drop-shadow(0 1px 2px rgba(0,0,0,0.7)) !important;
 }
-/* Light: цветная тень, подчёркивает глубину */
-[data-theme="light"] .section-header > span:first-child {
-  filter: drop-shadow(0 2px 5px rgba(0,0,0,0.22)) drop-shadow(0 0 8px rgba(79,110,247,0.30)) !important;
+/* Aurora: градиентный текст — filter не нужен, переопределён выше */
+[data-theme="aurora"] .section-header > span:first-child {
+  filter: none !important;
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -422,72 +453,13 @@
   z-index: 0;
 }
 
-/* ── Light upgrade — clean energy, больший contrast ── */
-[data-theme="light"] .section-header {
-  letter-spacing: -0.4px !important;
+/* ── Aurora: inner next-prayer glow uses aurora colors ── */
+[data-theme="aurora"] .prayer-item.next {
+  animation: nextPrayerGlowAurora 2.6s ease-in-out infinite !important;
 }
-[data-theme="light"] .stat-value {
-  color: var(--lt-text) !important;
-  font-weight: 800 !important;
-}
-[data-theme="light"] .clim-val {
-  color: var(--lt-text) !important;
-  font-weight: 800 !important;
-}
-[data-theme="light"] .stat-card {
-  background: rgba(255,255,255,0.72) !important;
-  border: 1px solid rgba(79,110,247,0.12) !important;
-  border-top-color: rgba(255,255,255,0.98) !important;
-  box-shadow: 0 4px 16px rgba(79,110,247,0.09), 0 1px 0 rgba(255,255,255,0.95) inset !important;
-}
-[data-theme="light"] .stat-label {
-  color: var(--lt-text3) !important;
-  font-weight: 700 !important;
-}
-[data-theme="light"] .family-item {
-  background: rgba(255,255,255,0.65) !important;
-  border: 1px solid rgba(79,110,247,0.10) !important;
-  border-top-color: rgba(255,255,255,0.95) !important;
-  box-shadow: 0 2px 10px rgba(79,110,247,0.08), 0 1px 0 rgba(255,255,255,0.9) inset !important;
-}
-[data-theme="light"] .family-name { color: var(--lt-text) !important; }
-[data-theme="light"] .clim-card {
-  background: rgba(255,255,255,0.65) !important;
-  border: 1px solid rgba(79,110,247,0.10) !important;
-  border-top-color: rgba(255,255,255,0.95) !important;
-  box-shadow: 0 3px 12px rgba(79,110,247,0.08), 0 1px 0 rgba(255,255,255,0.9) inset !important;
-}
-[data-theme="light"] .clim-label { color: var(--lt-text3) !important; }
-[data-theme="light"] .prayer-item {
-  background: rgba(255,255,255,0.55) !important;
-  border: 1px solid rgba(79,110,247,0.10) !important;
-  box-shadow: 0 2px 8px rgba(79,110,247,0.07) !important;
-}
-[data-theme="light"] .prayer-item.next {
-  background: linear-gradient(135deg, rgba(79,110,247,0.12) 0%, rgba(124,92,246,0.08) 100%) !important;
-  border-color: rgba(79,110,247,0.30) !important;
-  border-top-color: rgba(167,139,250,0.45) !important;
-  box-shadow: 0 0 28px rgba(79,110,247,0.18), 0 4px 16px rgba(0,0,0,0.06) !important;
-}
-[data-theme="light"] .prayer-name { color: var(--lt-text2) !important; }
-[data-theme="light"] .prayer-time { color: var(--lt-text) !important; }
-[data-theme="light"] .prayer-item.next .prayer-name { color: #4f6ef7 !important; }
-[data-theme="light"] .prayer-item.next .prayer-time { color: #4f6ef7 !important; }
-[data-theme="light"] .light-btn.off {
-  background: rgba(255,255,255,0.55) !important;
-  border-color: rgba(79,110,247,0.12) !important;
-  color: var(--lt-text3) !important;
-}
-[data-theme="light"] .light-btn.on {
-  background: linear-gradient(145deg, rgba(255,185,0,0.18) 0%, rgba(255,160,0,0.10) 100%) !important;
-  border-color: rgba(255,185,0,0.45) !important;
-  color: #c87800 !important;
-  box-shadow: 0 0 20px rgba(255,185,0,0.22), 0 4px 14px rgba(0,0,0,0.08) !important;
-}
-[data-theme="light"] .tv-status {
-  background: rgba(255,255,255,0.60) !important;
-  border: 1px solid rgba(79,110,247,0.10) !important;
-  box-shadow: 0 2px 10px rgba(79,110,247,0.07) !important;
+@keyframes nextPrayerGlowAurora {
+  0%,100% { box-shadow: 0 0 28px rgba(167,139,250,0.22), 0 4px 16px rgba(0,0,0,0.35) !important; }
+  50%     { box-shadow: 0 0 44px rgba(167,139,250,0.40), 0 4px 16px rgba(0,0,0,0.35) !important; }
 }
 
 body {
@@ -1456,7 +1428,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
 .theme-dot-cosmos  { background: radial-gradient(circle at 35% 35%, #8b5cf6, #07071a); }
 .theme-dot-oled    { background: radial-gradient(circle at 35% 35%, #6366f1, #000000); }
 .theme-dot-cyber   { background: radial-gradient(circle at 35% 35%, #00ff9f, #010a06); box-shadow: 0 0 8px rgba(0,255,159,0.5); }
-.theme-dot-light   { background: radial-gradient(circle at 35% 35%, #007aff, #f2f2f7); }
+.theme-dot-aurora  { background: conic-gradient(from 180deg, #2dd4bf, #a78bfa, #f472b6, #2dd4bf); box-shadow: 0 0 10px rgba(167,139,250,0.55); }
 </style>
 <!-- Inline failsafe: remove loading after 5s even without JS -->
 <script>
@@ -1486,7 +1458,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
     <div class="theme-dot theme-dot-cosmos" title="Космос"   onclick="themeSet('cosmos')"></div>
     <div class="theme-dot theme-dot-oled"   title="OLED"     onclick="themeSet('oled')"></div>
     <div class="theme-dot theme-dot-cyber"  title="Кибер"    onclick="themeSet('cyber')"></div>
-    <div class="theme-dot theme-dot-light"  title="Светлая"  onclick="themeSet('light')"></div>
+    <div class="theme-dot theme-dot-aurora" title="Аврора"   onclick="themeSet('aurora')"></div>
   </div>
 
   <div class="app-header">
@@ -5581,7 +5553,7 @@ const THEMES = {
   cosmos: { color: '#6366f1' },
   oled:   { color: '#6366f1' },
   cyber:  { color: '#00ff9f' },
-  light:  { color: '#007aff' },
+  aurora: { color: '#a78bfa' },
 };
 
 function themeApply(name) {
