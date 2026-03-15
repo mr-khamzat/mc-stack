@@ -886,8 +886,9 @@ body::before {
 }
 
 /* ── Call overlay ── */
+/* ── Call overlay — audio ─────────────────────────────────── */
 .call-overlay {
-  position: fixed; inset: 0; z-index: 10000; background: rgba(0,0,0,0.85);
+  position: fixed; inset: 0; z-index: 10000; background: rgba(0,0,0,0.88);
   display: flex; align-items: center; justify-content: center;
 }
 .call-box {
@@ -922,12 +923,48 @@ body::before {
 .call-btn-accept { background: linear-gradient(135deg, #22c55e, #16a34a); color: #fff; }
 .call-btn-reject { background: linear-gradient(135deg, #ef4444, #dc2626); color: #fff; }
 .call-btn:active { transform: scale(0.92); }
-.call-videos { position: relative; width: 100%; border-radius: 14px; overflow: hidden; background: #000; height: 180px; }
-.call-remote-video { width: 100%; height: 100%; object-fit: cover; display: block; }
-.call-local-video {
-  position: absolute; bottom: 8px; right: 8px; width: 72px; height: 90px;
-  border-radius: 9px; object-fit: cover; border: 2px solid rgba(255,255,255,0.3);
+
+/* ── Call overlay — video (fullscreen FaceTime style) ─────── */
+.call-overlay.is-video {
+  background: #000; align-items: stretch; justify-content: stretch;
 }
+.call-video-wrap {
+  position: relative; width: 100%; height: 100%; overflow: hidden;
+}
+#call-remote-video {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; background: #111;
+}
+#call-local-video {
+  position: absolute; bottom: 110px; right: 14px;
+  width: 90px; height: 120px; border-radius: 14px;
+  object-fit: cover; border: 2px solid rgba(255,255,255,0.4);
+  box-shadow: 0 4px 18px rgba(0,0,0,0.6);
+  z-index: 2;
+}
+.call-video-top {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 3;
+  padding: env(safe-area-inset-top, 16px) 20px 20px;
+  background: linear-gradient(to bottom, rgba(0,0,0,0.65) 0%, transparent 100%);
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.call-video-top .call-name { font-size: 22px; font-weight: 700; color: #fff; text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
+.call-video-top .call-status { font-size: 13px; color: rgba(220,220,255,0.85); text-shadow: 0 1px 4px rgba(0,0,0,0.7); }
+.call-video-bottom {
+  position: absolute; bottom: 0; left: 0; right: 0; z-index: 3;
+  padding: 20px 20px env(safe-area-inset-bottom, 20px);
+  background: linear-gradient(to top, rgba(0,0,0,0.75) 0%, transparent 100%);
+  display: flex; justify-content: center; align-items: center; gap: 24px;
+}
+.call-video-btn {
+  width: 60px; height: 60px; border-radius: 50%; border: none; font-size: 22px;
+  cursor: pointer; touch-action: manipulation; display: flex; align-items: center; justify-content: center;
+  transition: transform .15s, opacity .15s;
+}
+.call-video-btn:active { transform: scale(0.88); opacity: 0.85; }
+.call-video-btn-end { background: #ef4444; }
+.call-video-btn-accept { background: #22c55e; }
+.call-video-btn-mute { background: rgba(255,255,255,0.2); backdrop-filter: blur(8px); }
 
 /* ── Buttons ── */
 .btn {
@@ -3845,8 +3882,9 @@ async function startCall(haName, displayName, type) {
   _showCallUI('outgoing', displayName, type);
 
   try {
+    const _audioConstraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
     _rtcLocalStream = await navigator.mediaDevices.getUserMedia(
-      type === 'video' ? { video: { facingMode: 'user' }, audio: true } : { audio: true }
+      type === 'video' ? { video: { facingMode: 'user' }, audio: _audioConstraints } : { audio: _audioConstraints }
     );
     const iceServers = await _getIceServers();
     _rtcPeer = _makePeer(iceServers);
@@ -3920,8 +3958,9 @@ async function acceptCall() {
   }
 
   try {
+    const _audioConstraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
     _rtcLocalStream = await navigator.mediaDevices.getUserMedia(
-      _rtcCallType === 'video' ? { video: { facingMode: 'user' }, audio: true } : { audio: true }
+      _rtcCallType === 'video' ? { video: { facingMode: 'user' }, audio: _audioConstraints } : { audio: _audioConstraints }
     );
     const iceServers = await _getIceServers();
     _rtcPeer = _makePeer(iceServers);
@@ -3954,6 +3993,15 @@ function rejectCall() {
   endCall();
 }
 
+let _rtcMuted = false;
+function _toggleMute() {
+  if (!_rtcLocalStream) return;
+  _rtcMuted = !_rtcMuted;
+  _rtcLocalStream.getAudioTracks().forEach(t => { t.enabled = !_rtcMuted; });
+  const btn = document.getElementById('call-mute-btn');
+  if (btn) btn.textContent = _rtcMuted ? '🔇' : '🎤';
+}
+
 function endCall() {
   if (_rtcCallTarget) _sendCallSignal(_rtcCallTarget.username, 'hangup', {}).catch(()=>{});
   if (_rtcPeer) { _rtcPeer.close(); _rtcPeer = null; }
@@ -3984,35 +4032,50 @@ function _showCallUI(mode, name, type) {
   if (!overlay) {
     overlay = document.createElement('div');
     overlay.id = 'call-overlay';
-    overlay.className = 'call-overlay';
     document.body.appendChild(overlay);
   }
   const isVideo = type === 'video';
   const isIncoming = mode === 'incoming';
   const initLetter = (name || '?').charAt(0).toUpperCase();
-  overlay.innerHTML = `
-    <div class="call-box">
-      <div class="call-avatar-wrap">
-        <div class="call-avatar">${escapeHtml(initLetter)}</div>
-        <div class="call-pulse-ring"></div>
-      </div>
-      <div class="call-name">${escapeHtml(name)}</div>
-      <div class="call-status" id="call-status">
-        ${isIncoming ? (isVideo ? '📹 Входящий видеозвонок' : '📞 Входящий звонок')
-                     : (isVideo ? '📹 Вызов...' : '📞 Вызов...')}
-      </div>
-      ${isVideo ? `<div class="call-videos">
-        <video id="call-remote-video" class="call-remote-video" autoplay playsinline></video>
-        <video id="call-local-video"  class="call-local-video"  autoplay playsinline muted></video>
-      </div>` : `<div style="font-size:44px;margin:8px 0">🎙️</div>`}
-      <div class="call-buttons">
-        ${isIncoming ? `<button id="call-accept-btn" class="call-btn call-btn-accept" onclick="acceptCall()">✅ Принять</button>` : ''}
-        <button id="call-reject-btn" class="call-btn call-btn-reject"
-          onclick="${isIncoming ? 'rejectCall()' : 'endCall()'}">
-          ${isIncoming ? '❌ Отклонить' : '⏹ Завершить'}
-        </button>
-      </div>
-    </div>`;
+  const statusText = isIncoming ? (isVideo ? '📹 Входящий видеозвонок' : '📞 Входящий звонок')
+                                : (isVideo ? '📹 Вызов...' : '📞 Вызов...');
+
+  if (isVideo) {
+    overlay.className = 'call-overlay is-video';
+    overlay.innerHTML = `
+      <div class="call-video-wrap">
+        <video id="call-remote-video" autoplay playsinline></video>
+        <video id="call-local-video"  autoplay playsinline muted></video>
+        <div class="call-video-top">
+          <div class="call-name">${escapeHtml(name)}</div>
+          <div class="call-status" id="call-status">${statusText}</div>
+        </div>
+        <div class="call-video-bottom">
+          ${isIncoming ? `<button class="call-video-btn call-video-btn-accept" onclick="acceptCall()">✅</button>` : ''}
+          <button class="call-video-btn call-video-btn-mute" id="call-mute-btn" onclick="_toggleMute()">🎤</button>
+          <button class="call-video-btn call-video-btn-end" onclick="${isIncoming ? 'rejectCall()' : 'endCall()'}">📵</button>
+        </div>
+      </div>`;
+  } else {
+    overlay.className = 'call-overlay';
+    overlay.innerHTML = `
+      <div class="call-box">
+        <div class="call-avatar-wrap">
+          <div class="call-avatar">${escapeHtml(initLetter)}</div>
+          <div class="call-pulse-ring"></div>
+        </div>
+        <div class="call-name">${escapeHtml(name)}</div>
+        <div class="call-status" id="call-status">${statusText}</div>
+        <div style="font-size:44px;margin:8px 0">🎙️</div>
+        <div class="call-buttons">
+          ${isIncoming ? `<button id="call-accept-btn" class="call-btn call-btn-accept" onclick="acceptCall()">✅ Принять</button>` : ''}
+          <button id="call-reject-btn" class="call-btn call-btn-reject"
+            onclick="${isIncoming ? 'rejectCall()' : 'endCall()'}">
+            ${isIncoming ? '❌ Отклонить' : '⏹ Завершить'}
+          </button>
+        </div>
+      </div>`;
+  }
 }
 
 // Vacuum
