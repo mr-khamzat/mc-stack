@@ -3725,8 +3725,9 @@ function openPhotoLightbox(url, caption) {
 // ── WebRTC Calls ────────────────────────────────────────────────────────────
 const _STUN_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:144.31.89.167:3478' },
 ];
+let _rtcIceServers = null; // filled on first call with TURN creds
 let _rtcPeer = null;
 let _rtcLocalStream = null;
 let _rtcRemoteStream = null;
@@ -3737,6 +3738,36 @@ let _rtcOfferSdp = null;
 
 async function _sendCallSignal(toUser, type, payload) {
   await api('/call/signal', 'POST', { to_user: toUser, type, payload });
+}
+
+function _attachRemoteStream(stream) {
+  // Video element if exists
+  const remoteVideo = document.getElementById('call-remote-video');
+  if (remoteVideo) { remoteVideo.srcObject = stream; remoteVideo.play().catch(()=>{}); }
+  // Always also attach to audio element (critical for audio-only calls)
+  let audioEl = document.getElementById('call-remote-audio');
+  if (!audioEl) {
+    audioEl = document.createElement('audio');
+    audioEl.id = 'call-remote-audio';
+    audioEl.autoplay = true;
+    audioEl.setAttribute('playsinline', '');
+    document.body.appendChild(audioEl);
+  }
+  audioEl.srcObject = stream;
+  audioEl.play().catch(()=>{});
+}
+
+async function _getIceServers() {
+  if (_rtcIceServers) return _rtcIceServers;
+  try {
+    const turn = await api('/turn-creds');
+    _rtcIceServers = [..._STUN_SERVERS, turn];
+  } catch(e) {
+    _rtcIceServers = _STUN_SERVERS;
+  }
+  // Expire after 50 minutes
+  setTimeout(() => { _rtcIceServers = null; }, 50 * 60 * 1000);
+  return _rtcIceServers;
 }
 
 async function startCall(haName, displayName, type) {
@@ -3755,7 +3786,8 @@ async function startCall(haName, displayName, type) {
     _rtcLocalStream = await navigator.mediaDevices.getUserMedia(
       type === 'video' ? { video: true, audio: true } : { audio: true }
     );
-    _rtcPeer = new RTCPeerConnection({ iceServers: _STUN_SERVERS });
+    const iceServers = await _getIceServers();
+    _rtcPeer = new RTCPeerConnection({ iceServers, iceTransportPolicy: 'all' });
     _rtcLocalStream.getTracks().forEach(t => _rtcPeer.addTrack(t, _rtcLocalStream));
     const localVideo = document.getElementById('call-local-video');
     if (localVideo && type === 'video') { localVideo.srcObject = _rtcLocalStream; localVideo.play().catch(()=>{}); }
@@ -3764,8 +3796,7 @@ async function startCall(haName, displayName, type) {
     };
     _rtcPeer.ontrack = e => {
       _rtcRemoteStream = e.streams[0];
-      const remoteVideo = document.getElementById('call-remote-video');
-      if (remoteVideo) { remoteVideo.srcObject = _rtcRemoteStream; remoteVideo.play().catch(()=>{}); }
+      _attachRemoteStream(_rtcRemoteStream);
     };
     const offer = await _rtcPeer.createOffer();
     await _rtcPeer.setLocalDescription(offer);
@@ -3813,7 +3844,8 @@ async function acceptCall() {
     _rtcLocalStream = await navigator.mediaDevices.getUserMedia(
       _rtcCallType === 'video' ? { video: true, audio: true } : { audio: true }
     );
-    _rtcPeer = new RTCPeerConnection({ iceServers: _STUN_SERVERS });
+    const iceServers = await _getIceServers();
+    _rtcPeer = new RTCPeerConnection({ iceServers, iceTransportPolicy: 'all' });
     _rtcLocalStream.getTracks().forEach(t => _rtcPeer.addTrack(t, _rtcLocalStream));
     const localVideo = document.getElementById('call-local-video');
     if (localVideo && _rtcCallType === 'video') { localVideo.srcObject = _rtcLocalStream; localVideo.play().catch(()=>{}); }
@@ -3822,8 +3854,7 @@ async function acceptCall() {
     };
     _rtcPeer.ontrack = e => {
       _rtcRemoteStream = e.streams[0];
-      const remoteVideo = document.getElementById('call-remote-video');
-      if (remoteVideo) { remoteVideo.srcObject = _rtcRemoteStream; remoteVideo.play().catch(()=>{}); }
+      _attachRemoteStream(_rtcRemoteStream);
     };
     await _rtcPeer.setRemoteDescription(new RTCSessionDescription(_rtcOfferSdp));
     const answer = await _rtcPeer.createAnswer();
@@ -3848,6 +3879,8 @@ function endCall() {
   _rtcRemoteStream = null; _rtcCallTarget = null; _rtcOfferSdp = null;
   const overlay = document.getElementById('call-overlay');
   if (overlay) overlay.remove();
+  const audioEl = document.getElementById('call-remote-audio');
+  if (audioEl) { audioEl.srcObject = null; audioEl.remove(); }
 }
 
 function _setCallActive() {
@@ -3880,9 +3913,9 @@ function _showCallUI(mode, name, type) {
       <div class="call-name">${escapeHtml(name)}</div>
       <div class="call-status" id="call-status">${isIncoming ? (isVideo?'📹 Входящий видеозвонок':'📞 Входящий звонок') : (isVideo?'📹 Видеозвонок...':'📞 Звонок...')}</div>
       ${isVideo ? `<div class="call-videos">
-        <video id="call-remote-video" class="call-remote-video" autoplay playsinline muted></video>
+        <video id="call-remote-video" class="call-remote-video" autoplay playsinline></video>
         <video id="call-local-video" class="call-local-video" autoplay playsinline muted></video>
-      </div>` : ''}
+      </div>` : `<div style="font-size:40px;margin:4px 0">🎙️</div>`}
       <div class="call-buttons">
         ${isIncoming ? `<button id="call-accept-btn" class="call-btn call-btn-accept" onclick="acceptCall()">✅ Принять</button>` : ''}
         <button id="call-reject-btn" class="call-btn call-btn-reject" onclick="${isIncoming?'rejectCall()':'endCall()'}">

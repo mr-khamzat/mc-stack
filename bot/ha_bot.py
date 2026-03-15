@@ -6883,6 +6883,29 @@ async def _web_photos_delete(request: aiohttp_web.Request) -> aiohttp_web.Respon
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
 
+# ── WebRTC TURN credentials ───────────────────────────────────────────────────
+_TURN_SECRET = "ha_turn_secret_2026_kh"
+_TURN_HOST   = "144.31.89.167"
+
+async def _web_turn_creds(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/turn-creds — short-lived TURN credentials (RFC 5389 HMAC)."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    import time, hmac, hashlib, base64
+    ttl  = 3600  # 1 hour
+    ts   = int(time.time()) + ttl
+    user = f"{ts}:webrtc"
+    sig  = hmac.new(_TURN_SECRET.encode(), user.encode(), hashlib.sha1).digest()
+    cred = base64.b64encode(sig).decode()
+    data = {
+        "urls":       [f"turn:{_TURN_HOST}:3478", f"turn:{_TURN_HOST}:3478?transport=tcp"],
+        "username":   user,
+        "credential": cred,
+    }
+    return aiohttp_web.Response(text=json.dumps(data, ensure_ascii=False),
+                                content_type="application/json", headers=_CORS_HEADERS)
+
+
 # ── WebRTC Call Signaling ──────────────────────────────────────────────────────
 async def _web_call_signal(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """POST /ha-app/api/call/signal — relay WebRTC signaling via SSE."""
@@ -7084,6 +7107,8 @@ async def _start_web():
     app.router.add_route("OPTIONS", "/ha-app/api/photos/{id}", _web_options)
     app.router.add_post("/ha-app/api/call/signal",            _web_call_signal)
     app.router.add_route("OPTIONS", "/ha-app/api/call/signal", _web_options)
+    app.router.add_get("/ha-app/api/turn-creds",              _web_turn_creds)
+    app.router.add_route("OPTIONS", "/ha-app/api/turn-creds", _web_options)
     runner = aiohttp_web.AppRunner(app)
     await runner.setup()
     site = aiohttp_web.TCPSite(runner, "127.0.0.1", 8766)
