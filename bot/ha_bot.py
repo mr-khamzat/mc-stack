@@ -95,6 +95,7 @@ import os
 import json
 import logging
 import sqlite3
+import socket
 import ssl as _ssl
 import subprocess
 import time as _time
@@ -579,6 +580,11 @@ class DeviceMgmt(StatesGroup):
 # HA_URL и HA_TOKEN берутся из .env файла.
 # Документация HA REST API: https://developers.home-assistant.io/docs/api/rest/
 
+def _ha_cs(**kw) -> aiohttp.ClientSession:
+    """ClientSession с IPv4-only (Keenetic NDNS не поддерживает IPv6)."""
+    connector = aiohttp.TCPConnector(family=socket.AF_INET)
+    return aiohttp.ClientSession(connector=connector, **kw)
+
 async def ha_get(path: str) -> dict | list | None:
     """Выполнить GET запрос к HA REST API.
 
@@ -595,7 +601,7 @@ async def ha_get(path: str) -> dict | list | None:
         # data = {"state": "22.5", "attributes": {...}, ...}
     """
     try:
-        async with aiohttp.ClientSession() as s:
+        async with _ha_cs() as s:
             async with s.get(
                 f"{HA_URL}/api/{path}", headers=HA_HEADERS,
                 timeout=aiohttp.ClientTimeout(total=10), ssl=False
@@ -619,7 +625,7 @@ async def ha_post(path: str, data: dict = None) -> dict | None:
         Ответ HA как dict, или None если запрос не удался.
     """
     try:
-        async with aiohttp.ClientSession() as s:
+        async with _ha_cs() as s:
             async with s.post(
                 f"{HA_URL}/api/{path}", headers=HA_HEADERS,
                 json=data or {}, timeout=aiohttp.ClientTimeout(total=10), ssl=False
@@ -789,8 +795,10 @@ async def ha_ws_get_todo_items(entity_id: str) -> list:
         return []
     ws_url = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
     ssl_ctx = _ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = _ssl.CERT_NONE
     try:
-        async with websockets.connect(ws_url, ssl=ssl_ctx) as ws:
+        async with websockets.connect(ws_url, ssl=ssl_ctx, family=socket.AF_INET) as ws:
             msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
             if msg.get("type") != "auth_required":
                 return []
@@ -2811,7 +2819,7 @@ async def fri_snap(cb: CallbackQuery):
     ]]) if eid_full else None
     if snap_url:
         try:
-            async with aiohttp.ClientSession() as sess:
+            async with _ha_cs() as sess:
                 async with sess.get(snap_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     if resp.status == 200:
                         data = await resp.read()
@@ -2838,7 +2846,7 @@ async def fri_clip(cb: CallbackQuery):
     clip_url = f"{HA_URL}/api/frigate/notifications/{eid_full}/clip.mp4"
     await cb.answer("🎬 Скачиваю клип...")
     try:
-        async with aiohttp.ClientSession() as sess:
+        async with _ha_cs() as sess:
             async with sess.get(clip_url, headers=HA_HEADERS, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 if resp.status == 200:
                     data = await resp.read()
@@ -3211,7 +3219,7 @@ async def _check_alerts():
                         if img_d:
                             tok = img_d.get("attributes", {}).get("access_token", "")
                             snap_url = f"{HA_URL}/api/image_proxy/image.cam_a6810678_person?token={tok}"
-                            async with aiohttp.ClientSession() as sess:
+                            async with _ha_cs() as sess:
                                 async with sess.get(snap_url, headers=HA_HEADERS, timeout=aiohttp.ClientTimeout(total=10)) as r:
                                     if r.status == 200:
                                         img_bytes = await r.read()
@@ -3291,7 +3299,7 @@ async def _check_alerts():
                     sent = False
                     if img_url:
                         try:
-                            async with aiohttp.ClientSession() as sess:
+                            async with _ha_cs() as sess:
                                 async with sess.get(img_url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
                                     if resp.status == 200:
                                         data = await resp.read()
@@ -3644,7 +3652,7 @@ async def _web_health(request: aiohttp_web.Request) -> aiohttp_web.Response:
     # Лёгкая проверка HA: GET /api/
     ha_ok = False
     try:
-        async with aiohttp.ClientSession() as sess:
+        async with _ha_cs() as sess:
             async with sess.get(
                 f"{HA_URL}/api/", headers=HA_HEADERS,
                 timeout=aiohttp.ClientTimeout(total=5)
@@ -3718,7 +3726,7 @@ async def _create_ha_automation(scene_id: str, scene: dict, trigger_override: di
 
     try:
         url = f"{HA_URL}/api/config/automation/config/{automation_id}"
-        async with aiohttp.ClientSession() as sess:
+        async with _ha_cs() as sess:
             async with sess.post(url, headers=HA_HEADERS, json=payload,
                                  timeout=aiohttp.ClientTimeout(total=15)) as resp:
                 body = await resp.text()
@@ -3809,7 +3817,7 @@ async def _web_scenes_post(request: aiohttp_web.Request) -> aiohttp_web.Response
                 try:
                     sched_auto_id = f"miniapp_sched_{scene_id}"
                     url = f"{HA_URL}/api/config/automation/config/{sched_auto_id}"
-                    async with aiohttp.ClientSession() as sess:
+                    async with _ha_cs() as sess:
                         async with sess.post(url, headers=HA_HEADERS, json=sched_payload,
                                              timeout=aiohttp.ClientTimeout(total=15)) as resp:
                             if resp.status in (200, 201):
@@ -4006,11 +4014,13 @@ async def _ha_state_watch_loop():
         return
     ha_ws = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
     ssl_ctx = _ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = _ssl.CERT_NONE
     watch_eids: set[str] = set()
 
     while True:
         try:
-            async with websockets.connect(ha_ws, ssl=ssl_ctx, ping_interval=20, open_timeout=15) as ws:
+            async with websockets.connect(ha_ws, ssl=ssl_ctx, ping_interval=20, open_timeout=15, family=socket.AF_INET) as ws:
                 msg = json.loads(await asyncio.wait_for(ws.recv(), 10))
                 await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
                 msg = json.loads(await asyncio.wait_for(ws.recv(), 10))
@@ -4461,7 +4471,7 @@ async def _web_frigate_events(request: aiohttp_web.Request) -> aiohttp_web.Respo
     if not evts and HAS_WS:
         try:
             ha_ws = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
-            async with websockets.connect(ha_ws, ping_interval=None, open_timeout=15) as ws:
+            async with websockets.connect(ha_ws, ping_interval=None, open_timeout=15, family=socket.AF_INET) as ws:
                 await ws.recv()
                 await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
                 msg = json.loads(await asyncio.wait_for(ws.recv(), 10))
@@ -4526,7 +4536,7 @@ async def _web_frigate_recordings(request: aiohttp_web.Request) -> aiohttp_web.R
         return aiohttp_web.Response(text="[]", content_type="application/json", headers=_CORS_HEADERS)
     try:
         ha_ws = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
-        async with websockets.connect(ha_ws, ping_interval=None, open_timeout=15) as ws:
+        async with websockets.connect(ha_ws, ping_interval=None, open_timeout=15, family=socket.AF_INET) as ws:
             await ws.recv()
             await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
             msg = json.loads(await asyncio.wait_for(ws.recv(), 10))
@@ -4764,7 +4774,7 @@ async def _frigate_ha_notify_task(camera: str, label: str):
     try:
         import re as _re
         ha_ws = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
-        async with websockets.connect(ha_ws, ping_interval=None, open_timeout=10) as ws:
+        async with websockets.connect(ha_ws, ping_interval=None, open_timeout=10, family=socket.AF_INET) as ws:
             msg = json.loads(await asyncio.wait_for(ws.recv(), 5))
             if msg.get("type") == "auth_required":
                 await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
@@ -4930,7 +4940,7 @@ async def _web_ha_login(request: aiohttp_web.Request) -> aiohttp_web.Response:
 
     timeout = aiohttp.ClientTimeout(total=10)
     try:
-        async with aiohttp.ClientSession(timeout=timeout) as s:
+        async with _ha_cs(timeout=timeout) as s:
             # Шаг 1: начать login flow
             r1 = await s.post(f"{HA_URL}/auth/login_flow",
                 json={"handler": ["homeassistant", None],
@@ -5436,7 +5446,7 @@ async def _frigate_event_loop():
     ha_ws = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
     while True:
         try:
-            async with websockets.connect(ha_ws, ping_interval=20, open_timeout=15) as ws:
+            async with websockets.connect(ha_ws, ping_interval=20, open_timeout=15, family=socket.AF_INET) as ws:
                 await ws.recv()  # hello
                 await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
                 msg = json.loads(await asyncio.wait_for(ws.recv(), 10))
