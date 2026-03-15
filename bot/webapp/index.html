@@ -1429,6 +1429,86 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
 .theme-dot-oled    { background: radial-gradient(circle at 35% 35%, #6366f1, #000000); }
 .theme-dot-cyber   { background: radial-gradient(circle at 35% 35%, #00ff9f, #010a06); box-shadow: 0 0 8px rgba(0,255,159,0.5); }
 .theme-dot-aurora  { background: conic-gradient(from 180deg, #2dd4bf, #a78bfa, #f472b6, #2dd4bf); box-shadow: 0 0 10px rgba(167,139,250,0.55); }
+
+/* ── In-App Section Editor ─────────────────────────────────────────────────── */
+#edit-mode-btn {
+  padding: 4px 8px; border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.10); background: rgba(255,255,255,0.05);
+  cursor: pointer; font-size: 14px; color: rgba(255,255,255,0.55);
+  -webkit-tap-highlight-color: transparent; display: none; flex-shrink: 0;
+  transition: all 0.15s;
+}
+body.edit-mode #edit-mode-btn {
+  background: rgba(99,102,241,0.20); border-color: rgba(99,102,241,0.50); color: #a78bfa;
+}
+/* Disable accordion toggle in edit mode */
+body.edit-mode .section-header { pointer-events: none; }
+/* Drag handle */
+.sec-drag-handle {
+  display: none; pointer-events: all; cursor: grab;
+  font-size: 20px; color: rgba(255,255,255,0.28); padding: 0 8px 0 0;
+  flex-shrink: 0; touch-action: none; user-select: none; -webkit-user-select: none;
+  line-height: 1; align-items: center;
+}
+.sec-drag-handle:active { color: rgba(255,255,255,0.65); }
+body.edit-mode .sec-drag-handle { display: flex; }
+/* Section edit button */
+.sec-edit-btn {
+  display: none; pointer-events: all; cursor: pointer;
+  font-size: 15px; padding: 3px 8px; border-radius: 8px;
+  background: rgba(99,102,241,0.13); border: 1px solid rgba(99,102,241,0.26);
+  margin-left: auto; margin-right: 6px; flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent; align-items: center;
+  transition: background 0.12s;
+}
+.sec-edit-btn:active { background: rgba(99,102,241,0.30); }
+body.edit-mode .sec-edit-btn { display: flex; }
+/* Ghost while dragging */
+.sec-drag-ghost {
+  position: fixed; z-index: 500; pointer-events: none;
+  background: #13133a; border-radius: var(--r-xl);
+  box-shadow: 0 24px 60px rgba(0,0,0,0.65), 0 0 0 2px rgba(99,102,241,0.55);
+  opacity: 0.88; padding: 14px 18px; font-size: 15px; font-weight: 600;
+  color: rgba(220,220,255,0.9); border: 1px solid rgba(99,102,241,0.40);
+  display: flex; align-items: center; gap: 8px; max-width: 100%;
+}
+.section.is-dragging { visibility: hidden; }
+/* Edit sheet overlay */
+.edit-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.48); z-index: 900;
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+}
+.edit-overlay.open { display: block; }
+/* Edit bottom sheet */
+.edit-sheet {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: var(--bg-body, #07071a); border-radius: 24px 24px 0 0;
+  padding: 8px 20px 36px; z-index: 901;
+  transform: translateY(110%);
+  transition: transform 0.32s cubic-bezier(0.32,0.72,0,1);
+  border-top: 1px solid rgba(255,255,255,0.08); max-height: 82vh; overflow-y: auto;
+}
+.edit-sheet.open { transform: translateY(0); }
+.edit-sheet-pill { width: 40px; height: 4px; background: rgba(255,255,255,0.14); border-radius: 2px; margin: 8px auto 16px; }
+.edit-sheet-title { font-size: 16px; font-weight: 600; margin-bottom: 14px; color: rgba(220,220,255,0.92); }
+.edit-name-input {
+  flex: 1; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06);
+  color: #fff; font-size: 15px; outline: none; -webkit-appearance: none;
+  font-family: inherit;
+}
+.edit-name-input:focus { border-color: rgba(99,102,241,0.55); box-shadow: 0 0 0 2px rgba(99,102,241,0.12); }
+/* Icon grid */
+.icon-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; margin: 8px 0 16px; }
+.icon-cell {
+  width: 38px; height: 38px; display: flex; align-items: center; justify-content: center;
+  font-size: 20px; border-radius: 9px; cursor: pointer;
+  border: 2px solid transparent; background: rgba(255,255,255,0.04);
+  transition: all 0.10s; -webkit-tap-highlight-color: transparent;
+}
+.icon-cell:active { transform: scale(0.78); }
+.icon-cell.sel { border-color: var(--accent); background: rgba(99,102,241,0.18); }
 </style>
 <!-- Inline failsafe: remove loading after 5s even without JS -->
 <script>
@@ -1465,6 +1545,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
     <h1 style="font-size:22px;line-height:1">🏠</h1>
     <div style="display:flex;align-items:center;gap:8px">
       <span class="last-updated" id="last-updated">—</span>
+      <button id="edit-mode-btn" onclick="editModeToggle()" title="Редактировать разделы">✏️</button>
       <button id="theme-btn" onclick="themePickerToggle()" title="Сменить тему">🎨</button>
       <div id="user-badge" onclick="showUserMenu()" title="Аккаунт"
         style="display:flex;align-items:center;gap:6px;cursor:pointer;
@@ -1912,6 +1993,29 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
           <div id="adm-log-list" style="font-size:12px"></div>
         </div>
       </div>
+    </div>
+  </div>
+
+
+  <!-- ── Section Edit Sheet ── -->
+  <div id="sec-edit-overlay" class="edit-overlay" onclick="closeSectionEditor()"></div>
+  <div id="sec-edit-sheet" class="edit-sheet">
+    <div class="edit-sheet-pill"></div>
+    <div class="edit-sheet-title">✏️ Редактировать раздел</div>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+      <div id="sec-edit-icon-cur" style="font-size:38px;min-width:48px;text-align:center">📦</div>
+      <input id="sec-edit-name" type="text" placeholder="Название раздела" autocomplete="off" class="edit-name-input">
+    </div>
+    <div style="font-size:11px;color:rgba(140,140,190,0.55);margin-bottom:6px;letter-spacing:0.4px;text-transform:uppercase">Выбрать иконку</div>
+    <div class="icon-grid" id="sec-icon-grid"></div>
+    <div style="display:flex;gap:10px;margin-top:6px">
+      <button onclick="closeSectionEditor()"
+        style="flex:1;padding:13px;border-radius:12px;border:1px solid rgba(255,255,255,0.10);
+               background:rgba(255,255,255,0.05);color:rgba(200,200,220,0.8);font-size:15px;cursor:pointer;font-family:inherit">Отмена</button>
+      <button onclick="saveSectionEdit()"
+        style="flex:1;padding:13px;border-radius:12px;border:none;
+               background:linear-gradient(135deg,var(--accent),var(--accent2));
+               color:#fff;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit">Сохранить</button>
     </div>
   </div>
 
@@ -2624,6 +2728,8 @@ async function init() {
     const authOk = await ensureAuth();
     if (!authOk) { clearTimeout(timer); hideLoading(); return; }
     await loadStatus();
+    // Apply saved section order + custom names
+    applySavedSections();
     // Load and apply role permissions from API (authoritative)
     try {
       const perms = await api(`/user-perms?user=${encodeURIComponent(HA_USERNAME)}`);
@@ -5556,6 +5662,8 @@ function admShow() {
         sec.style.display = '';
         admInitPerms();
     }
+    const editBtn = document.getElementById('edit-mode-btn');
+    if (editBtn) editBtn.style.display = 'flex';
 }
 
 // ── Themes ──────────────────────────────────────────────────────────────────
@@ -5615,6 +5723,245 @@ function themePickerClose() {
     s.style.animationFillMode = 'both';
   });
 })();
+
+// ── In-App Section Editor ──────────────────────────────────────────────────
+const EDIT_ICONS = [
+  '📊','👨‍👩‍👦','📡','🚪','⚡','💡','🌡️','📺','🤖','🌿','📹','🖥️','📋','🔔',
+  '🏠','🔒','🔑','🌙','🌅','⏰','💧','🔥','❄️','💨','💰','🔌','🌐','🎵',
+  '🔦','🛏️','🪑','🚿','📱','⚙️','📈','🔋','☀️','🌡','🏃','🧹','🍳','🛒',
+  '🎬','🔊','🌍','🕌','📅','🚗','🐾','📸','🧠','🎮','🖨️','📦','🗂️',
+];
+
+let _editMode = false;
+let _editingSec = null;
+let _editingSecId = null;
+let _editPickedIcon = null;
+
+function editModeToggle() { _editMode ? editModeOff() : editModeOn(); }
+
+function editModeOn() {
+  _editMode = true;
+  document.body.classList.add('edit-mode');
+  const btn = document.getElementById('edit-mode-btn');
+  if (btn) btn.textContent = '✓ Готово';
+  // Inject drag handle + edit button into each section header
+  document.querySelectorAll('#app > .section[data-section-perm]').forEach(function(sec) {
+    const hdr = sec.querySelector('.section-header');
+    if (!hdr) return;
+    if (!hdr.querySelector('.sec-drag-handle')) {
+      const h = document.createElement('button');
+      h.className = 'sec-drag-handle';
+      h.innerHTML = '⠿';
+      h.title = 'Перетащить';
+      hdr.insertBefore(h, hdr.firstChild);
+      _setupSectionDrag(h, sec);
+    }
+    if (!hdr.querySelector('.sec-edit-btn')) {
+      const eb = document.createElement('button');
+      eb.className = 'sec-edit-btn';
+      eb.innerHTML = '⚙️';
+      eb.title = 'Редактировать';
+      eb.addEventListener('click', function(e) { e.stopPropagation(); openSectionEditor(sec); });
+      const chev = hdr.querySelector('.chevron');
+      if (chev) hdr.insertBefore(eb, chev);
+      else hdr.appendChild(eb);
+    }
+  });
+  showToast('✏️ Режим редактирования', 1800);
+}
+
+function editModeOff() {
+  _editMode = false;
+  document.body.classList.remove('edit-mode');
+  const btn = document.getElementById('edit-mode-btn');
+  if (btn) btn.textContent = '✏️';
+  _saveSectionOrder();
+  showToast('✅ Порядок сохранён', 1400);
+}
+
+function _saveSectionOrder() {
+  document.querySelectorAll('#app > .section[data-section-perm]').forEach(function(sec, i) {
+    const id = sec.getAttribute('data-section-perm');
+    if (!id || id === 'admin') return;
+    api('/sections', { method: 'POST', body: JSON.stringify({ id: id, order: i + 1 }) }).catch(function(){});
+  });
+}
+
+function _setupSectionDrag(handle, sec) {
+  handle.addEventListener('touchstart', function(e) {
+    if (!_editMode) return;
+    e.preventDefault(); e.stopPropagation();
+    const touch = e.touches[0];
+    const startY = touch.clientY;
+    const rect = sec.getBoundingClientRect();
+    const initTop = rect.top;
+    // Create ghost
+    const headSpan = sec.querySelector('.section-header > span:first-child, .section-header > button.sec-drag-handle ~ span');
+    // Get actual text from section header (first span that is not handle/edit btn)
+    let headText = '';
+    sec.querySelectorAll('.section-header > span').forEach(function(sp) {
+      if (!sp.classList.contains('chevron') && headText === '') {
+        headText = (sp.textContent || '').replace(/⠿\s*/g, '').trim();
+      }
+    });
+    const ghost = document.createElement('div');
+    ghost.className = 'sec-drag-ghost';
+    ghost.style.left = rect.left + 'px';
+    ghost.style.top = initTop + 'px';
+    ghost.style.width = rect.width + 'px';
+    ghost.textContent = headText || '📦 Раздел';
+    document.body.appendChild(ghost);
+    sec.classList.add('is-dragging');
+    document.body.style.overflow = 'hidden';
+    var lastDy = 0;
+    function onMove(ev) {
+      ev.preventDefault();
+      var t = ev.touches[0];
+      lastDy = t.clientY - startY;
+      ghost.style.top = (initTop + lastDy) + 'px';
+      // Find insertion point
+      var touchY = t.clientY;
+      var allSecs = Array.from(document.querySelectorAll('#app > .section[data-section-perm]'))
+        .filter(function(s) { return s !== sec && getComputedStyle(s).display !== 'none'; });
+      for (var i = 0; i < allSecs.length; i++) {
+        var r = allSecs[i].getBoundingClientRect();
+        if (touchY >= r.top && touchY <= r.bottom) {
+          if (touchY < r.top + r.height / 2) { allSecs[i].before(sec); }
+          else { allSecs[i].after(sec); }
+          break;
+        }
+      }
+    }
+    function onEnd() {
+      document.removeEventListener('touchmove', onMove);
+      document.removeEventListener('touchend', onEnd);
+      ghost.remove();
+      sec.classList.remove('is-dragging');
+      document.body.style.overflow = '';
+    }
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', onEnd);
+  }, { passive: false });
+}
+
+// ── Section icon/name editor ─────────────────────────────────────────────────
+function _buildIconGrid() {
+  var grid = document.getElementById('sec-icon-grid');
+  if (!grid || grid.children.length > 0) return;
+  EDIT_ICONS.forEach(function(ico) {
+    var cell = document.createElement('div');
+    cell.className = 'icon-cell';
+    cell.textContent = ico;
+    cell.dataset.icon = ico;
+    cell.addEventListener('click', function() { _pickIcon(ico); });
+    grid.appendChild(cell);
+  });
+}
+
+function _pickIcon(ico) {
+  _editPickedIcon = ico;
+  var cur = document.getElementById('sec-edit-icon-cur');
+  if (cur) cur.textContent = ico;
+  document.querySelectorAll('#sec-icon-grid .icon-cell').forEach(function(c) {
+    c.classList.toggle('sel', c.dataset.icon === ico);
+  });
+}
+
+function openSectionEditor(sec) {
+  _editingSec = sec;
+  _editingSecId = sec.getAttribute('data-section-perm');
+  _buildIconGrid();
+  // Extract current icon + name from header span
+  var spans = Array.from(sec.querySelectorAll('.section-header > span')).filter(function(s) {
+    return !s.classList.contains('chevron');
+  });
+  var fullText = spans.length ? spans[0].textContent.replace(/⠿\s*/g, '').trim() : '';
+  var iconMatch = fullText.match(/^([\u{1F300}-\u{1FAFF}][\uFE0F\u20E3]?|[^\w\s])/u);
+  _editPickedIcon = iconMatch ? iconMatch[0] : '📦';
+  var nameText = fullText.replace(_editPickedIcon, '').trim();
+  var curEl = document.getElementById('sec-edit-icon-cur');
+  var nameEl = document.getElementById('sec-edit-name');
+  if (curEl) curEl.textContent = _editPickedIcon;
+  if (nameEl) nameEl.value = nameText;
+  document.querySelectorAll('#sec-icon-grid .icon-cell').forEach(function(c) {
+    c.classList.toggle('sel', c.dataset.icon === _editPickedIcon);
+  });
+  var overlay = document.getElementById('sec-edit-overlay');
+  var sheet = document.getElementById('sec-edit-sheet');
+  if (overlay) overlay.classList.add('open');
+  if (sheet) requestAnimationFrame(function() { sheet.classList.add('open'); });
+}
+
+function closeSectionEditor() {
+  var overlay = document.getElementById('sec-edit-overlay');
+  var sheet = document.getElementById('sec-edit-sheet');
+  if (sheet) sheet.classList.remove('open');
+  setTimeout(function() { if (overlay) overlay.classList.remove('open'); }, 320);
+  _editingSec = null; _editingSecId = null;
+}
+
+async function saveSectionEdit() {
+  if (!_editingSec || !_editingSecId) return;
+  var nameEl = document.getElementById('sec-edit-name');
+  var nameTxt = nameEl ? nameEl.value.trim() : '';
+  var icon = _editPickedIcon || '📦';
+  var fullName = icon + (nameTxt ? ' ' + nameTxt : '');
+  // Update DOM: find the first non-chevron span in section header
+  var hdr = _editingSec.querySelector('.section-header');
+  if (hdr) {
+    var spans = Array.from(hdr.querySelectorAll('span')).filter(function(s) { return !s.classList.contains('chevron'); });
+    if (spans.length) {
+      // Preserve text content, keep drag handle if present
+      var dragH = spans[0].querySelector ? null : null; // drag handles are buttons, not inside span
+      spans[0].textContent = fullName;
+    }
+    // The drag handle is a <button>, not inside the <span>, so it's unaffected
+  }
+  // Save icon/name also as data attribute for persistence across reloads
+  _editingSec.dataset.customName = fullName;
+  // Persist to API
+  try {
+    await api('/sections', { method: 'POST', body: JSON.stringify({ id: _editingSecId, name: fullName, icon: icon }) });
+    showToast('✅ Сохранено');
+  } catch(e) {
+    showToast('❌ Ошибка: ' + e.message);
+  }
+  closeSectionEditor();
+}
+
+// ── Apply saved section config on page load ───────────────────────────────────
+async function applySavedSections() {
+  try {
+    var data = await api('/sections');
+    if (!data || typeof data !== 'object') return;
+    // Sort by order
+    var entries = Object.entries(data).sort(function(a, b) {
+      return (a[1].order || 99) - (b[1].order || 99);
+    });
+    var app = document.getElementById('app');
+    var anchor = document.getElementById('home-away-wrap');
+    if (!app || !anchor) return;
+    var insertAfter = anchor;
+    for (var i = 0; i < entries.length; i++) {
+      var id = entries[i][0];
+      var cfg = entries[i][1];
+      var el = app.querySelector('.section[data-section-perm="' + id + '"]');
+      if (!el) continue;
+      // Reorder DOM
+      if (insertAfter.nextElementSibling !== el) {
+        insertAfter.after(el);
+      }
+      insertAfter = el;
+      // Apply custom name if saved
+      if (cfg.name) {
+        var spans = Array.from(el.querySelectorAll('.section-header > span')).filter(function(s) {
+          return !s.classList.contains('chevron');
+        });
+        if (spans.length) spans[0].textContent = cfg.name;
+      }
+    }
+  } catch(e) { /* ignore */ }
+}
 
 // ── Service Worker (PWA) ─────────────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
