@@ -1509,6 +1509,152 @@ body.edit-mode .sec-edit-btn { display: flex; }
 }
 .icon-cell:active { transform: scale(0.78); }
 .icon-cell.sel { border-color: var(--accent); background: rgba(99,102,241,0.18); }
+
+/* ── Status bar ─────────────────────────────────────────────────────────── */
+.status-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 14px 10px; overflow-x: auto; white-space: nowrap;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none;
+}
+.status-bar::-webkit-scrollbar { display: none; }
+.sb-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: rgba(255,255,255,0.05); border: 0.5px solid rgba(255,255,255,0.08);
+  border-radius: 20px; padding: 5px 11px; font-size: 12px; font-weight: 500;
+  color: rgba(180,180,210,0.75); flex-shrink: 0; cursor: default;
+}
+.sb-chip.green  { color: #34d399; border-color: rgba(52,211,153,0.28);  background: rgba(52,211,153,0.07);  }
+.sb-chip.yellow { color: #fbbf24; border-color: rgba(251,191,36,0.28);  background: rgba(251,191,36,0.06);  }
+.sb-chip.blue   { color: #60a5fa; border-color: rgba(96,165,250,0.28);  background: rgba(96,165,250,0.06);  }
+.sb-chip.red    { color: #f87171; border-color: rgba(248,113,113,0.28); background: rgba(248,113,113,0.06); }
+
+/* ── Offline banner ─────────────────────────────────────────────────────── */
+.offline-banner {
+  display: none; margin: 0 14px 8px; padding: 8px 14px;
+  border-radius: 10px; font-size: 12px; text-align: center;
+  background: rgba(251,191,36,0.10); border: 0.5px solid rgba(251,191,36,0.30);
+  color: rgba(251,191,36,0.9);
+}
+.offline-banner.show { display: block; }
+
+/* ── Weather mini card ──────────────────────────────────────────────────── */
+.weather-mini {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 0 0 12px; padding: 14px 18px; border-radius: var(--r-xl);
+  background: linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 100%);
+  border: 0.5px solid rgba(255,255,255,0.10);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.weather-mini:active { background: rgba(255,255,255,0.09); }
+.wcm-left { display: flex; align-items: center; gap: 14px; }
+.wcm-icon { font-size: 38px; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.4)); line-height: 1; }
+.wcm-temp { font-size: 28px; font-weight: 700; color: #eaeaf8; line-height: 1; letter-spacing: -0.5px; }
+.wcm-cond { font-size: 11px; color: rgba(140,140,190,0.7); margin-top: 3px; }
+.wcm-right { display: flex; flex-direction: column; gap: 4px; text-align: right; font-size: 12px; color: rgba(140,140,190,0.65); }
+
+/* ── Pull-to-refresh ────────────────────────────────────────────────────── */
+#ptr-bar {
+  height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center;
+  font-size: 13px; color: rgba(140,140,190,0.55); transition: height 0.18s;
+}
+#ptr-bar.show { height: 44px; }
+
+/* ── FAB ────────────────────────────────────────────────────────────────── */
+.fab-wrap {
+  position: fixed; bottom: 26px; right: 20px; z-index: 300;
+  display: flex; flex-direction: column-reverse; align-items: flex-end; gap: 10px;
+}
+.fab-main {
+  width: 54px; height: 54px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  border: none; font-size: 22px; color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 8px 28px rgba(99,102,241,0.45), 0 3px 10px rgba(0,0,0,0.4);
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.fab-main:active { transform: scale(0.88); }
+body.fab-open .fab-main { transform: rotate(45deg); box-shadow: 0 10px 32px rgba(99,102,241,0.55); }
+.fab-items {
+  display: flex; flex-direction: column; gap: 8px;
+  pointer-events: none; opacity: 0;
+  transform: translateY(12px) scale(0.94);
+  transition: all 0.22s cubic-bezier(0.32,0.72,0,1);
+}
+body.fab-open .fab-items { pointer-events: all; opacity: 1; transform: none; }
+.fab-row {
+  display: flex; align-items: center; gap: 10px; justify-content: flex-end;
+}
+.fab-label {
+  font-size: 13px; font-weight: 600;
+  background: rgba(8,8,28,0.88); color: rgba(220,220,255,0.92);
+  padding: 6px 13px; border-radius: 20px;
+  border: 0.5px solid rgba(255,255,255,0.10);
+  backdrop-filter: blur(10px); white-space: nowrap;
+}
+.fab-ic {
+  width: 42px; height: 42px; border-radius: 50%; border: none;
+  background: linear-gradient(135deg, rgba(255,255,255,0.11), rgba(255,255,255,0.04));
+  border: 0.5px solid rgba(255,255,255,0.14);
+  font-size: 18px; display: flex; align-items: center; justify-content: center;
+  cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+  -webkit-tap-highlight-color: transparent; flex-shrink: 0;
+}
+.fab-ic:active { transform: scale(0.84); }
+.fab-backdrop {
+  display: none; position: fixed; inset: 0; z-index: 299;
+}
+body.fab-open .fab-backdrop { display: block; }
+
+/* ── Timer sheet ────────────────────────────────────────────────────────── */
+.timer-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 902; -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+.timer-overlay.open { display: block; }
+.timer-sheet {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: var(--bg-body, #07071a);
+  border-radius: 24px 24px 0 0; padding: 8px 20px 40px;
+  z-index: 903; transform: translateY(110%);
+  transition: transform 0.32s cubic-bezier(0.32,0.72,0,1);
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+.timer-sheet.open { transform: translateY(0); }
+.timer-presets { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0 18px; }
+.timer-pre {
+  flex: 1; min-width: 56px; padding: 10px 6px; border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.10); background: rgba(255,255,255,0.04);
+  color: rgba(200,200,230,0.85); font-size: 14px; font-weight: 600;
+  cursor: pointer; text-align: center; -webkit-tap-highlight-color: transparent;
+  transition: all 0.12s; font-family: inherit;
+}
+.timer-pre.sel { background: rgba(99,102,241,0.22); border-color: rgba(99,102,241,0.55); color: #a78bfa; }
+.timer-pre:active { transform: scale(0.90); }
+
+/* ── Climate temperature slider ──────────────────────────────────────────── */
+.clim-slider-row {
+  display: flex; align-items: center; gap: 12px; margin: 10px 0 6px; padding: 4px 0;
+}
+.clim-slider {
+  -webkit-appearance: none; appearance: none;
+  flex: 1; height: 6px; border-radius: 3px;
+  background: linear-gradient(to right, rgba(239,68,68,0.6) 0%, rgba(251,191,36,0.5) 50%, rgba(96,165,250,0.4) 100%);
+  outline: none; cursor: pointer;
+}
+.clim-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 24px; height: 24px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  box-shadow: 0 2px 8px rgba(99,102,241,0.55); cursor: pointer;
+}
+.clim-slider::-moz-range-thumb {
+  width: 24px; height: 24px; border-radius: 50%; border: none;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  box-shadow: 0 2px 8px rgba(99,102,241,0.55); cursor: pointer;
+}
+.clim-slider-val {
+  font-size: 18px; font-weight: 700; color: #eaeaf8;
+  min-width: 48px; text-align: center; letter-spacing: -0.3px;
+}
 </style>
 <!-- Inline failsafe: remove loading after 5s even without JS -->
 <script>
@@ -1539,7 +1685,14 @@ body.edit-mode .sec-edit-btn { display: flex; }
     <div class="theme-dot theme-dot-oled"   title="OLED"     onclick="themeSet('oled')"></div>
     <div class="theme-dot theme-dot-cyber"  title="Кибер"    onclick="themeSet('cyber')"></div>
     <div class="theme-dot theme-dot-aurora" title="Аврора"   onclick="themeSet('aurora')"></div>
+    <button id="auto-theme-btn" onclick="autoThemeToggle()" title="Авто по времени"
+      style="padding:4px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);
+             background:rgba(255,255,255,0.05);cursor:pointer;font-size:12px;color:rgba(200,200,230,0.7);
+             flex-shrink:0;-webkit-tap-highlight-color:transparent">🌗 Авто</button>
   </div>
+
+  <!-- PTR indicator -->
+  <div id="ptr-bar">↓ Обновление...</div>
 
   <div class="app-header">
     <h1 style="font-size:22px;line-height:1">🏠</h1>
@@ -1561,6 +1714,12 @@ body.edit-mode .sec-edit-btn { display: flex; }
     </div>
   </div>
 
+  <!-- STATUS BAR -->
+  <div class="status-bar" id="status-bar"></div>
+
+  <!-- OFFLINE BANNER -->
+  <div class="offline-banner" id="offline-banner">⚠️ Нет соединения — <span id="offline-ts">данные устарели</span></div>
+
   <!-- QUICK ACTIONS -->
   <div class="quick-actions-wrap" id="quick-actions-wrap">
     <div class="quick-actions-scroll" id="qa-scroll">
@@ -1580,6 +1739,21 @@ body.edit-mode .sec-edit-btn { display: flex; }
         </div>
       </div>
       <div class="home-away-edit" onclick="event.stopPropagation(); homeAwayEdit()">✏️</div>
+    </div>
+  </div>
+
+  <!-- WEATHER MINI CARD -->
+  <div class="weather-mini" id="weather-mini" style="display:none" onclick="toggleSection('sec-weather-body')">
+    <div class="wcm-left">
+      <span id="wcm-icon" class="wcm-icon">🌤️</span>
+      <div>
+        <div id="wcm-temp" class="wcm-temp">—°</div>
+        <div id="wcm-cond" class="wcm-cond">Погода</div>
+      </div>
+    </div>
+    <div class="wcm-right">
+      <span>💧 <span id="wcm-hum">—</span>%</span>
+      <span>💨 <span id="wcm-wind">—</span> км/ч</span>
     </div>
   </div>
 
@@ -1739,14 +1913,17 @@ body.edit-mode .sec-edit-btn { display: flex; }
             <div class="clim-label">Пол °C</div>
           </div>
         </div>
-        <div style="font-size:12px; color:#60608a; margin-bottom:8px">
-          Уставка: <span id="clim-setpoint" style="color:#a0a0c0; font-weight:600">— °C</span>
+        <div class="clim-slider-row">
+          <span style="font-size:13px;color:#60608a">🔥 Уставка</span>
+          <input id="clim-sp-slider" type="range" min="20" max="45" step="0.5"
+            class="clim-slider" value="38"
+            oninput="climateSliderInput(this.value)"
+            onchange="climateSliderCommit(this.value)">
+          <span class="clim-slider-val"><span id="clim-setpoint">—</span>°</span>
         </div>
         <div class="climate-controls">
           <button class="btn btn-success" onclick="climateAction('on')">🔥 Вкл</button>
           <button class="btn btn-danger"  onclick="climateAction('off')">❄️ Выкл</button>
-          <button class="btn btn-neutral" onclick="climateSetpoint(+1)">+1°</button>
-          <button class="btn btn-neutral" onclick="climateSetpoint(-1)">-1°</button>
         </div>
       </div>
     </div>
@@ -1996,6 +2173,55 @@ body.edit-mode .sec-edit-btn { display: flex; }
     </div>
   </div>
 
+
+  <!-- ── FAB ── -->
+  <div class="fab-backdrop" onclick="fabClose()"></div>
+  <div class="fab-wrap">
+    <button class="fab-main" id="fab-main" onclick="fabToggle()">⚡</button>
+    <div class="fab-items" id="fab-items">
+      <div class="fab-row">
+        <span class="fab-label">💡 Весь свет выкл</span>
+        <button class="fab-ic" onclick="fabAction('lights_off')">💡</button>
+      </div>
+      <div class="fab-row">
+        <span class="fab-label">🚪 Ухожу домой</span>
+        <button class="fab-ic" onclick="fabAction('away')">🚪</button>
+      </div>
+      <div class="fab-row">
+        <span class="fab-label">🤖 Пылесос запуск</span>
+        <button class="fab-ic" onclick="fabAction('vacuum')">🤖</button>
+      </div>
+      <div class="fab-row">
+        <span class="fab-label">🔄 Обновить данные</span>
+        <button class="fab-ic" onclick="fabAction('refresh')">🔄</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Timer Sheet ── -->
+  <div id="timer-overlay" class="timer-overlay" onclick="closeTimerSheet()"></div>
+  <div id="timer-sheet" class="timer-sheet">
+    <div class="edit-sheet-pill"></div>
+    <div class="edit-sheet-title">⏱ Таймер: <span id="timer-device-name">устройство</span></div>
+    <div style="font-size:12px;color:rgba(140,140,190,0.55);margin-bottom:4px">Выключить через:</div>
+    <div class="timer-presets" id="timer-presets">
+      <button class="timer-pre" data-min="5"   onclick="timerPick(5)">5 мин</button>
+      <button class="timer-pre" data-min="10"  onclick="timerPick(10)">10 мин</button>
+      <button class="timer-pre" data-min="20"  onclick="timerPick(20)">20 мин</button>
+      <button class="timer-pre" data-min="30"  onclick="timerPick(30)">30 мин</button>
+      <button class="timer-pre" data-min="60"  onclick="timerPick(60)">1 час</button>
+      <button class="timer-pre" data-min="120" onclick="timerPick(120)">2 часа</button>
+    </div>
+    <div style="display:flex;gap:10px">
+      <button onclick="closeTimerSheet()"
+        style="flex:1;padding:13px;border-radius:12px;border:1px solid rgba(255,255,255,0.10);
+               background:rgba(255,255,255,0.05);color:rgba(200,200,220,0.8);font-size:15px;cursor:pointer;font-family:inherit">Отмена</button>
+      <button onclick="timerStart()"
+        style="flex:1;padding:13px;border-radius:12px;border:none;
+               background:linear-gradient(135deg,var(--accent),var(--accent2));
+               color:#fff;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit">Запустить</button>
+    </div>
+  </div>
 
   <!-- ── Section Edit Sheet ── -->
   <div id="sec-edit-overlay" class="edit-overlay" onclick="closeSectionEditor()"></div>
@@ -2307,7 +2533,10 @@ function applyStatus(d) {
   }
   if (d.floor_setpoint != null) {
     currentSetpoint = parseFloat(d.floor_setpoint);
-    document.getElementById('clim-setpoint').textContent = currentSetpoint.toFixed(0) + ' °C';
+    const spEl = document.getElementById('clim-setpoint');
+    if (spEl) spEl.textContent = currentSetpoint.toFixed(0);
+    const slEl = document.getElementById('clim-sp-slider');
+    if (slEl) slEl.value = currentSetpoint;
   }
 
   // --- TV section ---
@@ -2390,6 +2619,13 @@ function applyStatus(d) {
   } else {
     const _ps2 = document.getElementById('prayers-section'); if (_ps2) _ps2.style.display = 'none';
   }
+
+  // --- Status bar + weather mini ---
+  updateStatusBar(d);
+  if (d.weather) updateWeatherMini(d.weather);
+  _lastOnlineTime = Date.now();
+  var offBanner = document.getElementById('offline-banner');
+  if (offBanner) offBanner.classList.remove('show');
 
   // --- Weather section ---
   if (d.weather) {
@@ -2553,9 +2789,38 @@ function _updateUserBadge() {
 function showUserMenu() {
   const name = HA_DISPLAY_NAME || HA_USERNAME || 'Пользователь';
   const role = HA_USER_ROLE === 'admin' ? '👑 Администратор' : '👤 Пользователь';
-  if (confirm(`${name}\n${role}\n\nВыйти из аккаунта?`)) {
-    doLogout();
-  }
+  const pushLabel = localStorage.getItem('ha_push_enabled') ? '🔕 Отключить уведомления' : '🔔 Включить уведомления';
+  const autoLabel = localStorage.getItem('ha_auto_theme') ? '🌗 Авто-тема: вкл' : '🌗 Авто-тема: выкл';
+  // Build a simple bottom sheet style menu
+  const existing = document.getElementById('user-menu-sheet');
+  if (existing) { existing.remove(); return; }
+  const div = document.createElement('div');
+  div.id = 'user-menu-sheet';
+  div.style.cssText = `position:fixed;bottom:0;left:0;right:0;background:var(--bg-body,#07071a);
+    border-radius:24px 24px 0 0;padding:12px 20px 40px;z-index:950;
+    border-top:1px solid rgba(255,255,255,0.08);
+    transform:translateY(100%);transition:transform 0.3s cubic-bezier(0.32,0.72,0,1)`;
+  div.innerHTML = `
+    <div style="width:40px;height:4px;background:rgba(255,255,255,0.14);border-radius:2px;margin:0 auto 16px"></div>
+    <div style="font-size:15px;font-weight:600;color:rgba(220,220,255,0.92);margin-bottom:4px">${escapeHtml(name)}</div>
+    <div style="font-size:12px;color:rgba(140,140,190,0.55);margin-bottom:16px">${role}</div>
+    <button id="push-toggle-btn" onclick="pushToggle();closeUserMenu()" style="width:100%;padding:13px;border-radius:12px;border:1px solid rgba(255,255,255,0.10);background:rgba(255,255,255,0.05);color:rgba(200,200,230,0.85);font-size:15px;cursor:pointer;font-family:inherit;margin-bottom:8px;text-align:left">${pushLabel}</button>
+    <button onclick="autoThemeToggle();closeUserMenu()" style="width:100%;padding:13px;border-radius:12px;border:1px solid rgba(255,255,255,0.10);background:rgba(255,255,255,0.05);color:rgba(200,200,230,0.85);font-size:15px;cursor:pointer;font-family:inherit;margin-bottom:8px;text-align:left">${autoLabel}</button>
+    <button onclick="doLogout();closeUserMenu()" style="width:100%;padding:13px;border-radius:12px;border:none;background:linear-gradient(135deg,rgba(239,68,68,0.2),rgba(239,68,68,0.1));border:1px solid rgba(239,68,68,0.25);color:#f87171;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit">🚪 Выйти</button>
+  `;
+  const backdrop = document.createElement('div');
+  backdrop.id = 'user-menu-backdrop';
+  backdrop.style.cssText = 'position:fixed;inset:0;z-index:949;';
+  backdrop.onclick = closeUserMenu;
+  document.body.appendChild(backdrop);
+  document.body.appendChild(div);
+  requestAnimationFrame(function() { div.style.transform = 'translateY(0)'; });
+}
+function closeUserMenu() {
+  var sh = document.getElementById('user-menu-sheet');
+  var bd = document.getElementById('user-menu-backdrop');
+  if (sh) sh.style.transform = 'translateY(100%)';
+  setTimeout(function() { if(sh)sh.remove(); if(bd)bd.remove(); }, 320);
 }
 
 function doLogout() {
@@ -2717,6 +2982,7 @@ async function ensureAuth() {
 
 async function init() {
   const timer = setTimeout(hideLoading, 3000);
+  applyAutoTheme();
   // Init quick actions from localStorage immediately
   qaRender();
   // Apply cached permissions immediately before any API calls
@@ -2802,12 +3068,13 @@ function climateAction(onOff) {
 
 function climateSetpoint(delta) {
   const base = currentSetpoint != null ? currentSetpoint : 38;
-  const newVal = base + delta;
-  const btns = document.querySelectorAll('.climate-controls .btn');
-  const btn = delta > 0 ? btns[2] : btns[3];
-  callAction(btn, 'climate.set_temperature', FLOOR_ENTITY, { temperature: newVal });
+  const newVal = Math.min(45, Math.max(20, base + delta));
+  callAction(null, 'climate.set_temperature', FLOOR_ENTITY, { temperature: newVal });
   currentSetpoint = newVal;
-  document.getElementById('clim-setpoint').textContent = newVal.toFixed(0) + ' °C';
+  const sp = document.getElementById('clim-setpoint');
+  if (sp) sp.textContent = newVal.toFixed(0);
+  const sl = document.getElementById('clim-sp-slider');
+  if (sl) sl.value = newVal;
 }
 
 // TV
@@ -5724,6 +5991,239 @@ function themePickerClose() {
   });
 })();
 
+// ── Haptic feedback ────────────────────────────────────────────────────────
+function haptic(ms) {
+  try { if (navigator.vibrate) navigator.vibrate(ms || 8); } catch(e) {}
+}
+// Глобальный haptic на все кнопки/плитки
+document.addEventListener('touchstart', function(e) {
+  var t = e.target;
+  if (t.closest('.btn,.light-btn,.fab-ic,.fab-main,.timer-pre,.icon-cell,.qa-btn,.clim-slider,.home-away-btn,.forecast-day')) {
+    haptic(8);
+  }
+}, { passive: true });
+
+// ── Auto-theme by time of day ───────────────────────────────────────────────
+function autoThemeByHour() {
+  var h = new Date().getHours();
+  if (h >= 5 && h < 9)  return 'aurora';  // рассвет
+  if (h >= 9 && h < 21) return 'cosmos';  // день
+  return 'oled';                           // ночь
+}
+function applyAutoTheme() {
+  var btn = document.getElementById('auto-theme-btn');
+  var isOn = !!localStorage.getItem('ha_auto_theme');
+  if (btn) {
+    btn.style.background = isOn ? 'rgba(99,102,241,0.22)' : 'rgba(255,255,255,0.05)';
+    btn.style.color = isOn ? '#a78bfa' : 'rgba(200,200,230,0.7)';
+    btn.style.borderColor = isOn ? 'rgba(99,102,241,0.50)' : 'rgba(255,255,255,0.12)';
+  }
+  if (!isOn) return;
+  var theme = autoThemeByHour();
+  if (theme !== localStorage.getItem('ha_theme')) themeApply(theme);
+}
+function autoThemeToggle() {
+  haptic(10);
+  if (localStorage.getItem('ha_auto_theme')) localStorage.removeItem('ha_auto_theme');
+  else localStorage.setItem('ha_auto_theme', '1');
+  applyAutoTheme();
+}
+
+// ── Status bar ─────────────────────────────────────────────────────────────
+function updateStatusBar(d) {
+  var bar = document.getElementById('status-bar');
+  if (!bar) return;
+  var chips = [];
+  // Присутствие
+  if (d.family && Array.isArray(d.family)) {
+    var home = d.family.filter(function(p) { return p.state === 'home'; }).length;
+    var total = d.family.length;
+    var cls = home === total ? 'green' : (home > 0 ? 'yellow' : 'red');
+    chips.push('<span class="sb-chip ' + cls + '">🏠 ' + home + '/' + total + ' дома</span>');
+  }
+  // Мощность
+  if (d.power != null) {
+    var pw = parseFloat(d.power);
+    var pcls = pw > 3000 ? 'red' : (pw > 1500 ? 'yellow' : 'green');
+    chips.push('<span class="sb-chip ' + pcls + '">⚡ ' + Math.round(pw) + ' Вт</span>');
+  }
+  // Температура
+  if (d.outdoor_temp != null) {
+    var t = Math.round(d.outdoor_temp);
+    var tcls = t < 0 ? 'blue' : (t > 30 ? 'red' : '');
+    chips.push('<span class="sb-chip ' + tcls + '">🌡 ' + t + '°C</span>');
+  }
+  // Погода
+  if (d.weather && d.weather.condition) {
+    var wparts = (d.weather.condition || '').split(' ');
+    chips.push('<span class="sb-chip">' + wparts[0] + ' ' + Math.round(d.weather.temp || 0) + '°</span>');
+  }
+  // Тёплый пол
+  if (d.floor_heating === 'heat') {
+    chips.push('<span class="sb-chip red">🔥 Пол греет</span>');
+  }
+  bar.innerHTML = chips.join('');
+}
+
+// ── Weather mini card ──────────────────────────────────────────────────────
+function updateWeatherMini(w) {
+  if (!w) return;
+  var card = document.getElementById('weather-mini');
+  if (card) card.style.display = 'flex';
+  var parts = (w.condition || '').split(' ');
+  var el = document.getElementById('wcm-icon'); if (el) el.textContent = parts[0] || '🌤️';
+  el = document.getElementById('wcm-temp');   if (el) el.textContent = (w.temp != null ? Math.round(w.temp) : '?') + '°';
+  el = document.getElementById('wcm-cond');   if (el) el.textContent = parts.slice(1).join(' ') || 'Загрузка';
+  el = document.getElementById('wcm-hum');    if (el) el.textContent = w.humidity ?? '?';
+  el = document.getElementById('wcm-wind');   if (el) el.textContent = w.wind ?? '?';
+}
+
+// ── Offline mode ───────────────────────────────────────────────────────────
+var _lastOnlineTime = null;
+function _offlineTs() {
+  if (!_lastOnlineTime) return 'данные устарели';
+  var d = new Date(_lastOnlineTime);
+  return 'данные за ' + d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+}
+window.addEventListener('online',  function() {
+  var b = document.getElementById('offline-banner'); if (b) b.classList.remove('show');
+  loadStatus();
+  showToast('🌐 Соединение восстановлено', 2500);
+});
+window.addEventListener('offline', function() {
+  var b = document.getElementById('offline-banner');
+  var ts = document.getElementById('offline-ts');
+  if (ts) ts.textContent = _offlineTs();
+  if (b) b.classList.add('show');
+  haptic(20);
+});
+
+// ── Pull-to-refresh ────────────────────────────────────────────────────────
+(function() {
+  var ptrStart = 0, ptrActive = false, ptBar = null;
+  document.addEventListener('touchstart', function(e) {
+    if (window.scrollY === 0) ptrStart = e.touches[0].clientY;
+    else ptrStart = 0;
+  }, { passive: true });
+  document.addEventListener('touchmove', function(e) {
+    if (!ptrStart) return;
+    var dy = e.touches[0].clientY - ptrStart;
+    if (dy > 72 && !ptrActive) {
+      ptrActive = true;
+      ptBar = document.getElementById('ptr-bar');
+      if (ptBar) ptBar.classList.add('show');
+    }
+  }, { passive: true });
+  document.addEventListener('touchend', function() {
+    if (ptrActive) {
+      haptic(15);
+      loadStatus().then(function() {
+        var pb = document.getElementById('ptr-bar');
+        if (pb) pb.classList.remove('show');
+      });
+    }
+    ptrStart = 0; ptrActive = false;
+  });
+})();
+
+// ── FAB ────────────────────────────────────────────────────────────────────
+function fabToggle() {
+  haptic(10);
+  document.body.classList.toggle('fab-open');
+}
+function fabClose() { document.body.classList.remove('fab-open'); }
+async function fabAction(act) {
+  fabClose(); haptic(12);
+  if (act === 'lights_off') {
+    for (var eid of Object.keys(LIGHTS_MAP)) {
+      try { await api('/action', { method:'POST', body: JSON.stringify({ service: LIGHTS_DOMAIN[eid] + '.turn_off', entity_id: eid, extra: {} }) }); } catch(e) {}
+    }
+    showToast('💡 Весь свет выключен');
+    setTimeout(loadStatus, 800);
+  } else if (act === 'away') {
+    homeAwayTap();
+  } else if (act === 'vacuum') {
+    callService('vacuum.start', 'vacuum.pylik');
+    showToast('🤖 Пылесос запущен');
+  } else if (act === 'refresh') {
+    loadStatus();
+    showToast('🔄 Обновление...');
+  }
+}
+
+// ── Device timer ───────────────────────────────────────────────────────────
+var _timerEntity = null, _timerService = null, _timerMins = null, _timerHandles = {};
+function openTimerSheet(entityId, serviceDomain, deviceName) {
+  _timerEntity = entityId;
+  _timerService = serviceDomain + '.turn_off';
+  _timerMins = null;
+  haptic(10);
+  var nameEl = document.getElementById('timer-device-name');
+  if (nameEl) nameEl.textContent = deviceName || entityId;
+  document.querySelectorAll('.timer-pre').forEach(function(b) { b.classList.remove('sel'); });
+  var ov = document.getElementById('timer-overlay');
+  var sh = document.getElementById('timer-sheet');
+  if (ov) ov.classList.add('open');
+  if (sh) requestAnimationFrame(function() { sh.classList.add('open'); });
+}
+function closeTimerSheet() {
+  var ov = document.getElementById('timer-overlay');
+  var sh = document.getElementById('timer-sheet');
+  if (sh) sh.classList.remove('open');
+  setTimeout(function() { if (ov) ov.classList.remove('open'); }, 320);
+}
+function timerPick(mins) {
+  _timerMins = mins; haptic(8);
+  document.querySelectorAll('.timer-pre').forEach(function(b) {
+    b.classList.toggle('sel', parseInt(b.dataset.min) === mins);
+  });
+}
+function timerStart() {
+  if (!_timerEntity || !_timerMins) { showToast('Выберите время'); return; }
+  var eid = _timerEntity, svc = _timerService, mins = _timerMins;
+  closeTimerSheet();
+  haptic(15);
+  // Cancel existing timer for this entity
+  if (_timerHandles[eid]) clearTimeout(_timerHandles[eid]);
+  _timerHandles[eid] = setTimeout(function() {
+    api('/action', { method:'POST', body: JSON.stringify({ service: svc, entity_id: eid, extra: {} }) })
+      .then(function() {
+        showToast('⏱ ' + eid.split('.').pop() + ' выключен по таймеру', 3000);
+        setTimeout(loadStatus, 800);
+      }).catch(function() {});
+    delete _timerHandles[eid];
+  }, mins * 60 * 1000);
+  showToast('⏱ Таймер ' + mins + ' мин', 2000);
+}
+// Long-press detection for light buttons
+function _setupLightLongPress(btn, entityId, domain, name) {
+  var holdTimer = null;
+  btn.addEventListener('touchstart', function(e) {
+    holdTimer = setTimeout(function() {
+      haptic(18); openTimerSheet(entityId, domain, name); holdTimer = null;
+    }, 600);
+  }, { passive: true });
+  btn.addEventListener('touchend', function() { if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; } });
+  btn.addEventListener('touchmove', function() { if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; } });
+}
+
+// ── Climate slider ─────────────────────────────────────────────────────────
+function climateSliderInput(val) {
+  haptic(4);
+  var sp = document.getElementById('clim-setpoint');
+  if (sp) sp.textContent = parseFloat(val).toFixed(0);
+  currentSetpoint = parseFloat(val);
+}
+var _climSliderCommitTimer = null;
+function climateSliderCommit(val) {
+  if (_climSliderCommitTimer) clearTimeout(_climSliderCommitTimer);
+  _climSliderCommitTimer = setTimeout(function() {
+    var newVal = parseFloat(val);
+    callAction(null, 'climate.set_temperature', FLOOR_ENTITY, { temperature: newVal });
+    currentSetpoint = newVal;
+  }, 400);
+}
+
 // ── In-App Section Editor ──────────────────────────────────────────────────
 const EDIT_ICONS = [
   '📊','👨‍👩‍👦','📡','🚪','⚡','💡','🌡️','📺','🤖','🌿','📹','🖥️','📋','🔔',
@@ -5963,9 +6463,94 @@ async function applySavedSections() {
   } catch(e) { /* ignore */ }
 }
 
+// ── Web Push subscription ─────────────────────────────────────────────────────
+var _pushSubscription = null;
+
+function _urlBase64ToUint8Array(b64) {
+  var pad = '='.repeat((4 - b64.length % 4) % 4);
+  var raw = atob((b64 + pad).replace(/-/g,'+').replace(/_/g,'/'));
+  var buf = new Uint8Array(raw.length);
+  for (var i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+  return buf;
+}
+
+async function pushSubscribe() {
+  try {
+    if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+      showToast('Push не поддерживается этим браузером'); return;
+    }
+    var perm = await Notification.requestPermission();
+    if (perm !== 'granted') {
+      showToast('⚠️ Разрешение на уведомления не дано'); return;
+    }
+    var reg = await navigator.serviceWorker.ready;
+    var vapidKey = window.VAPID_PUBLIC_KEY || '';
+    if (!vapidKey) { showToast('VAPID ключ не загружен'); return; }
+    var sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: _urlBase64ToUint8Array(vapidKey)
+    });
+    _pushSubscription = sub;
+    var subJson = sub.toJSON();
+    await api('/push-subscribe', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: HA_USERNAME,
+        endpoint: subJson.endpoint,
+        keys: { p256dh: subJson.keys.p256dh, auth: subJson.keys.auth }
+      })
+    });
+    showToast('🔔 Push-уведомления включены', 2500);
+    localStorage.setItem('ha_push_enabled', '1');
+    var btn = document.getElementById('push-toggle-btn');
+    if (btn) { btn.textContent = '🔕 Отключить уведомления'; }
+  } catch(e) {
+    showToast('❌ Ошибка подписки: ' + e.message);
+  }
+}
+
+async function pushUnsubscribe() {
+  try {
+    var reg = await navigator.serviceWorker.ready;
+    var sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      await api('/push-subscribe', {
+        method: 'DELETE',
+        body: JSON.stringify({ endpoint: sub.endpoint })
+      });
+      await sub.unsubscribe();
+    }
+    localStorage.removeItem('ha_push_enabled');
+    showToast('🔕 Уведомления отключены', 2000);
+    var btn = document.getElementById('push-toggle-btn');
+    if (btn) btn.textContent = '🔔 Включить уведомления';
+  } catch(e) {
+    showToast('❌ ' + e.message);
+  }
+}
+
+async function pushToggle() {
+  haptic(10);
+  var reg = await navigator.serviceWorker.ready;
+  var existing = await reg.pushManager.getSubscription();
+  if (existing) pushUnsubscribe(); else pushSubscribe();
+}
+
+// Auto-restore push subscription after login
+async function _restorePushIfNeeded() {
+  if (!localStorage.getItem('ha_push_enabled')) return;
+  try {
+    var reg = await navigator.serviceWorker.ready;
+    var sub = await reg.pushManager.getSubscription();
+    if (sub) return; // already subscribed
+    pushSubscribe(); // re-subscribe silently
+  } catch(e) {}
+}
+
 // ── Service Worker (PWA) ─────────────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/ha-app/sw.js', { scope: '/ha-app/' })
+    .then(function() { _restorePushIfNeeded(); })
     .catch(function() {}); // silently ignore if offline
 }
 </script>

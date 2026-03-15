@@ -1,5 +1,5 @@
 // Service Worker — Умный Дом PWA
-const CACHE = 'smarthome-v4';
+const CACHE = 'smarthome-v5';
 
 self.addEventListener('install', function(e) {
   self.skipWaiting();
@@ -20,6 +20,32 @@ self.addEventListener('activate', function(e) {
       );
     }).then(function() { return clients.claim(); })
   );
+});
+
+// ── Push notification handler ──────────────────────────────────────────────
+self.addEventListener('push', function(e) {
+  var data = {};
+  try { data = e.data.json(); } catch(_) { data = { title: 'Умный Дом', body: e.data ? e.data.text() : '' }; }
+  e.waitUntil(
+    self.registration.showNotification(data.title || 'Умный Дом', {
+      body:    data.body   || '',
+      icon:    '/ha-app/manifest.json',
+      badge:   '/ha-app/manifest.json',
+      data:    { url: data.url || '/ha-app/' },
+      vibrate: [100, 50, 100],
+      tag:     data.tag || 'ha-notify',
+      renotify: true,
+    })
+  );
+});
+
+self.addEventListener('notificationclick', function(e) {
+  e.notification.close();
+  var url = (e.notification.data && e.notification.data.url) || '/ha-app/';
+  e.waitUntil(clients.matchAll({ type: 'window' }).then(function(cs) {
+    for (var c of cs) { if (c.url.includes('/ha-app/') && 'focus' in c) return c.focus(); }
+    return clients.openWindow(url);
+  }));
 });
 
 self.addEventListener('fetch', function(e) {

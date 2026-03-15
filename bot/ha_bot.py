@@ -148,6 +148,13 @@ WEBAPP_DIR   = Path(os.environ.get("WEBAPP_DIR", "/opt/ha-bot/webapp"))
 _HA_WEBAPP_ADMINS = {u.strip().lower() for u in os.environ.get("HA_WEBAPP_ADMINS", "").split(",") if u.strip()}
 
 FAMILY_USERS_FILE  = Path("/opt/ha-bot/family_users.json")
+
+# ── VAPID keys (Web Push) ──────────────────────────────────────────────────────
+VAPID_PRIVATE_PEM_FILE = Path("/opt/ha-bot/vapid_private.pem")
+VAPID_PUBLIC_FILE      = Path("/opt/ha-bot/vapid_public.txt")
+VAPID_PUBLIC_KEY: str  = VAPID_PUBLIC_FILE.read_text().strip() if VAPID_PUBLIC_FILE.exists() else ""
+VAPID_CLAIMS = {"sub": "mailto:admin@ha-bot.local"}
+
 # ── Пути к файлам данных ───────────────────────────────────────────────────────
 DB_FILE            = Path("/opt/ha-bot/ha_bot.db")      # SQLite (основное хранилище)
 # Legacy JSON пути — используются только для первичной миграции в SQLite
@@ -221,6 +228,24 @@ def _db_init():
         CREATE TABLE IF NOT EXISTS family_users (
             user_id TEXT PRIMARY KEY,
             data    TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE TABLE IF NOT EXISTS push_subscriptions (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            username  TEXT NOT NULL,
+            endpoint  TEXT NOT NULL UNIQUE,
+            p256dh    TEXT NOT NULL,
+            auth      TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS shopping_assignments (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_text   TEXT NOT NULL,
+            list_entity TEXT NOT NULL DEFAULT '',
+            assigned_to TEXT NOT NULL,
+            assigned_by TEXT NOT NULL DEFAULT '',
+            created_at  TEXT NOT NULL,
+            notified_at TEXT,
+            done        INTEGER NOT NULL DEFAULT 0
         );
     """)
     c.commit()
@@ -3639,6 +3664,9 @@ async def _web_index(request: aiohttp_web.Request) -> aiohttp_web.Response:
     if not path.exists():
         return aiohttp_web.Response(status=404, text="Not found")
     html = path.read_text(encoding="utf-8")
+    # Inject VAPID public key so frontend can subscribe without extra API call
+    inject = f'<script>window.VAPID_PUBLIC_KEY={json.dumps(VAPID_PUBLIC_KEY)};</script>'
+    html = html.replace('</head>', inject + '\n</head>', 1)
     return aiohttp_web.Response(
         text=html,
         content_type="text/html",
@@ -4021,6 +4049,189 @@ async def _web_activity_clear(request: aiohttp_web.Request) -> aiohttp_web.Respo
         )
     except Exception as e:
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+# ── Web Push (VAPID) ──────────────────────────────────────────────────────────
+
+async def push_notify(username: str | None, title: str, body: str, url: str = "/ha-app/") -> int:
+    """Send Web Push notification to all subscriptions for username (or all if None).
+    Returns count of successful sends."""
+    if not VAPID_PRIVATE_PEM_FILE.exists() or not VAPID_PUBLIC_KEY:
+        return 0
+    try:
+        from pywebpush import webpush, WebPushException
+        from py_vapid import Vapid
+        vapid = Vapid.from_file(str(VAPID_PRIVATE_PEM_FILE))
+    except Exception as e:
+        log.error(f"push_notify: vapid load error: {e}")
+        return 0
+
+    query = "SELECT endpoint, p256dh, auth FROM push_subscriptions"
+    params: list = []
+    if username:
+        query += " WHERE username=?"
+        params.append(username)
+    try:
+        rows = _db().execute(query, params).fetchall()
+    except Exception:
+        return 0
+
+    sent = 0
+    data = json.dumps({"title": title, "body": body, "url": url}, ensure_ascii=False)
+    dead_endpoints: list[str] = []
+    for row in rows:
+        try:
+            webpush(
+                subscription_info={"endpoint": row["endpoint"],
+                                   "keys": {"p256dh": row["p256dh"], "auth": row["auth"]}},
+                data=data,
+                vapid_private_key=str(VAPID_PRIVATE_PEM_FILE),
+                vapid_claims=VAPID_CLAIMS,
+                ttl=3600,
+            )
+            sent += 1
+        except Exception as e:
+            err_str = str(e)
+            if "410" in err_str or "404" in err_str:   # subscription expired
+                dead_endpoints.append(row["endpoint"])
+            else:
+                log.warning(f"push_notify: send error for {row['endpoint'][:40]}: {e}")
+    # Remove expired subscriptions
+    if dead_endpoints:
+        with _DB_LOCK:
+            c = _db()
+            c.executemany("DELETE FROM push_subscriptions WHERE endpoint=?",
+                          [(ep,) for ep in dead_endpoints])
+            c.commit()
+    return sent
+
+
+async def _web_push_subscribe(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/push-subscribe — save/refresh browser push subscription."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body = await request.json()
+        username = request.headers.get("X-HA-User", "") or body.get("username", "")
+        endpoint = body.get("endpoint", "")
+        keys     = body.get("keys", {})
+        p256dh   = keys.get("p256dh", "")
+        auth     = keys.get("auth", "")
+        if not endpoint or not p256dh or not auth:
+            return aiohttp_web.Response(status=400, text='{"error":"missing fields"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        from datetime import datetime as _dt
+        now_str = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+        with _DB_LOCK:
+            c = _db()
+            c.execute("""INSERT INTO push_subscriptions(username,endpoint,p256dh,auth,created_at)
+                         VALUES(?,?,?,?,?)
+                         ON CONFLICT(endpoint) DO UPDATE SET username=excluded.username,
+                           p256dh=excluded.p256dh, auth=excluded.auth, created_at=excluded.created_at""",
+                      (username, endpoint, p256dh, auth, now_str))
+            c.commit()
+        log.info(f"push_subscribe: {username} @ {endpoint[:50]}")
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    except Exception as e:
+        log.error(f"push_subscribe: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_push_unsubscribe(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """DELETE /ha-app/api/push-subscribe — remove subscription."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body = await request.json()
+        endpoint = body.get("endpoint", "")
+        if endpoint:
+            with _DB_LOCK:
+                c = _db()
+                c.execute("DELETE FROM push_subscriptions WHERE endpoint=?", (endpoint,))
+                c.commit()
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_vapid_key(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/vapid-key — public VAPID key for browser subscription."""
+    return aiohttp_web.Response(
+        text=json.dumps({"publicKey": VAPID_PUBLIC_KEY}),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+
+async def _web_shopping_assignments_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/shopping-assignments — active assignments."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        rows = _db().execute(
+            "SELECT id,item_text,list_entity,assigned_to,assigned_by,created_at,notified_at,done "
+            "FROM shopping_assignments WHERE done=0 ORDER BY id DESC"
+        ).fetchall()
+        result = [dict(r) for r in rows]
+        return aiohttp_web.Response(text=json.dumps(result, ensure_ascii=False),
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_shopping_assignments_post(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/shopping-assignments — create assignment or mark done.
+    Body: {action: 'assign'|'done', item_text?, list_entity?, assigned_to?, id?}
+    """
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body = await request.json()
+        ha_user = request.headers.get("X-HA-User", "")
+        action = body.get("action", "assign")
+        from datetime import datetime as _dt
+        now_str = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        if action == "assign":
+            item_text   = body.get("item_text", "").strip()
+            list_entity = body.get("list_entity", "")
+            assigned_to = body.get("assigned_to", "")
+            if not item_text or not assigned_to:
+                return aiohttp_web.Response(status=400, text='{"error":"missing fields"}',
+                                            content_type="application/json", headers=_CORS_HEADERS)
+            with _DB_LOCK:
+                c = _db()
+                c.execute(
+                    "INSERT INTO shopping_assignments(item_text,list_entity,assigned_to,assigned_by,created_at) VALUES(?,?,?,?,?)",
+                    (item_text, list_entity, assigned_to, ha_user, now_str)
+                )
+                c.commit()
+            # Send push to assigned user
+            asyncio.create_task(push_notify(
+                assigned_to, "🛒 Купить",
+                f"{item_text} — от {ha_user or 'дома'}",
+                "/ha-app/"
+            ))
+            return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                        headers=_CORS_HEADERS)
+
+        elif action == "done":
+            row_id = body.get("id")
+            if row_id is None:
+                return aiohttp_web.Response(status=400, text='{"error":"missing id"}',
+                                            content_type="application/json", headers=_CORS_HEADERS)
+            with _DB_LOCK:
+                c = _db()
+                c.execute("UPDATE shopping_assignments SET done=1 WHERE id=?", (row_id,))
+                c.commit()
+            return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                        headers=_CORS_HEADERS)
+
+        return aiohttp_web.Response(status=400, text='{"error":"unknown action"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        log.error(f"shopping_assignments: {e}")
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
 
 # ── SSE (Server-Sent Events) real-time ───────────────────────────────────────
 _sse_clients: set = set()  # set of asyncio.Queue
@@ -5930,6 +6141,15 @@ async def _start_web():
     app.router.add_route("OPTIONS", "/ha-app/api/webapp-users", _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/user-perms",   _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/activity-all", _web_options)
+    # Web Push
+    app.router.add_get("/ha-app/api/vapid-key",           _web_vapid_key)
+    app.router.add_post("/ha-app/api/push-subscribe",     _web_push_subscribe)
+    app.router.add_delete("/ha-app/api/push-subscribe",   _web_push_unsubscribe)
+    app.router.add_route("OPTIONS", "/ha-app/api/push-subscribe", _web_options)
+    # Shopping assignments
+    app.router.add_get("/ha-app/api/shopping-assignments",    _web_shopping_assignments_get)
+    app.router.add_post("/ha-app/api/shopping-assignments",   _web_shopping_assignments_post)
+    app.router.add_route("OPTIONS", "/ha-app/api/shopping-assignments", _web_options)
     runner = aiohttp_web.AppRunner(app)
     await runner.setup()
     site = aiohttp_web.TCPSite(runner, "127.0.0.1", 8766)
