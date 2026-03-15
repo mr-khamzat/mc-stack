@@ -2184,6 +2184,9 @@ body.fab-open .fab-backdrop { display: block; }
         </div>
         <!-- Tab: Chat -->
         <div id="ftab-chat" class="family-tab-pane">
+          <div style="display:flex;justify-content:flex-end;margin-bottom:4px" id="chat-admin-row" style="display:none">
+            <button onclick="clearChat()" style="background:none;border:none;color:#6060a0;font-size:11px;cursor:pointer;padding:2px 6px" title="Очистить историю чата">🗑 Очистить чат</button>
+          </div>
           <div id="chat-messages" class="chat-messages-wrap"></div>
           <div class="chat-input-row">
             <input id="chat-input" type="text" placeholder="Сообщение..." class="chat-input-field" autocomplete="off" onkeydown="if(event.key==='Enter')sendChatMessage()">
@@ -3701,6 +3704,9 @@ async function loadChat() {
 function renderChat() {
   const el = document.getElementById('chat-messages');
   if (!el) return;
+  // Show clear button for admins only
+  const adminRow = document.getElementById('chat-admin-row');
+  if (adminRow) adminRow.style.display = HA_USER_ROLE === 'admin' ? 'flex' : 'none';
   const me = HA_USERNAME || '';
   if (!_chatMessages.length) {
     el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:20px">Нет сообщений. Напишите первым!</div>';
@@ -3724,6 +3730,20 @@ function renderChat() {
     </div>`;
   }).join('');
   el.scrollTop = el.scrollHeight;
+}
+
+async function clearChat() {
+  if (!confirm('Удалить всю историю чата? Это действие нельзя отменить.')) return;
+  try {
+    const res = await fetch(`${API_BASE}/chat`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${API_TOKEN}`, 'X-HA-User': HA_USERNAME, 'X-HA-User-Role': HA_USER_ROLE }
+    });
+    if (!res.ok) throw new Error(await res.text());
+    _chatMessages = [];
+    renderChat();
+    showToast('🗑 Чат очищен');
+  } catch(e) { showToast('❌ ' + e.message); }
 }
 
 async function sendChatMessage() {
@@ -3766,10 +3786,13 @@ async function voiceToggle() {
     _voiceStream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
     });
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus' : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
-      ? 'audio/ogg;codecs=opus' : 'audio/webm';
-    _voiceRecorder = new MediaRecorder(_voiceStream, { mimeType });
+    const mimeType = MediaRecorder.isTypeSupported('audio/mp4')
+      ? 'audio/mp4'
+      : MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
+      ? 'audio/ogg;codecs=opus' : '';
+    _voiceRecorder = new MediaRecorder(_voiceStream, mimeType ? { mimeType } : {});
     _voiceChunks = [];
     _voiceRecorder.ondataavailable = ev => { if (ev.data.size > 0) _voiceChunks.push(ev.data); };
     _voiceRecorder.onstop = _voiceSend;
@@ -3791,7 +3814,7 @@ async function _voiceSend() {
   if (!_voiceChunks.length) return;
   try {
     const mimeType = _voiceChunks[0].type || 'audio/webm';
-    const ext = mimeType.includes('ogg') ? 'ogg' : 'webm';
+    const ext = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mp4') ? 'mp4' : 'webm';
     const blob = new Blob(_voiceChunks, { type: mimeType });
     if (blob.size < 1000) { showToast('Слишком короткое'); return; }
     const fd = new FormData();
@@ -6364,11 +6387,9 @@ async function openCameraModal(eid) {
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:4000;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:0';
 
   const camId = eid.replace('camera.', '');
-  const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-  const isMobile = isIOS || /Android/i.test(navigator.userAgent);
-  const streamLabel = isIOS ? 'HLS · нажмите ✕ для остановки'
-                   : isMobile ? 'Прямой поток · нажмите ✕ для остановки'
-                   : 'Прямой поток MJPEG · нажмите ✕ для остановки';
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  const streamLabel = isMobile ? 'Снимки каждые 2 сек · нажмите ✕ для остановки'
+                               : 'Прямой поток MJPEG · нажмите ✕ для остановки';
 
   ov.innerHTML = `
     <div style="width:100%;max-width:600px;display:flex;flex-direction:column;height:100%">
@@ -6380,12 +6401,8 @@ async function openCameraModal(eid) {
           style="background:rgba(255,255,255,0.1);border:none;border-radius:8px;padding:6px 12px;color:#c0c0e0;cursor:pointer;font-size:13px">✕</button>
       </div>
       <div id="cam-stream-wrap" style="position:relative;background:#000;flex-shrink:0">
-        ${isIOS && hlsUrl
-          ? `<video id="cam-modal-video" autoplay playsinline muted controls
-               style="width:100%;display:block;max-height:55vh;object-fit:contain"></video>`
-          : `<img id="cam-modal-img" alt="camera stream"
-               style="width:100%;display:block;max-height:55vh;object-fit:contain">`
-        }
+        <img id="cam-modal-img" alt="camera stream"
+             style="width:100%;display:block;max-height:55vh;object-fit:contain">
         <div id="cam-modal-err" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:#6060a0;font-size:13px">
           <span style="font-size:30px">📷</span><span>Поток недоступен</span>
           <button onclick="retryCameraModal('${escapeAttr(eid)}')" class="btn btn-neutral" style="margin-top:4px">↺ Повторить</button>
@@ -6407,26 +6424,12 @@ async function openCameraModal(eid) {
   _camModal = ov;
 
   const _cmErr = document.getElementById('cam-modal-err');
-  if (isIOS && hlsUrl) {
-    // iOS: try HLS via native <video> (Safari supports HLS natively)
-    const vid = document.getElementById('cam-modal-video');
-    if (vid) {
-      vid.addEventListener('error', () => {
-        // HLS failed → fall back to snapshot polling
-        vid.style.display = 'none';
-        _startSnapshotPolling(snapUrl, _cmErr);
-      }, { once: true });
-      vid.src = hlsUrl;
-      vid.load();
-      vid.play().catch(() => {});
-    }
-  } else if (isMobile) {
-    // Android and other mobile: snapshot polling (more compatible than MJPEG)
-    const img = document.getElementById('cam-modal-img');
-    if (img) _startSnapshotPolling(snapUrl, _cmErr, img);
+  const _cmImg = document.getElementById('cam-modal-img');
+  if (isMobile) {
+    // Mobile (iOS/Android): snapshot polling every 2s (MJPEG not supported on mobile)
+    if (_cmImg) _startSnapshotPolling(snapUrl, _cmErr, _cmImg);
   } else {
-    // Desktop: MJPEG stream
-    const _cmImg = document.getElementById('cam-modal-img');
+    // Desktop: MJPEG stream with snapshot fallback
     if (_cmImg) {
       if (_cmErr) _cmImg.addEventListener('error', () => {
         _cmImg.style.display = 'none';

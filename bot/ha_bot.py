@@ -6774,6 +6774,7 @@ async def _reminders_check_loop():
 # ── Family Chat ───────────────────────────────────────────────────────────────
 async def _sse_broadcast_chat(msg_data: dict):
     """Push chat message to all SSE clients."""
+    global _sse_clients
     payload = json.dumps({"type": "chat", "msg": msg_data}, ensure_ascii=False)
     dead = set()
     for q in _sse_clients:
@@ -6840,6 +6841,55 @@ async def _web_chat(request: aiohttp_web.Request) -> aiohttp_web.Response:
                                     content_type="application/json", headers=_CORS_HEADERS)
     except Exception as e:
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_chat_clear(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """DELETE /ha-app/api/chat — clear all chat messages (admin only)."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    role = request.headers.get("X-HA-User-Role", "viewer")
+    if role != "admin":
+        return aiohttp_web.Response(status=403, text="Admin only", headers=_CORS_HEADERS)
+    try:
+        with _DB_LOCK:
+            c = _db()
+            # Collect voice files to delete
+            rows = c.execute("SELECT voice_file FROM chat_messages WHERE voice_file!=''").fetchall()
+            c.execute("DELETE FROM chat_messages")
+            c.commit()
+        for (vf,) in rows:
+            try:
+                (VOICES_DIR / vf).unlink(missing_ok=True)
+            except Exception:
+                pass
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _chat_cleanup_loop():
+    """Delete chat messages older than 3 days every hour."""
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            from datetime import datetime as _dt, timedelta as _td
+            cutoff = (_dt.now() - _td(days=3)).strftime("%Y-%m-%d %H:%M:%S")
+            with _DB_LOCK:
+                c = _db()
+                rows = c.execute(
+                    "SELECT voice_file FROM chat_messages WHERE created_at < ? AND voice_file!=''",
+                    (cutoff,)
+                ).fetchall()
+                c.execute("DELETE FROM chat_messages WHERE created_at < ?", (cutoff,))
+                c.commit()
+            for (vf,) in rows:
+                try:
+                    (VOICES_DIR / vf).unlink(missing_ok=True)
+                except Exception:
+                    pass
+        except Exception as e:
+            log.warning(f"chat_cleanup_loop: {e}")
 
 
 # ── Photo Album ───────────────────────────────────────────────────────────────
@@ -7391,6 +7441,7 @@ async def _start_web():
     app.router.add_route("OPTIONS", "/ha-app/api/reminders/{id}", _web_options)
     app.router.add_get("/ha-app/api/chat",                    _web_chat)
     app.router.add_post("/ha-app/api/chat",                   _web_chat)
+    app.router.add_delete("/ha-app/api/chat",                 _web_chat_clear)
     app.router.add_route("OPTIONS", "/ha-app/api/chat",       _web_options)
     app.router.add_post("/ha-app/api/photos/upload",          _web_photos_upload)
     app.router.add_get("/ha-app/api/photos",                  _web_photos_list)
@@ -7579,6 +7630,7 @@ async def main():
     asyncio.create_task(_frigate_event_loop())  # слушать события Frigate
     asyncio.create_task(_ha_state_watch_loop()) # SSE real-time обновления
     asyncio.create_task(_reminders_check_loop()) # проверка напоминаний каждые 60с
+    asyncio.create_task(_chat_cleanup_loop())    # авто-удаление чата старше 3 дней
     _activity_log("bot_start", f"v{_BOT_VERSION}")
     await bot.send_message(
         ADMIN_ID,
