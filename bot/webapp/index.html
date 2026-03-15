@@ -3727,51 +3727,93 @@ function openPhotoLightbox(url, caption) {
 // ── WebRTC Calls ────────────────────────────────────────────────────────────
 const _STUN_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:144.31.89.167:3478' },
+  { urls: 'stun:stun1.l.google.com:19302' },
 ];
-let _rtcIceServers = null; // filled on first call with TURN creds
-let _rtcPeer = null;
+let _rtcIceServers  = null;
+let _rtcPeer        = null;
 let _rtcLocalStream = null;
-let _rtcRemoteStream = null;
-let _rtcCallType = 'audio'; // 'audio' | 'video'
-let _rtcCallTarget = null;  // {username, display}
-let _rtcIsIncoming = false;
-let _rtcOfferSdp = null;
+let _rtcCallType    = 'audio';
+let _rtcCallTarget  = null;   // {username, display}
+let _rtcOfferSdp    = null;
+let _rtcIceQueue    = [];     // ICE candidates queued before RTCPeerConnection ready
+let _rtcRemoteReady = false;  // true after setRemoteDescription
 
 async function _sendCallSignal(toUser, type, payload) {
-  await api('/call/signal', 'POST', { to_user: toUser, type, payload });
+  try { await api('/call/signal', 'POST', { to_user: toUser, type, payload }); } catch(_) {}
+}
+
+// Unlock iOS AudioContext — must be called inside user gesture
+function _unlockAudio() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = ctx.createBuffer(1, 1, 22050);
+    const src = ctx.createBufferSource();
+    src.buffer = buf; src.connect(ctx.destination); src.start(0);
+    setTimeout(() => ctx.close(), 500);
+  } catch(_) {}
 }
 
 function _attachRemoteStream(stream) {
-  // Video element if exists
-  const remoteVideo = document.getElementById('call-remote-video');
-  if (remoteVideo) { remoteVideo.srcObject = stream; remoteVideo.play().catch(()=>{}); }
-  // Always also attach to audio element (critical for audio-only calls + iOS)
-  let audioEl = document.getElementById('call-remote-audio');
-  if (!audioEl) {
-    audioEl = document.createElement('audio');
-    audioEl.id = 'call-remote-audio';
-    audioEl.autoplay = true;
-    audioEl.setAttribute('playsinline', '');
-    document.body.appendChild(audioEl);
+  // Video
+  const rv = document.getElementById('call-remote-video');
+  if (rv) { rv.srcObject = stream; rv.play().catch(()=>{}); }
+  // Audio — always needed (audio-only calls + iOS requires explicit <audio>)
+  let au = document.getElementById('call-remote-audio');
+  if (!au) {
+    au = document.createElement('audio');
+    au.id = 'call-remote-audio';
+    au.autoplay = true;
+    au.setAttribute('playsinline', '');
+    document.body.appendChild(au);
   }
-  audioEl.srcObject = stream;
-  audioEl.play().catch(()=>{});
+  au.srcObject = stream;
+  au.play().catch(()=>{});
 }
 
-async function _checkPendingCall() {
-  // Called on app open — checks if there's a missed incoming call offer
-  if (_rtcPeer) return; // already in a call
-  try {
-    const call = await api('/call/pending');
-    if (!call || !call.from_user) return;
-    // There's a waiting offer — set it up and show incoming call UI
-    _rtcCallTarget = { username: call.from_user, display: call.from_display || call.from_user };
-    _rtcCallType   = call.call_type || 'audio';
-    _rtcIsIncoming = true;
-    _rtcOfferSdp   = call.payload;
-    _showCallUI('incoming', call.from_display || call.from_user, _rtcCallType);
-  } catch(e) {}
+function _setCallStatus(txt) {
+  const el = document.getElementById('call-status');
+  if (el) el.textContent = txt;
+}
+
+function _makePeer(iceServers) {
+  const pc = new RTCPeerConnection({ iceServers, iceTransportPolicy: 'all', bundlePolicy: 'max-bundle' });
+  pc.onicecandidate = e => {
+    if (e.candidate && _rtcCallTarget)
+      _sendCallSignal(_rtcCallTarget.username, 'ice', { candidate: e.candidate.toJSON() });
+  };
+  pc.oniceconnectionstatechange = () => {
+    const s = pc.iceConnectionState;
+    const map = { checking:'🔄 Подключение...', connected:'🟢 Подключено', completed:'🟢 Подключено',
+                  failed:'❌ Не удалось подключиться', disconnected:'⚠️ Разрыв связи' };
+    if (map[s]) _setCallStatus(map[s]);
+    if (s === 'failed') showToast('❌ ICE failed — нет маршрута');
+  };
+  pc.ontrack = e => {
+    // e.streams[0] may be empty on some browsers — build stream from track
+    const stream = (e.streams && e.streams[0]) ? e.streams[0] : (() => {
+      const s = new MediaStream(); s.addTrack(e.track); return s;
+    })();
+    _attachRemoteStream(stream);
+  };
+  return pc;
+}
+
+// Add ICE candidate — queue if remote description not set yet
+async function _addIce(candidate) {
+  if (_rtcPeer && _rtcRemoteReady) {
+    try { await _rtcPeer.addIceCandidate(new RTCIceCandidate(candidate)); } catch(_) {}
+  } else {
+    _rtcIceQueue.push(candidate);
+  }
+}
+
+// Flush queued ICE candidates after setRemoteDescription
+async function _flushIceQueue() {
+  _rtcRemoteReady = true;
+  for (const c of _rtcIceQueue) {
+    try { await _rtcPeer.addIceCandidate(new RTCIceCandidate(c)); } catch(_) {}
+  }
+  _rtcIceQueue = [];
 }
 
 async function _getIceServers() {
@@ -3779,82 +3821,82 @@ async function _getIceServers() {
   try {
     const turn = await api('/turn-creds');
     _rtcIceServers = [..._STUN_SERVERS, turn];
-  } catch(e) {
-    _rtcIceServers = _STUN_SERVERS;
+  } catch(_) {
+    _rtcIceServers = [..._STUN_SERVERS];
   }
-  // Expire after 50 minutes
   setTimeout(() => { _rtcIceServers = null; }, 50 * 60 * 1000);
   return _rtcIceServers;
 }
 
+// ── Caller ──────────────────────────────────────────────────────────────────
 async function startCall(haName, displayName, type) {
   if (_rtcPeer) { showToast('⚠️ Звонок уже идёт'); return; }
-  // Resolve HA display name → webapp username at click time
+  _unlockAudio(); // must be inside user gesture
   const cache = await _shopGetFamily();
   const webUsers = {};
   cache.forEach(u => { webUsers[u.display_name] = u.username; webUsers[u.username] = u.username; });
   const username = webUsers[haName] || webUsers[haName.toLowerCase()] || haName.toLowerCase();
   if (!username || username === HA_USERNAME) return;
-  _rtcCallType = type;
+
+  _rtcCallType   = type;
   _rtcCallTarget = { username, display: displayName };
-  _rtcIsIncoming = false;
+  _rtcIceQueue   = [];
+  _rtcRemoteReady = false;
   _showCallUI('outgoing', displayName, type);
-  // Unlock audio context on iOS while inside user gesture
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const buf = ctx.createBuffer(1, 1, 22050);
-    const src = ctx.createBufferSource();
-    src.buffer = buf; src.connect(ctx.destination); src.start(0);
-  } catch(_) {}
+
   try {
     _rtcLocalStream = await navigator.mediaDevices.getUserMedia(
-      type === 'video' ? { video: true, audio: true } : { audio: true }
+      type === 'video' ? { video: { facingMode: 'user' }, audio: true } : { audio: true }
     );
     const iceServers = await _getIceServers();
-    _rtcPeer = new RTCPeerConnection({ iceServers, iceTransportPolicy: 'all' });
+    _rtcPeer = _makePeer(iceServers);
     _rtcLocalStream.getTracks().forEach(t => _rtcPeer.addTrack(t, _rtcLocalStream));
-    const localVideo = document.getElementById('call-local-video');
-    if (localVideo && type === 'video') { localVideo.srcObject = _rtcLocalStream; localVideo.play().catch(()=>{}); }
-    _rtcPeer.onicecandidate = e => {
-      if (e.candidate) _sendCallSignal(username, 'ice', { candidate: e.candidate });
-    };
-    _rtcPeer.ontrack = e => {
-      _rtcRemoteStream = e.streams[0];
-      _attachRemoteStream(_rtcRemoteStream);
-    };
-    const offer = await _rtcPeer.createOffer();
+
+    // Show own video
+    const lv = document.getElementById('call-local-video');
+    if (lv) { lv.srcObject = _rtcLocalStream; lv.play().catch(()=>{}); }
+
+    const offer = await _rtcPeer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: type === 'video' });
     await _rtcPeer.setLocalDescription(offer);
     await _sendCallSignal(username, 'offer', { sdp: offer.sdp, type: offer.type, callType: type });
+    _setCallStatus(type === 'video' ? '📹 Вызов...' : '📞 Вызов...');
   } catch(e) {
-    showToast('❌ Нет доступа к микрофону: ' + e.message);
+    showToast('❌ ' + e.message);
     endCall();
   }
 }
 
+// ── Signal handler ───────────────────────────────────────────────────────────
 async function _handleCallSignal(sig) {
   const { from_user, from_display, signal_type, payload, to_user } = sig;
   const me = HA_USERNAME || '';
-  // Match by webapp username OR display name (in case of normalization lag)
   const myDisplay = HA_DISPLAY_NAME || '';
-  const isForMe = (to_user === me) || (to_user.toLowerCase() === me.toLowerCase()) ||
+  const isForMe = to_user === me || to_user.toLowerCase() === me.toLowerCase() ||
                   (myDisplay && to_user.toLowerCase() === myDisplay.toLowerCase());
-  if (to_user && !isForMe) return; // not for me
+  if (to_user && !isForMe) return;
+
   if (signal_type === 'offer') {
-    if (_rtcPeer) { await _sendCallSignal(from_user, 'reject', {}); return; }
-    _rtcCallTarget = { username: from_user, display: from_display || from_user };
-    _rtcCallType = payload.callType || 'audio';
-    _rtcIsIncoming = true;
-    _rtcOfferSdp = payload;
+    if (_rtcPeer) { _sendCallSignal(from_user, 'reject', {}); return; }
+    _rtcCallTarget  = { username: from_user, display: from_display || from_user };
+    _rtcCallType    = (payload && payload.callType) || 'audio';
+    _rtcOfferSdp    = payload;
+    _rtcIceQueue    = [];
+    _rtcRemoteReady = false;
     _showCallUI('incoming', from_display || from_user, _rtcCallType);
+
   } else if (signal_type === 'answer') {
     if (!_rtcPeer) return;
-    await _rtcPeer.setRemoteDescription(new RTCSessionDescription(payload));
-    _setCallActive();
+    try {
+      await _rtcPeer.setRemoteDescription(new RTCSessionDescription(payload));
+      await _flushIceQueue();
+      _setCallStatus('🟢 Подключено');
+    } catch(e) { showToast('❌ answer: ' + e.message); }
+
   } else if (signal_type === 'ice') {
-    if (!_rtcPeer) return;
-    try { await _rtcPeer.addIceCandidate(new RTCIceCandidate(payload.candidate)); } catch(e) {}
+    if (payload && payload.candidate) await _addIce(payload.candidate);
+
   } else if (signal_type === 'reject') {
-    showToast('📵 Вызов отклонён');
+    showToast('📵 Отклонено');
     endCall();
   } else if (signal_type === 'hangup') {
     showToast('📵 Звонок завершён');
@@ -3862,49 +3904,45 @@ async function _handleCallSignal(sig) {
   }
 }
 
+// ── Callee ───────────────────────────────────────────────────────────────────
 async function acceptCall() {
   if (!_rtcOfferSdp) return;
-  // Create audio element NOW while inside user gesture (tap on "Принять")
-  // This unlocks autoplay on iOS before we get the remote stream
-  let audioEl = document.getElementById('call-remote-audio');
-  if (!audioEl) {
-    audioEl = document.createElement('audio');
-    audioEl.id = 'call-remote-audio';
-    audioEl.autoplay = true;
-    audioEl.setAttribute('playsinline', '');
-    document.body.appendChild(audioEl);
+  _unlockAudio(); // must be inside user gesture (tap "Принять")
+
+  // Pre-create <audio> element while still in user gesture so iOS allows autoplay
+  let au = document.getElementById('call-remote-audio');
+  if (!au) {
+    au = document.createElement('audio');
+    au.id = 'call-remote-audio';
+    au.autoplay = true;
+    au.setAttribute('playsinline', '');
+    document.body.appendChild(au);
   }
-  // Play a silent buffer to unlock audio context on iOS
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const buf = ctx.createBuffer(1, 1, 22050);
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(ctx.destination);
-    src.start(0);
-  } catch(_) {}
 
   try {
     _rtcLocalStream = await navigator.mediaDevices.getUserMedia(
-      _rtcCallType === 'video' ? { video: true, audio: true } : { audio: true }
+      _rtcCallType === 'video' ? { video: { facingMode: 'user' }, audio: true } : { audio: true }
     );
     const iceServers = await _getIceServers();
-    _rtcPeer = new RTCPeerConnection({ iceServers, iceTransportPolicy: 'all' });
+    _rtcPeer = _makePeer(iceServers);
     _rtcLocalStream.getTracks().forEach(t => _rtcPeer.addTrack(t, _rtcLocalStream));
-    const localVideo = document.getElementById('call-local-video');
-    if (localVideo && _rtcCallType === 'video') { localVideo.srcObject = _rtcLocalStream; localVideo.play().catch(()=>{}); }
-    _rtcPeer.onicecandidate = e => {
-      if (e.candidate) _sendCallSignal(_rtcCallTarget.username, 'ice', { candidate: e.candidate });
-    };
-    _rtcPeer.ontrack = e => {
-      _rtcRemoteStream = e.streams[0];
-      _attachRemoteStream(_rtcRemoteStream);
-    };
+
+    const lv = document.getElementById('call-local-video');
+    if (lv) { lv.srcObject = _rtcLocalStream; lv.play().catch(()=>{}); }
+
     await _rtcPeer.setRemoteDescription(new RTCSessionDescription(_rtcOfferSdp));
+    await _flushIceQueue(); // drain ICE candidates that arrived before accept
+
     const answer = await _rtcPeer.createAnswer();
     await _rtcPeer.setLocalDescription(answer);
     await _sendCallSignal(_rtcCallTarget.username, 'answer', { sdp: answer.sdp, type: answer.type });
-    _setCallActive();
+    _setCallStatus('🔄 Подключение...');
+
+    // Update buttons
+    const acceptBtn = document.getElementById('call-accept-btn');
+    if (acceptBtn) acceptBtn.style.display = 'none';
+    const rejectBtn = document.getElementById('call-reject-btn');
+    if (rejectBtn) { rejectBtn.textContent = '⏹ Завершить'; rejectBtn.onclick = endCall; }
   } catch(e) {
     showToast('❌ ' + e.message);
     rejectCall();
@@ -3920,22 +3958,25 @@ function endCall() {
   if (_rtcCallTarget) _sendCallSignal(_rtcCallTarget.username, 'hangup', {}).catch(()=>{});
   if (_rtcPeer) { _rtcPeer.close(); _rtcPeer = null; }
   if (_rtcLocalStream) { _rtcLocalStream.getTracks().forEach(t => t.stop()); _rtcLocalStream = null; }
-  _rtcRemoteStream = null; _rtcCallTarget = null; _rtcOfferSdp = null;
+  _rtcCallTarget = null; _rtcOfferSdp = null; _rtcIceQueue = []; _rtcRemoteReady = false;
   const overlay = document.getElementById('call-overlay');
   if (overlay) overlay.remove();
-  const audioEl = document.getElementById('call-remote-audio');
-  if (audioEl) { audioEl.srcObject = null; audioEl.remove(); }
+  const au = document.getElementById('call-remote-audio');
+  if (au) { au.srcObject = null; au.remove(); }
 }
 
-function _setCallActive() {
-  const overlay = document.getElementById('call-overlay');
-  if (!overlay) return;
-  const statusEl = overlay.querySelector('#call-status');
-  if (statusEl) statusEl.textContent = '🔴 Идёт звонок';
-  const acceptBtn = overlay.querySelector('#call-accept-btn');
-  if (acceptBtn) acceptBtn.style.display = 'none';
-  const rejectBtn = overlay.querySelector('#call-reject-btn');
-  if (rejectBtn) { rejectBtn.textContent = '⏹ Завершить'; rejectBtn.onclick = endCall; }
+async function _checkPendingCall() {
+  if (_rtcPeer) return;
+  try {
+    const call = await api('/call/pending');
+    if (!call || !call.from_user) return;
+    _rtcCallTarget  = { username: call.from_user, display: call.from_display || call.from_user };
+    _rtcCallType    = call.call_type || 'audio';
+    _rtcOfferSdp    = call.payload;
+    _rtcIceQueue    = [];
+    _rtcRemoteReady = false;
+    _showCallUI('incoming', call.from_display || call.from_user, _rtcCallType);
+  } catch(_) {}
 }
 
 function _showCallUI(mode, name, type) {
@@ -3948,26 +3989,30 @@ function _showCallUI(mode, name, type) {
   }
   const isVideo = type === 'video';
   const isIncoming = mode === 'incoming';
+  const initLetter = (name || '?').charAt(0).toUpperCase();
   overlay.innerHTML = `
     <div class="call-box">
       <div class="call-avatar-wrap">
-        <div class="call-avatar">${(name||'?').charAt(0).toUpperCase()}</div>
+        <div class="call-avatar">${escapeHtml(initLetter)}</div>
         <div class="call-pulse-ring"></div>
       </div>
       <div class="call-name">${escapeHtml(name)}</div>
-      <div class="call-status" id="call-status">${isIncoming ? (isVideo?'📹 Входящий видеозвонок':'📞 Входящий звонок') : (isVideo?'📹 Видеозвонок...':'📞 Звонок...')}</div>
+      <div class="call-status" id="call-status">
+        ${isIncoming ? (isVideo ? '📹 Входящий видеозвонок' : '📞 Входящий звонок')
+                     : (isVideo ? '📹 Вызов...' : '📞 Вызов...')}
+      </div>
       ${isVideo ? `<div class="call-videos">
         <video id="call-remote-video" class="call-remote-video" autoplay playsinline></video>
-        <video id="call-local-video" class="call-local-video" autoplay playsinline muted></video>
-      </div>` : `<div style="font-size:40px;margin:4px 0">🎙️</div>`}
+        <video id="call-local-video"  class="call-local-video"  autoplay playsinline muted></video>
+      </div>` : `<div style="font-size:44px;margin:8px 0">🎙️</div>`}
       <div class="call-buttons">
         ${isIncoming ? `<button id="call-accept-btn" class="call-btn call-btn-accept" onclick="acceptCall()">✅ Принять</button>` : ''}
-        <button id="call-reject-btn" class="call-btn call-btn-reject" onclick="${isIncoming?'rejectCall()':'endCall()'}">
+        <button id="call-reject-btn" class="call-btn call-btn-reject"
+          onclick="${isIncoming ? 'rejectCall()' : 'endCall()'}">
           ${isIncoming ? '❌ Отклонить' : '⏹ Завершить'}
         </button>
       </div>
-    </div>
-  `;
+    </div>`;
 }
 
 // Vacuum
