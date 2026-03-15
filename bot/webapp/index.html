@@ -7407,6 +7407,10 @@ async function admInitPerms() {
             const roleBadge = u.role === 'admin'
                 ? '<span style="font-size:11px;background:#4f46e5;color:#fff;padding:2px 7px;border-radius:20px">admin</span>'
                 : '<span style="font-size:11px;background:#334155;color:#94a3b8;padding:2px 7px;border-radius:20px">viewer</span>';
+            const isSelf = u.username === HA_USERNAME;
+            const delBtn = !isSelf ? `<button onclick="event.stopPropagation();admDeleteUser('${u.username}','${escapeAttr(u.display_name||u.username)}')"
+                style="padding:4px 10px;border-radius:8px;border:1px solid rgba(239,68,68,0.35);
+                background:rgba(239,68,68,0.08);color:#fca5a5;font-size:12px;cursor:pointer">🗑</button>` : '';
             return `<div onclick="admSelectUser('${u.username}','${u.display_name || u.username}')"
                 style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;
                 margin-bottom:6px;background:rgba(255,255,255,0.04);border-radius:10px;cursor:pointer;
@@ -7417,7 +7421,7 @@ async function admInitPerms() {
                     <div style="font-weight:600;color:#e2e8f0;margin-bottom:3px">${u.display_name || u.username}</div>
                     <div style="font-size:11px;color:#64748b">${u.username} · Вход: ${lastLogin}</div>
                 </div>
-                <div style="display:flex;align-items:center;gap:8px">${roleBadge}<span style="color:#64748b;font-size:16px">›</span></div>
+                <div style="display:flex;align-items:center;gap:8px">${roleBadge}${delBtn}<span style="color:#64748b;font-size:16px">›</span></div>
             </div>`;
         }).join('');
     } catch(e) {
@@ -7444,6 +7448,17 @@ async function admSelectUser(username, displayName) {
             <span style="font-size:14px;color:#e2e8f0">${label}</span>
         </label>`;
     }).join('');
+}
+
+async function admDeleteUser(username, displayName) {
+    if (!confirm(`Удалить "${displayName}" из мини апс?\nОн исчезнет из раздела Семья.`)) return;
+    try {
+        await fetch(`${API_BASE}/webapp-users/${encodeURIComponent(username)}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${HA_TOKEN}`, 'X-HA-User': HA_USERNAME, 'X-HA-User-Role': HA_ROLE }
+        });
+        admInitPerms();
+    } catch(e) { alert('Ошибка: ' + e.message); }
 }
 
 function admBackToUsers() {

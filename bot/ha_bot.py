@@ -5865,6 +5865,27 @@ async def _web_webapp_users(request: aiohttp_web.Request) -> aiohttp_web.Respons
         text=json.dumps(result, ensure_ascii=False),
         content_type="application/json", headers=_CORS_HEADERS)
 
+async def _web_webapp_user_delete(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """DELETE /ha-app/api/webapp-users/{username} — удалить пользователя (admin only)."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    if request.headers.get("X-HA-User-Role", "") != "admin":
+        return aiohttp_web.Response(status=403, text="Admin only", headers=_CORS_HEADERS)
+    username = request.match_info.get("username", "").lower()
+    requester = request.headers.get("X-HA-User", "").lower()
+    if username == requester:
+        return aiohttp_web.Response(status=400, text='{"error":"cannot delete yourself"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    try:
+        with _DB_LOCK:
+            c = _db()
+            c.execute("DELETE FROM webapp_users WHERE username=?", (username,))
+            c.commit()
+        log.info(f"webapp_user_delete: '{username}' removed by admin '{requester}'")
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
 async def _web_user_perms_get(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/api/user-perms?user=USERNAME — права пользователя."""
     if not _check_token(request):
@@ -7129,6 +7150,7 @@ async def _start_web():
     app.router.add_route("OPTIONS", "/ha-app/api/shopping-stats",   _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/shopping-history", _web_options)
     app.router.add_get("/ha-app/api/webapp-users",  _web_webapp_users)
+    app.router.add_delete("/ha-app/api/webapp-users/{username}", _web_webapp_user_delete)
     app.router.add_get("/ha-app/api/user-perms",    _web_user_perms_get)
     app.router.add_post("/ha-app/api/user-perms",   _web_user_perms_post)
     app.router.add_get("/ha-app/api/activity-all",  _web_activity_log_get)
