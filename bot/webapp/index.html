@@ -33,31 +33,126 @@
   --glow2: rgba(139,92,246,0.14);
   --glow3: rgba(59,130,246,0.06);
 }
-/* OLED — чёрный, яркие акценты */
+/* OLED — чёрный, минимализм */
 :root[data-theme="oled"] {
   --bg-body: #000000;
-  --glow1: rgba(99,102,241,0.14);
-  --glow2: rgba(139,92,246,0.09);
-  --glow3: rgba(59,130,246,0.04);
+  --glow1: rgba(99,102,241,0.10);
+  --glow2: rgba(139,92,246,0.07);
+  --glow3: rgba(59,130,246,0.03);
 }
-/* Forest — тёмно-зелёный */
-:root[data-theme="forest"] {
-  --bg-body: #050f08;
-  --accent: #34d399;
-  --accent2: #10b981;
-  --glow1: rgba(52,211,153,0.18);
-  --glow2: rgba(16,185,129,0.12);
-  --glow3: rgba(6,95,70,0.07);
+/* Cyber — неон, киберпанк */
+:root[data-theme="cyber"] {
+  --bg-body: #010a06;
+  --accent: #00ff9f;
+  --accent2: #00ccff;
+  --success: #00ff9f;
+  --glow1: rgba(0,255,159,0.12);
+  --glow2: rgba(0,204,255,0.07);
+  --glow3: rgba(255,0,200,0.04);
 }
-/* Sunset — янтарно-закатный */
-:root[data-theme="sunset"] {
-  --bg-body: #0e0805;
-  --accent: #f59e0b;
-  --accent2: #ef4444;
-  --glow1: rgba(245,158,11,0.18);
-  --glow2: rgba(239,68,68,0.12);
-  --glow3: rgba(180,83,9,0.07);
+/* Light — светлый iOS */
+:root[data-theme="light"] {
+  --bg-body: #f2f2f7;
+  --accent: #007aff;
+  --accent2: #5856d6;
+  --success: #34c759;
+  --warning: #ff9500;
+  --danger: #ff3b30;
+  --glow1: rgba(0,122,255,0.05);
+  --glow2: rgba(88,86,214,0.03);
+  --glow3: transparent;
 }
+
+/* ─── Cyber: кардинальный редизайн плиток ─── */
+[data-theme="cyber"] body {
+  background-image:
+    linear-gradient(rgba(0,255,159,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,255,159,0.025) 1px, transparent 1px);
+  background-size: 38px 38px;
+}
+[data-theme="cyber"] .section {
+  background: rgba(0,255,159,0.03) !important;
+  border-radius: 8px !important;
+  border: 1px solid rgba(0,255,159,0.30) !important;
+  border-top-color: rgba(0,255,159,0.45) !important;
+  box-shadow:
+    0 0 20px rgba(0,255,159,0.07),
+    0 0 50px rgba(0,255,159,0.03),
+    inset 0 0 20px rgba(0,255,159,0.02) !important;
+  backdrop-filter: blur(4px) !important;
+  -webkit-backdrop-filter: blur(4px) !important;
+}
+[data-theme="cyber"] .section-header {
+  color: #00ff9f !important;
+  text-shadow: 0 0 10px rgba(0,255,159,0.6), 0 0 22px rgba(0,255,159,0.3);
+  border-bottom: 1px solid rgba(0,255,159,0.10);
+}
+[data-theme="cyber"] .btn-primary {
+  background: linear-gradient(135deg, #00c97a, #00ff9f) !important;
+  color: #001a0d !important;
+  box-shadow: 0 0 16px rgba(0,255,159,0.5) !important;
+}
+[data-theme="cyber"] .btn-neutral {
+  border-color: rgba(0,255,159,0.30) !important;
+  color: #00ff9f !important;
+}
+[data-theme="cyber"] .login-card {
+  border-color: rgba(0,255,159,0.40) !important;
+  background: rgba(0,255,159,0.04) !important;
+  box-shadow: 0 0 40px rgba(0,255,159,0.14), inset 0 0 24px rgba(0,255,159,0.04) !important;
+}
+[data-theme="cyber"] .login-title { color: #00ff9f !important; text-shadow: 0 0 18px rgba(0,255,159,0.6); }
+[data-theme="cyber"] .login-btn {
+  background: linear-gradient(135deg, #00c97a, #00ff9f) !important;
+  color: #001a0d !important;
+  box-shadow: 0 0 20px rgba(0,255,159,0.45) !important;
+}
+[data-theme="cyber"] .login-orbit { border-color: rgba(0,255,159,0.45) !important; }
+[data-theme="cyber"] .spinner { border-top-color: #00ff9f !important; border-color: rgba(0,255,159,0.18) !important; }
+[data-theme="cyber"] #loading { background: #010a06 !important; }
+
+/* ─── Light: кардинальный редизайн — светлый стиль ─── */
+[data-theme="light"] body { color: #1c1c1e; }
+[data-theme="light"] body::before { opacity: 0.3; }
+[data-theme="light"] .section {
+  background: rgba(255,255,255,0.88) !important;
+  border: 1px solid rgba(0,0,0,0.07) !important;
+  border-top-color: rgba(255,255,255,1) !important;
+  box-shadow: 0 2px 14px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+}
+[data-theme="light"] .section-header { color: #1c1c1e !important; }
+[data-theme="light"] .section-body   { background: rgba(255,255,255,0.4) !important; }
+[data-theme="light"] .section-content { color: #3c3c43; }
+[data-theme="light"] .last-updated   { color: rgba(60,60,80,0.45) !important; }
+[data-theme="light"] #user-badge {
+  background: rgba(0,0,0,0.06) !important;
+  border-color: rgba(0,0,0,0.09) !important;
+}
+[data-theme="light"] #user-display-name { color: #3c3c43 !important; }
+[data-theme="light"] #loading { background: #f2f2f7 !important; }
+[data-theme="light"] #loading p { color: rgba(60,60,80,0.5) !important; }
+[data-theme="light"] .login-screen  { background: #f2f2f7 !important; }
+[data-theme="light"] .login-card {
+  background: rgba(255,255,255,0.92) !important;
+  border-color: rgba(0,0,0,0.09) !important;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.06) !important;
+}
+[data-theme="light"] .login-title { color: #1c1c1e !important; }
+[data-theme="light"] .login-sub   { color: rgba(60,60,80,0.6) !important; }
+[data-theme="light"] .login-input {
+  background: rgba(0,0,0,0.05) !important;
+  border-color: rgba(0,0,0,0.11) !important;
+  color: #1c1c1e !important;
+}
+[data-theme="light"] .login-input::placeholder { color: rgba(60,60,80,0.35) !important; }
+[data-theme="light"] .login-input:focus {
+  background: rgba(0,122,255,0.06) !important;
+  border-color: #007aff !important;
+  box-shadow: 0 0 0 3px rgba(0,122,255,0.14) !important;
+}
+[data-theme="light"] .login-btn { box-shadow: 0 4px 16px rgba(0,122,255,0.35) !important; }
 
 body {
   font-family: -apple-system, 'SF Pro Display', 'Inter', BlinkMacSystemFont, sans-serif;
@@ -1023,9 +1118,9 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
 .theme-dot:active { transform: scale(0.88); }
 .theme-dot.active { border-color: rgba(255,255,255,0.8); transform: scale(1.15); }
 .theme-dot-cosmos  { background: radial-gradient(circle at 35% 35%, #8b5cf6, #07071a); }
-.theme-dot-oled    { background: radial-gradient(circle at 35% 35%, #818cf8, #000000); }
-.theme-dot-forest  { background: radial-gradient(circle at 35% 35%, #34d399, #050f08); }
-.theme-dot-sunset  { background: radial-gradient(circle at 35% 35%, #f59e0b, #0e0805); }
+.theme-dot-oled    { background: radial-gradient(circle at 35% 35%, #6366f1, #000000); }
+.theme-dot-cyber   { background: radial-gradient(circle at 35% 35%, #00ff9f, #010a06); box-shadow: 0 0 8px rgba(0,255,159,0.5); }
+.theme-dot-light   { background: radial-gradient(circle at 35% 35%, #007aff, #f2f2f7); }
 </style>
 <!-- Inline failsafe: remove loading after 5s even without JS -->
 <script>
@@ -1052,10 +1147,10 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   <div id="theme-overlay" onclick="themePickerClose()"></div>
   <div id="theme-picker" style="display:none">
     <span style="font-size:11px;color:#64748b;white-space:nowrap">Тема:</span>
-    <div class="theme-dot theme-dot-cosmos" title="Космос"  onclick="themeSet('cosmos')"></div>
-    <div class="theme-dot theme-dot-oled"   title="OLED"    onclick="themeSet('oled')"></div>
-    <div class="theme-dot theme-dot-forest" title="Лес"     onclick="themeSet('forest')"></div>
-    <div class="theme-dot theme-dot-sunset" title="Закат"   onclick="themeSet('sunset')"></div>
+    <div class="theme-dot theme-dot-cosmos" title="Космос"   onclick="themeSet('cosmos')"></div>
+    <div class="theme-dot theme-dot-oled"   title="OLED"     onclick="themeSet('oled')"></div>
+    <div class="theme-dot theme-dot-cyber"  title="Кибер"    onclick="themeSet('cyber')"></div>
+    <div class="theme-dot theme-dot-light"  title="Светлая"  onclick="themeSet('light')"></div>
   </div>
 
   <div class="app-header">
@@ -5137,9 +5232,9 @@ function admShow() {
 // ── Themes ──────────────────────────────────────────────────────────────────
 const THEMES = {
   cosmos: { color: '#6366f1' },
-  oled:   { color: '#818cf8' },
-  forest: { color: '#34d399' },
-  sunset: { color: '#f59e0b' },
+  oled:   { color: '#6366f1' },
+  cyber:  { color: '#00ff9f' },
+  light:  { color: '#007aff' },
 };
 
 function themeApply(name) {
@@ -5149,8 +5244,9 @@ function themeApply(name) {
   const mc = document.getElementById('meta-theme-color');
   if (mc) mc.content = t.color;
   // Update active dot
-  document.querySelectorAll('.theme-dot').forEach(d => {
-    d.classList.toggle('active', d.classList.contains('theme-dot-' + (name || 'cosmos')));
+  const active = name || 'cosmos';
+  document.querySelectorAll('.theme-dot').forEach(function(d) {
+    d.classList.toggle('active', d.classList.contains('theme-dot-' + active));
   });
 }
 
