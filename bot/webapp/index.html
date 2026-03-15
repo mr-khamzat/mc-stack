@@ -111,48 +111,162 @@
 [data-theme="cyber"] .spinner { border-top-color: #00ff9f !important; border-color: rgba(0,255,159,0.18) !important; }
 [data-theme="cyber"] #loading { background: #010a06 !important; }
 
-/* ─── Light: кардинальный редизайн — светлый стиль ─── */
-[data-theme="light"] body { color: #1c1c1e; }
-[data-theme="light"] body::before { opacity: 0.3; }
+/* ─── Light: полноценный Premium Glass дизайн ─── */
+@keyframes lightFloat {
+  0%,100% { transform: translateY(0px);   box-shadow: 0 6px 24px rgba(99,102,241,0.09), 0 2px 8px rgba(0,0,0,0.05), inset 0 1px 0 rgba(255,255,255,0.95); }
+  50%      { transform: translateY(-4px);  box-shadow: 0 14px 40px rgba(99,102,241,0.14), 0 4px 14px rgba(0,0,0,0.07), inset 0 1px 0 rgba(255,255,255,0.95); }
+}
+@keyframes lightShimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+:root[data-theme="light"] {
+  --bg-body: #eef1f8;
+  --accent: #4f6ef7;
+  --accent2: #7c5cf6;
+  --success: #2dbd71;
+  --warning: #f09c0a;
+  --danger: #e53935;
+  --glow1: rgba(79,110,247,0.10);
+  --glow2: rgba(124,92,246,0.07);
+  --glow3: rgba(99,102,241,0.04);
+  --lt-text: #1a1a2e;
+  --lt-text2: #4a4a6a;
+  --lt-text3: #7878a0;
+  --lt-border: rgba(79,110,247,0.13);
+  --lt-card: rgba(255,255,255,0.68);
+  --lt-card-tint: rgba(235,240,255,0.50);
+}
+
+/* Фон — пастельный градиент */
+[data-theme="light"] body {
+  color: var(--lt-text);
+  background: var(--bg-body) !important;
+}
+[data-theme="light"] body::before {
+  background:
+    radial-gradient(ellipse 80% 50% at 15% -5%, rgba(79,110,247,0.13) 0%, transparent 65%),
+    radial-gradient(ellipse 60% 40% at 85% 105%, rgba(124,92,246,0.09) 0%, transparent 65%),
+    radial-gradient(ellipse 50% 40% at 55% 45%, rgba(99,180,246,0.07) 0%, transparent 55%) !important;
+}
+
+/* Плитки: стекло в воздухе */
 [data-theme="light"] .section {
-  background: rgba(255,255,255,0.88) !important;
-  border: 1px solid rgba(0,0,0,0.07) !important;
-  border-top-color: rgba(255,255,255,1) !important;
-  box-shadow: 0 2px 14px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04) !important;
-  backdrop-filter: blur(20px) !important;
-  -webkit-backdrop-filter: blur(20px) !important;
+  background: linear-gradient(155deg, var(--lt-card) 0%, var(--lt-card-tint) 100%) !important;
+  border: 1px solid var(--lt-border) !important;
+  border-top-color: rgba(255,255,255,0.95) !important;
+  box-shadow:
+    0 6px 24px rgba(79,110,247,0.09),
+    0 2px 8px rgba(0,0,0,0.05),
+    inset 0 1px 0 rgba(255,255,255,0.95) !important;
+  backdrop-filter: blur(28px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
+  animation: sectionIn 0.4s ease both, lightFloat 8s ease-in-out infinite !important;
+  animation-delay: var(--sec-delay, 0s), calc(var(--sec-delay, 0s) + 0.5s) !important;
 }
-[data-theme="light"] .section-header { color: #1c1c1e !important; }
-[data-theme="light"] .section-body   { background: rgba(255,255,255,0.4) !important; }
-[data-theme="light"] .section-content { color: #3c3c43; }
-[data-theme="light"] .last-updated   { color: rgba(60,60,80,0.45) !important; }
+/* Стаггер анимации по nth-child */
+[data-theme="light"] .section:nth-child(1)  { --sec-delay: 0.00s; }
+[data-theme="light"] .section:nth-child(2)  { --sec-delay: 0.06s; --float-offset: 1.2s; }
+[data-theme="light"] .section:nth-child(3)  { --sec-delay: 0.12s; --float-offset: 2.4s; }
+[data-theme="light"] .section:nth-child(4)  { --sec-delay: 0.18s; --float-offset: 3.6s; }
+[data-theme="light"] .section:nth-child(5)  { --sec-delay: 0.24s; --float-offset: 4.8s; }
+[data-theme="light"] .section:nth-child(6)  { --sec-delay: 0.30s; --float-offset: 0.4s; }
+[data-theme="light"] .section:nth-child(7)  { --sec-delay: 0.36s; --float-offset: 1.6s; }
+[data-theme="light"] .section:nth-child(8)  { --sec-delay: 0.42s; --float-offset: 2.8s; }
+[data-theme="light"] .section:nth-child(9)  { --sec-delay: 0.48s; --float-offset: 4.0s; }
+[data-theme="light"] .section:nth-child(n+10) { --sec-delay: 0.54s; --float-offset: 0.8s; }
+/* Левый акцентный бордюр */
+[data-theme="light"] .section {
+  border-left: 3px solid var(--accent) !important;
+  border-left-color: var(--accent) !important;
+}
+
+/* Типографика — чёткие контрастные цвета */
+[data-theme="light"] .section-header {
+  color: var(--lt-text) !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.3px !important;
+}
+[data-theme="light"] .section-header:active { background: rgba(79,110,247,0.06) !important; }
+[data-theme="light"] .chevron             { color: var(--lt-text3) !important; }
+[data-theme="light"] .section-body        { background: rgba(255,255,255,0.28) !important; }
+[data-theme="light"] .section-content,
+[data-theme="light"] .section-content *:not(.btn):not(button):not(input):not(select) {
+  color: var(--lt-text2);
+}
+/* Восстанавливаем цвета кнопок и статусов */
+[data-theme="light"] .badge-on  { color: #fff !important; }
+[data-theme="light"] .badge-off { color: rgba(255,255,255,0.7) !important; }
+[data-theme="light"] .badge-unknown { color: var(--lt-text3) !important; }
+
+/* Все "серые" подписи — читаемые */
+[data-theme="light"] .stat-sub,
+[data-theme="light"] .activity-ts,
+[data-theme="light"] .logbook-time,
+[data-theme="light"] .last-updated       { color: var(--lt-text3) !important; }
+[data-theme="light"] .tv-status-text     { color: var(--lt-text2) !important; }
+[data-theme="light"] .weather-cond       { color: var(--lt-text2) !important; }
+
+/* Header бейдж */
 [data-theme="light"] #user-badge {
-  background: rgba(0,0,0,0.06) !important;
-  border-color: rgba(0,0,0,0.09) !important;
+  background: rgba(79,110,247,0.09) !important;
+  border-color: rgba(79,110,247,0.18) !important;
 }
-[data-theme="light"] #user-display-name { color: #3c3c43 !important; }
-[data-theme="light"] #loading { background: #f2f2f7 !important; }
-[data-theme="light"] #loading p { color: rgba(60,60,80,0.5) !important; }
-[data-theme="light"] .login-screen  { background: #f2f2f7 !important; }
+[data-theme="light"] #user-display-name  { color: var(--lt-text2) !important; }
+[data-theme="light"] .last-updated       { color: var(--lt-text3) !important; }
+[data-theme="light"] #theme-btn {
+  background: rgba(79,110,247,0.09) !important;
+  border-color: rgba(79,110,247,0.18) !important;
+}
+
+/* Spinner и загрузка */
+[data-theme="light"] #loading            { background: #eef1f8 !important; }
+[data-theme="light"] #loading p          { color: var(--lt-text3) !important; }
+[data-theme="light"] .spinner { border-top-color: var(--accent) !important; border-color: rgba(79,110,247,0.15) !important; }
+
+/* Кнопки */
+[data-theme="light"] .btn-neutral {
+  background: rgba(79,110,247,0.08) !important;
+  border-color: rgba(79,110,247,0.18) !important;
+  color: var(--lt-text2) !important;
+}
+[data-theme="light"] .btn-danger {
+  background: rgba(229,57,53,0.08) !important;
+  color: #e53935 !important;
+  border-color: rgba(229,57,53,0.2) !important;
+}
+
+/* ── Login form ── */
+[data-theme="light"] .login-screen       { background: #eef1f8 !important; }
 [data-theme="light"] .login-card {
-  background: rgba(255,255,255,0.92) !important;
-  border-color: rgba(0,0,0,0.09) !important;
-  box-shadow: 0 8px 40px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.06) !important;
+  background: linear-gradient(155deg, rgba(255,255,255,0.82), rgba(230,236,255,0.65)) !important;
+  border: 1px solid rgba(79,110,247,0.18) !important;
+  border-top-color: rgba(255,255,255,0.98) !important;
+  box-shadow: 0 16px 56px rgba(79,110,247,0.14), 0 4px 16px rgba(0,0,0,0.07), inset 0 1px 0 rgba(255,255,255,0.95) !important;
+  backdrop-filter: blur(32px) saturate(200%) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(200%) !important;
 }
-[data-theme="light"] .login-title { color: #1c1c1e !important; }
-[data-theme="light"] .login-sub   { color: rgba(60,60,80,0.6) !important; }
+[data-theme="light"] .login-title  { color: var(--lt-text)  !important; font-weight: 800 !important; }
+[data-theme="light"] .login-sub    { color: var(--lt-text3) !important; }
 [data-theme="light"] .login-input {
-  background: rgba(0,0,0,0.05) !important;
-  border-color: rgba(0,0,0,0.11) !important;
-  color: #1c1c1e !important;
+  background: rgba(255,255,255,0.7) !important;
+  border: 1.5px solid rgba(79,110,247,0.15) !important;
+  color: var(--lt-text) !important;
+  font-weight: 500 !important;
 }
-[data-theme="light"] .login-input::placeholder { color: rgba(60,60,80,0.35) !important; }
+[data-theme="light"] .login-input::placeholder { color: var(--lt-text3) !important; }
 [data-theme="light"] .login-input:focus {
-  background: rgba(0,122,255,0.06) !important;
-  border-color: #007aff !important;
-  box-shadow: 0 0 0 3px rgba(0,122,255,0.14) !important;
+  background: rgba(255,255,255,0.9) !important;
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px rgba(79,110,247,0.16) !important;
 }
-[data-theme="light"] .login-btn { box-shadow: 0 4px 16px rgba(0,122,255,0.35) !important; }
+[data-theme="light"] .login-btn {
+  background: linear-gradient(135deg, #4f6ef7, #7c5cf6) !important;
+  box-shadow: 0 6px 22px rgba(79,110,247,0.4) !important;
+}
+[data-theme="light"] .login-orbit { border-color: rgba(79,110,247,0.35) !important; }
+[data-theme="light"] .login-orbit::after { background: var(--accent) !important; box-shadow: 0 0 8px var(--accent) !important; }
 
 body {
   font-family: -apple-system, 'SF Pro Display', 'Inter', BlinkMacSystemFont, sans-serif;
