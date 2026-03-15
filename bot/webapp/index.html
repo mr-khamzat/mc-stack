@@ -7455,7 +7455,7 @@ async function admDeleteUser(username, displayName) {
     try {
         await fetch(`${API_BASE}/webapp-users/${encodeURIComponent(username)}`, {
             method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${HA_TOKEN}`, 'X-HA-User': HA_USERNAME, 'X-HA-User-Role': HA_ROLE }
+            headers: { 'Authorization': `Bearer ${API_TOKEN}`, 'X-HA-User': HA_USERNAME, 'X-HA-User-Role': HA_USER_ROLE }
         });
         admInitPerms();
     } catch(e) { alert('Ошибка: ' + e.message); }
