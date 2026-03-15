@@ -1,0 +1,20 @@
+{
+  "name": "Умный Дом",
+  "short_name": "SmartHome",
+  "description": "Home Assistant панель управления",
+  "start_url": "/ha-app/",
+  "scope": "/ha-app/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#07071a",
+  "theme_color": "#6366f1",
+  "lang": "ru",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%236366f1'/><text y='72' x='50' text-anchor='middle' font-size='60'>🏠</text></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -3631,6 +3631,28 @@ _CORS_HEADERS = {
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
 }
 
+async def _web_manifest(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/manifest.json — PWA manifest."""
+    path = WEBAPP_DIR / "manifest.json"
+    if not path.exists():
+        return aiohttp_web.Response(status=404, text="Not found")
+    return aiohttp_web.Response(
+        text=path.read_text(encoding="utf-8"),
+        content_type="application/manifest+json",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+async def _web_sw(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/sw.js — Service Worker для PWA."""
+    path = WEBAPP_DIR / "sw.js"
+    if not path.exists():
+        return aiohttp_web.Response(status=404, text="Not found")
+    return aiohttp_web.Response(
+        text=path.read_text(encoding="utf-8"),
+        content_type="application/javascript",
+        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/ha-app/"},
+    )
+
 async def _web_options(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """OPTIONS /ha-app/api/* — CORS preflight запрос.
 
@@ -5772,6 +5794,8 @@ async def _start_web():
     app = aiohttp_web.Application()
     app.router.add_get("/ha-app/",                  _web_index)
     app.router.add_get("/ha-app",                   _web_index)
+    app.router.add_get("/ha-app/manifest.json",     _web_manifest)
+    app.router.add_get("/ha-app/sw.js",             _web_sw)
     app.router.add_get("/ha-app/api/health",              _web_health)
     app.router.add_get("/ha-app/api/activity",            _web_activity)
     app.router.add_post("/ha-app/api/activity/clear",     _web_activity_clear)

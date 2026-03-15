@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Умный Дом</title>
+<link rel="manifest" href="/ha-app/manifest.json">
+<meta name="theme-color" id="meta-theme-color" content="#6366f1">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SmartHome">
 <script src="https://telegram.org/js/telegram-web-app.js" async></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
@@ -21,11 +27,41 @@
   --r-lg: 16px;
   --r-md: 12px;
   --r-sm: 9px;
+  /* Themeable */
+  --bg-body: #07071a;
+  --glow1: rgba(99,102,241,0.20);
+  --glow2: rgba(139,92,246,0.14);
+  --glow3: rgba(59,130,246,0.06);
+}
+/* OLED — чёрный, яркие акценты */
+:root[data-theme="oled"] {
+  --bg-body: #000000;
+  --glow1: rgba(99,102,241,0.14);
+  --glow2: rgba(139,92,246,0.09);
+  --glow3: rgba(59,130,246,0.04);
+}
+/* Forest — тёмно-зелёный */
+:root[data-theme="forest"] {
+  --bg-body: #050f08;
+  --accent: #34d399;
+  --accent2: #10b981;
+  --glow1: rgba(52,211,153,0.18);
+  --glow2: rgba(16,185,129,0.12);
+  --glow3: rgba(6,95,70,0.07);
+}
+/* Sunset — янтарно-закатный */
+:root[data-theme="sunset"] {
+  --bg-body: #0e0805;
+  --accent: #f59e0b;
+  --accent2: #ef4444;
+  --glow1: rgba(245,158,11,0.18);
+  --glow2: rgba(239,68,68,0.12);
+  --glow3: rgba(180,83,9,0.07);
 }
 
 body {
   font-family: -apple-system, 'SF Pro Display', 'Inter', BlinkMacSystemFont, sans-serif;
-  background: #07071a;
+  background: var(--bg-body);
   color: #e8e8f4;
   font-size: 14px;
   min-height: 100vh;
@@ -39,9 +75,9 @@ body::before {
   position: fixed;
   inset: 0;
   background:
-    radial-gradient(ellipse 80% 50% at 15% -5%, rgba(99,102,241,0.2) 0%, transparent 65%),
-    radial-gradient(ellipse 60% 40% at 85% 105%, rgba(139,92,246,0.14) 0%, transparent 65%),
-    radial-gradient(ellipse 40% 30% at 55% 45%, rgba(59,130,246,0.06) 0%, transparent 55%);
+    radial-gradient(ellipse 80% 50% at 15% -5%, var(--glow1) 0%, transparent 65%),
+    radial-gradient(ellipse 60% 40% at 85% 105%, var(--glow2) 0%, transparent 65%),
+    radial-gradient(ellipse 40% 30% at 55% 45%, var(--glow3) 0%, transparent 55%);
   pointer-events: none;
   z-index: 0;
 }
@@ -54,7 +90,7 @@ body::before {
 #loading {
   position: fixed;
   inset: 0;
-  background: #07071a;
+  background: var(--bg-body);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -824,6 +860,40 @@ body.sections-edit-mode .dyn-sect-chevron { display: none; }
 body.sections-edit-mode .dyn-section.sect-hidden-section { opacity: 0.5; }
 /* Prevent header tap from toggling when in edit mode */
 body.sections-edit-mode .dyn-section-header { cursor: default; }
+
+/* ── Theme Picker ── */
+#theme-btn {
+  width: 30px; height: 30px; border-radius: 50%;
+  border: 1.5px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.07);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  font-size: 15px; flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s;
+}
+#theme-btn:active { background: rgba(255,255,255,0.15); }
+#theme-overlay {
+  display: none; position: fixed; inset: 0; z-index: 8000;
+}
+#theme-picker {
+  position: fixed; top: 52px; right: 14px; z-index: 8001;
+  background: rgba(15,15,40,0.95); backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,255,255,0.12); border-radius: 14px;
+  padding: 10px 12px; display: flex; gap: 10px; align-items: center;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+.theme-dot {
+  width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
+  border: 2px solid transparent; transition: all 0.15s;
+  -webkit-tap-highlight-color: transparent;
+  flex-shrink: 0;
+}
+.theme-dot:active { transform: scale(0.88); }
+.theme-dot.active { border-color: rgba(255,255,255,0.8); transform: scale(1.15); }
+.theme-dot-cosmos  { background: radial-gradient(circle at 35% 35%, #8b5cf6, #07071a); }
+.theme-dot-oled    { background: radial-gradient(circle at 35% 35%, #818cf8, #000000); }
+.theme-dot-forest  { background: radial-gradient(circle at 35% 35%, #34d399, #050f08); }
+.theme-dot-sunset  { background: radial-gradient(circle at 35% 35%, #f59e0b, #0e0805); }
 </style>
 <!-- Inline failsafe: remove loading after 5s even without JS -->
 <script>
@@ -846,10 +916,21 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
 
 <!-- Main app -->
 <div id="app">
+  <!-- Theme picker overlay -->
+  <div id="theme-overlay" onclick="themePickerClose()"></div>
+  <div id="theme-picker" style="display:none">
+    <span style="font-size:11px;color:#64748b;white-space:nowrap">Тема:</span>
+    <div class="theme-dot theme-dot-cosmos" title="Космос"  onclick="themeSet('cosmos')"></div>
+    <div class="theme-dot theme-dot-oled"   title="OLED"    onclick="themeSet('oled')"></div>
+    <div class="theme-dot theme-dot-forest" title="Лес"     onclick="themeSet('forest')"></div>
+    <div class="theme-dot theme-dot-sunset" title="Закат"   onclick="themeSet('sunset')"></div>
+  </div>
+
   <div class="app-header">
     <h1 style="font-size:22px;line-height:1">🏠</h1>
     <div style="display:flex;align-items:center;gap:8px">
       <span class="last-updated" id="last-updated">—</span>
+      <button id="theme-btn" onclick="themePickerToggle()" title="Сменить тему">🎨</button>
       <div id="user-badge" onclick="showUserMenu()" title="Аккаунт"
         style="display:flex;align-items:center;gap:6px;cursor:pointer;
                background:rgba(255,255,255,0.07);border-radius:20px;
@@ -1931,7 +2012,7 @@ async function doHaLogin() {
 }
 
 async function ensureAuth() {
-  if (API_TOKEN) return true;
+  if (API_TOKEN) { _updateUserBadge(); return true; }
 
   // Кешированный токен из localStorage (после успешного входа)
   const cached = localStorage.getItem('ha_bot_token');
@@ -4888,6 +4969,57 @@ function admShow() {
         sec.style.display = '';
         admInitPerms();
     }
+}
+
+// ── Themes ──────────────────────────────────────────────────────────────────
+const THEMES = {
+  cosmos: { color: '#6366f1' },
+  oled:   { color: '#818cf8' },
+  forest: { color: '#34d399' },
+  sunset: { color: '#f59e0b' },
+};
+
+function themeApply(name) {
+  const t = THEMES[name] || THEMES.cosmos;
+  document.documentElement.dataset.theme = (name === 'cosmos') ? '' : name;
+  if (!name || name === 'cosmos') delete document.documentElement.dataset.theme;
+  const mc = document.getElementById('meta-theme-color');
+  if (mc) mc.content = t.color;
+  // Update active dot
+  document.querySelectorAll('.theme-dot').forEach(d => {
+    d.classList.toggle('active', d.classList.contains('theme-dot-' + (name || 'cosmos')));
+  });
+}
+
+function themeSet(name) {
+  localStorage.setItem('ha_theme', name);
+  themeApply(name);
+  themePickerClose();
+}
+
+function themePickerToggle() {
+  const p = document.getElementById('theme-picker');
+  const o = document.getElementById('theme-overlay');
+  const open = p.style.display !== 'none';
+  p.style.display = open ? 'none' : 'flex';
+  o.style.display = open ? 'none' : 'block';
+}
+
+function themePickerClose() {
+  document.getElementById('theme-picker').style.display = 'none';
+  document.getElementById('theme-overlay').style.display = 'none';
+}
+
+// Apply saved theme immediately
+(function() {
+  const saved = localStorage.getItem('ha_theme') || 'cosmos';
+  themeApply(saved);
+})();
+
+// ── Service Worker (PWA) ─────────────────────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/ha-app/sw.js', { scope: '/ha-app/' })
+    .catch(function() {}); // silently ignore if offline
 }
 </script>
 </body>
