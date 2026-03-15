@@ -6888,10 +6888,11 @@ async def _chat_cleanup_loop():
                     (VOICES_DIR / vf).unlink(missing_ok=True)
                 except Exception:
                     pass
-            # Also clean activity_log older than 3 days
+            # Also clean activity_log and family_reactions older than 3 days
             with _DB_LOCK:
                 c = _db()
                 c.execute("DELETE FROM activity_log WHERE ts < ?", (cutoff,))
+                c.execute("DELETE FROM family_reactions WHERE created_at < ?", (cutoff,))
                 c.commit()
         except Exception as e:
             log.warning(f"chat_cleanup_loop: {e}")

@@ -819,7 +819,7 @@ body::before {
 
 /* ── Chat ── */
 .chat-messages-wrap {
-  max-height: 460px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
+  max-height: 560px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
   padding-bottom: 6px; margin-bottom: 10px;
   scrollbar-width: none;
 }
@@ -3724,7 +3724,10 @@ function renderChat() {
       body = `<audio controls src="${src}" style="width:100%;max-width:220px;height:36px"></audio>`;
     } else if (m.msg_type === 'image' && m.voice_file) {
       const src = `${API_BASE}/chat/voice/${encodeURIComponent(m.voice_file)}?token=${encodeURIComponent(API_TOKEN)}`;
-      body = `<img src="${src}" style="max-width:220px;max-height:200px;border-radius:10px;cursor:pointer;display:block" onclick="openPhotoLightbox('${src}','')">`;
+      body = `<div style="position:relative;display:inline-block">
+        <img src="${src}" style="max-width:220px;max-height:200px;border-radius:10px;cursor:pointer;display:block" onclick="openPhotoLightbox('${src}','')">
+        <button onclick="saveChatPhoto('${src}','${m.voice_file}')" style="position:absolute;bottom:4px;right:4px;background:rgba(0,0,0,0.55);border:none;border-radius:6px;color:#fff;font-size:13px;padding:2px 6px;cursor:pointer" title="Сохранить в галерею">💾</button>
+      </div>`;
     } else {
       body = `<div class="chat-msg-text">${escapeHtml(m.text)}</div>`;
     }
@@ -3749,6 +3752,22 @@ async function clearChat() {
     renderChat();
     showToast('🗑 Чат очищен');
   } catch(e) { showToast('❌ ' + e.message); }
+}
+
+async function saveChatPhoto(src, filename) {
+  try {
+    const res = await fetch(src);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || 'photo.jpg';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('💾 Сохранено');
+  } catch(e) { showToast('❌ Ошибка сохранения'); }
 }
 
 async function sendChatImage(input) {
@@ -5031,22 +5050,52 @@ function renderFamilyCards() {
   if (!_familyLoaded) { _familyLoaded = true; loadFamilyExtra(); }
 }
 
+let _famReactPage = 0;
+const _FAM_REACT_PG = 3;
+
+function _renderFamReact(reactions) {
+  const el = document.getElementById('family-timeline');
+  if (!el) return;
+  const total = reactions.length;
+  const start = _famReactPage * _FAM_REACT_PG;
+  const slice = reactions.slice(start, start + _FAM_REACT_PG);
+  const rows = slice.map(r => `<div class="timeline-item">
+    <div class="timeline-dot"></div>
+    <div class="timeline-text">${escapeHtml(r.from_user)} → ${escapeHtml(r.to_user)}: ${escapeHtml(r.reaction)}</div>
+    <div class="timeline-time">${(r.created_at||'').slice(11,16)}</div>
+  </div>`).join('');
+  const hasPrev = start > 0;
+  const hasNext = start + _FAM_REACT_PG < total;
+  const nav = total > _FAM_REACT_PG
+    ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;margin-top:2px">
+        <button onclick="_famReactPrev()" style="background:none;border:none;color:${hasPrev?'#8b8bc0':'#3a3a5a'};cursor:${hasPrev?'pointer':'default'};font-size:11px;padding:2px 6px">◀</button>
+        <span style="font-size:10px;color:#50508a">${start+1}–${Math.min(start+_FAM_REACT_PG,total)} из ${total}</span>
+        <button onclick="_famReactNext()" style="background:none;border:none;color:${hasNext?'#8b8bc0':'#3a3a5a'};cursor:${hasNext?'pointer':'default'};font-size:11px;padding:2px 6px">▶</button>
+      </div>` : '';
+  el.innerHTML = rows + nav;
+}
+
+function _famReactPrev() {
+  if (_famReactPage > 0) { _famReactPage--; _renderFamReact((_familyExtra||{}).reactions||[]); }
+}
+function _famReactNext() {
+  const r = (_familyExtra||{}).reactions||[];
+  if ((_famReactPage+1)*_FAM_REACT_PG < r.length) { _famReactPage++; _renderFamReact(r); }
+}
+
 function renderFamilyWidgets() {
   const extra = _familyExtra || {};
-  // Reactions timeline
+  // Reactions timeline — paginated, 3 per page
   const reactions = extra.reactions || [];
   const tlEl = document.getElementById('family-timeline');
   const tlWidget = document.getElementById('family-timeline-widget');
-  if (tlEl && reactions.length) {
-    tlWidget.style.display = '';
-    tlEl.innerHTML = reactions.slice(0,8).map(r => {
-      const from = r.from_user, to = r.to_user;
-      return `<div class="timeline-item">
-        <div class="timeline-dot"></div>
-        <div class="timeline-text">${escapeHtml(from)} → ${escapeHtml(to)} ${escapeHtml(r.reaction)}</div>
-        <div class="timeline-time">${(r.created_at||'').slice(11,16)}</div>
-      </div>`;
-    }).join('');
+  if (tlEl) {
+    if (reactions.length) {
+      tlWidget.style.display = '';
+      _renderFamReact(reactions);
+    } else {
+      tlWidget.style.display = 'none';
+    }
   }
   // Load chat on first open
   if (!_chatLoaded) loadChat();
