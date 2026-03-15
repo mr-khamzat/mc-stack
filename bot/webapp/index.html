@@ -3739,8 +3739,14 @@ async function _sendCallSignal(toUser, type, payload) {
   await api('/call/signal', 'POST', { to_user: toUser, type, payload });
 }
 
-async function startCall(username, displayName, type) {
+async function startCall(haName, displayName, type) {
   if (_rtcPeer) { showToast('⚠️ Звонок уже идёт'); return; }
+  // Resolve HA display name → webapp username at click time
+  const cache = await _shopGetFamily();
+  const webUsers = {};
+  cache.forEach(u => { webUsers[u.display_name] = u.username; webUsers[u.username] = u.username; });
+  const username = webUsers[haName] || webUsers[haName.toLowerCase()] || haName.toLowerCase();
+  if (!username || username === HA_USERNAME) return;
   _rtcCallType = type;
   _rtcCallTarget = { username, display: displayName };
   _rtcIsIncoming = false;
@@ -3773,7 +3779,11 @@ async function startCall(username, displayName, type) {
 async function _handleCallSignal(sig) {
   const { from_user, from_display, signal_type, payload, to_user } = sig;
   const me = HA_USERNAME || '';
-  if (to_user && to_user !== me) return; // not for me
+  // Match by webapp username OR display name (in case of normalization lag)
+  const myDisplay = HA_DISPLAY_NAME || '';
+  const isForMe = (to_user === me) || (to_user.toLowerCase() === me.toLowerCase()) ||
+                  (myDisplay && to_user.toLowerCase() === myDisplay.toLowerCase());
+  if (to_user && !isForMe) return; // not for me
   if (signal_type === 'offer') {
     if (_rtcPeer) { await _sendCallSignal(from_user, 'reject', {}); return; }
     _rtcCallTarget = { username: from_user, display: from_display || from_user };
@@ -4543,9 +4553,10 @@ function renderFamilyCards() {
     const pulse       = isHome ? '<div class="family-pulse"></div>' : '';
     const mapLink     = mapUrl ? `<a href="${mapUrl}" target="_blank" rel="noopener" style="font-size:14px;text-decoration:none;color:#64748b">📍</a>` : '';
     const isSelf = (username === HA_USERNAME);
+    // Pass HA display name — startCall resolves to webapp username at click time (like familySendReaction)
     const callBtns = !isSelf ? `
-      <button class="family-call-btn" onclick="startCall('${escapeAttr(username)}','${escapeAttr(name)}','audio')" title="Аудио звонок">📞</button>
-      <button class="family-call-btn video" onclick="startCall('${escapeAttr(username)}','${escapeAttr(name)}','video')" title="Видео звонок">📹</button>` : '';
+      <button class="family-call-btn" onclick="startCall('${escapeAttr(name)}','${escapeAttr(name)}','audio')" title="Аудио звонок">📞</button>
+      <button class="family-call-btn video" onclick="startCall('${escapeAttr(name)}','${escapeAttr(name)}','video')" title="Видео звонок">📹</button>` : '';
     return `<div class="family-card ${isHome?'home':''}">
       <div class="family-card-top">
         <div class="family-avatar ${isHome?'home':''}">${pulse}${initials}</div>

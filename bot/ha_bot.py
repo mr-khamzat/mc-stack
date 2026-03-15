@@ -6897,7 +6897,15 @@ async def _web_call_signal(request: aiohttp_web.Request) -> aiohttp_web.Response
         if not to_user or not sig_type:
             return aiohttp_web.Response(status=400, text='{"error":"missing fields"}',
                                         content_type="application/json", headers=_CORS_HEADERS)
+        # Normalize to_user: может прийти кириллица (display_name) вместо webapp username
+        row = _db().execute(
+            "SELECT username FROM webapp_users WHERE username=? OR LOWER(display_name)=LOWER(?)",
+            (to_user, to_user)
+        ).fetchone()
+        if row:
+            to_user = row[0]
         display = _get_display_name(from_user)
+        log.info(f"call_signal: {from_user!r} → {to_user!r} type={sig_type!r}")
         event_data = json.dumps({
             "type": "call_signal",
             "from_user": from_user,
