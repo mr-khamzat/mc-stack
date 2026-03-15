@@ -2188,9 +2188,9 @@ body.fab-open .fab-backdrop { display: block; }
           <div class="chat-input-row">
             <input id="chat-input" type="text" placeholder="Сообщение..." class="chat-input-field" autocomplete="off" onkeydown="if(event.key==='Enter')sendChatMessage()">
             <button class="btn btn-accent chat-send-btn" onclick="sendChatMessage()">↑</button>
+            <span id="voice-timer" style="display:none;font-size:11px;color:#f87171;min-width:34px;text-align:center;font-variant-numeric:tabular-nums"></span>
             <button class="chat-voice-btn" id="chat-voice-btn"
-              onpointerdown="voiceStart(event)" onpointerup="voiceStop(event)" onpointercancel="voiceStop(event)"
-              title="Держи для записи">🎤</button>
+              onclick="voiceToggle()" title="Нажми для записи">🎤</button>
           </div>
         </div>
         <!-- Tab: Reminders -->
@@ -3746,33 +3746,45 @@ function onChatSSE(msgData) {
 }
 
 // ── Voice recording ──────────────────────────────────────────────────────────
-let _voiceRecorder = null, _voiceChunks = [], _voiceStream = null;
+let _voiceRecorder = null, _voiceChunks = [], _voiceStream = null, _voiceTimerInt = null, _voiceStartTs = 0;
 
-async function voiceStart(e) {
-  if (_voiceRecorder) return;
+async function voiceToggle() {
+  if (_voiceRecorder && _voiceRecorder.state !== 'inactive') {
+    // Second tap → stop & send
+    _voiceRecorder.stop();
+    _voiceRecorder = null;
+    if (_voiceStream) { _voiceStream.getTracks().forEach(t => t.stop()); _voiceStream = null; }
+    if (_voiceTimerInt) { clearInterval(_voiceTimerInt); _voiceTimerInt = null; }
+    const btn = document.getElementById('chat-voice-btn');
+    if (btn) { btn.classList.remove('recording'); btn.textContent = '🎤'; }
+    const tmr = document.getElementById('voice-timer');
+    if (tmr) tmr.style.display = 'none';
+    return;
+  }
+  // First tap → start recording
   try {
     _voiceStream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
     });
     const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus' : 'audio/ogg;codecs=opus';
+      ? 'audio/webm;codecs=opus' : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
+      ? 'audio/ogg;codecs=opus' : 'audio/webm';
     _voiceRecorder = new MediaRecorder(_voiceStream, { mimeType });
     _voiceChunks = [];
     _voiceRecorder.ondataavailable = ev => { if (ev.data.size > 0) _voiceChunks.push(ev.data); };
     _voiceRecorder.onstop = _voiceSend;
     _voiceRecorder.start(100);
+    _voiceStartTs = Date.now();
     const btn = document.getElementById('chat-voice-btn');
-    if (btn) btn.classList.add('recording');
+    if (btn) { btn.classList.add('recording'); btn.textContent = '⏹'; }
+    const tmr = document.getElementById('voice-timer');
+    if (tmr) { tmr.style.display = 'inline'; tmr.textContent = '0:00'; }
+    _voiceTimerInt = setInterval(() => {
+      const s = Math.floor((Date.now() - _voiceStartTs) / 1000);
+      const t = document.getElementById('voice-timer');
+      if (t) t.textContent = Math.floor(s/60) + ':' + String(s%60).padStart(2,'0');
+    }, 500);
   } catch(err) { showToast('🎤 Нет доступа к микрофону'); }
-}
-
-function voiceStop(e) {
-  if (!_voiceRecorder || _voiceRecorder.state === 'inactive') return;
-  _voiceRecorder.stop();
-  _voiceRecorder = null;
-  if (_voiceStream) { _voiceStream.getTracks().forEach(t => t.stop()); _voiceStream = null; }
-  const btn = document.getElementById('chat-voice-btn');
-  if (btn) btn.classList.remove('recording');
 }
 
 async function _voiceSend() {
@@ -6335,12 +6347,13 @@ async function sectEditorPickDev(entityId, name, domain, sectId) {
 
 async function openCameraModal(eid) {
   // Get stream URL with access_token from bot API
-  let streamUrl = '', snapUrl = '', camName = eid;
+  let streamUrl = '', snapUrl = '', camName = eid, hlsUrl = '';
   try {
     const info = await api('/camera/' + eid);
     streamUrl = info.stream_url;
     snapUrl   = info.snapshot_url;
     camName   = info.name || eid;
+    hlsUrl    = info.hls_url || '';
   } catch(e) {
     showToast('❌ ' + e.message); return;
   }
@@ -6351,7 +6364,6 @@ async function openCameraModal(eid) {
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:4000;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:0';
 
   const camId = eid.replace('camera.', '');
-  const hlsUrl = info.hls_url || '';
   const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
   const isMobile = isIOS || /Android/i.test(navigator.userAgent);
   const streamLabel = isIOS ? 'HLS · нажмите ✕ для остановки'
