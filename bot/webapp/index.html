@@ -3071,6 +3071,11 @@ function handleSSEUpdate(d) {
   if (d.type === 'chat') { if (d.msg) onChatSSE(d.msg); return; }
   // WebRTC call signaling
   if (d.type === 'call_signal') { _handleCallSignal(d); return; }
+  // Family members added/removed in HA
+  if (d.type === 'family_members_changed') {
+    window._shopFamilyCache = null; // force reload username mapping
+    return;
+  }
   if (!d.entity_id) return;
   const eid = d.entity_id;
   const state = d.state;

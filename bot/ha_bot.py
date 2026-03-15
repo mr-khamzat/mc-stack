@@ -626,7 +626,7 @@ SHOP_EID  = "todo.shopping_list"                 # Список покупок
 # Список person.* сущностей обновляется раз в час — они меняются редко
 _family_cache: dict = {}       # {отображаемое_имя: entity_id}
 _family_cache_ts: float = 0.0
-_FAMILY_CACHE_TTL = 3600       # TTL кеша семьи: 3600 сек = 1 час
+_FAMILY_CACHE_TTL = 120        # TTL кеша семьи: 2 минуты (авто-обнаружение новых person.*)
 
 # ── Логгер ─────────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -1017,6 +1017,7 @@ async def get_family() -> dict:
     now = _time.monotonic()
     if _family_cache and now - _family_cache_ts < _FAMILY_CACHE_TTL:
         return _family_cache
+    prev_keys = set(_family_cache.keys())
     try:
         all_states = await ha_get("states")
         if isinstance(all_states, list):
@@ -1028,8 +1029,13 @@ async def get_family() -> dict:
                             or eid.split(".")[-1].capitalize())
                     members[name] = eid
             if members:
+                new_keys = set(members.keys())
                 _family_cache = members
                 _family_cache_ts = now
+                # Если состав семьи изменился — уведомить всех SSE-клиентов
+                if new_keys != prev_keys:
+                    log.info(f"Family members changed: {prev_keys} → {new_keys}")
+                    _sse_broadcast({"type": "family_members_changed", "members": list(new_keys)})
                 return members
     except Exception as e:
         log.error(f"get_family: {e}")
