@@ -805,12 +805,17 @@ body::before {
   box-shadow: 0 0 26px rgba(99,102,241,0.2), 0 4px 16px rgba(0,0,0,0.3), 0 1px 0 rgba(167,139,250,0.14) inset;
 }
 .prayer-item.past { opacity: 0.38; }
-.prayer-left { display: flex; align-items: center; gap: 11px; }
-.prayer-icon { font-size: 15px; width: 22px; text-align: center; }
-.prayer-name { font-size: 14px; font-weight: 600; color: rgba(200,200,242,0.9); letter-spacing: -0.1px; }
+.prayer-left { display: flex; align-items: center; gap: 13px; }
+.prayer-icon { font-size: 22px; width: 30px; text-align: center; transition: transform .2s; }
+.prayer-item.next .prayer-icon { animation: prayerIconPulse 1.6s ease-in-out infinite; }
+@keyframes prayerIconPulse {
+  0%,100% { transform: scale(1); }
+  50%      { transform: scale(1.28) rotate(-6deg); }
+}
+.prayer-name { font-size: 15px; font-weight: 600; color: rgba(200,200,242,0.9); letter-spacing: -0.1px; }
 .prayer-item.next .prayer-name { color: #c4b5fd; }
-.prayer-time { font-size: 15px; font-weight: 700; color: #eaeaf8; letter-spacing: -0.2px; }
-.prayer-item.next .prayer-time { color: #c4b5fd; }
+.prayer-time { font-size: 17px; font-weight: 700; color: #eaeaf8; letter-spacing: -0.2px; }
+.prayer-item.next .prayer-time { color: #c4b5fd; font-size: 19px; }
 
 /* ── Chat ── */
 .chat-messages-wrap {
@@ -878,6 +883,50 @@ body::before {
   background: rgba(255,255,255,0.15); border: none; color: #fff;
   font-size: 22px; border-radius: 50%; width: 40px; height: 40px;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+
+/* ── Call overlay ── */
+.call-overlay {
+  position: fixed; inset: 0; z-index: 10000; background: rgba(0,0,0,0.85);
+  display: flex; align-items: center; justify-content: center;
+}
+.call-box {
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  background: rgba(20,20,40,0.95); border: 1px solid rgba(99,102,241,0.35);
+  border-radius: 28px; padding: 32px 28px; width: 90%; max-width: 340px;
+  position: relative;
+}
+.call-avatar-wrap { position: relative; }
+.call-avatar {
+  width: 80px; height: 80px; border-radius: 50%;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 32px; font-weight: 700; color: #fff;
+}
+@keyframes callPulse {
+  0%,100% { transform: scale(1); opacity: 0.5; }
+  50%      { transform: scale(1.45); opacity: 0; }
+}
+.call-pulse-ring {
+  position: absolute; inset: -8px; border-radius: 50%;
+  border: 2px solid rgba(99,102,241,0.5);
+  animation: callPulse 1.8s ease-in-out infinite;
+}
+.call-name { font-size: 22px; font-weight: 700; color: #e2e8f0; }
+.call-status { font-size: 13px; color: rgba(150,150,200,0.8); }
+.call-buttons { display: flex; gap: 12px; margin-top: 6px; }
+.call-btn {
+  padding: 12px 24px; border-radius: 30px; border: none; font-size: 14px;
+  font-weight: 700; cursor: pointer; transition: transform .15s; touch-action: manipulation;
+}
+.call-btn-accept { background: linear-gradient(135deg, #22c55e, #16a34a); color: #fff; }
+.call-btn-reject { background: linear-gradient(135deg, #ef4444, #dc2626); color: #fff; }
+.call-btn:active { transform: scale(0.92); }
+.call-videos { position: relative; width: 100%; border-radius: 14px; overflow: hidden; background: #000; height: 180px; }
+.call-remote-video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.call-local-video {
+  position: absolute; bottom: 8px; right: 8px; width: 72px; height: 90px;
+  border-radius: 9px; object-fit: cover; border: 2px solid rgba(255,255,255,0.3);
 }
 
 /* ── Buttons ── */
@@ -1793,15 +1842,35 @@ body.fab-open .fab-backdrop { display: block; }
 .family-card-badge.home { background:rgba(52,211,153,0.15); color:#34d399; }
 .family-card-badge.away { background:rgba(100,116,139,0.15); color:#94a3b8; }
 .family-emoji-status { font-size:22px; flex-shrink:0; cursor:pointer; }
-.family-reactions { display:flex; gap:8px; }
+.family-reactions { display:flex; gap:6px; flex-wrap:wrap; }
 .family-react-btn {
   background: rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08);
-  border-radius:20px; padding:6px 12px; font-size:15px; cursor:pointer;
-  transition: transform 0.15s, background 0.15s; color:inherit;
+  border-radius:20px; padding:6px 11px; font-size:15px; cursor:pointer;
+  transition: transform 0.15s, background 0.15s; color:inherit; touch-action:manipulation;
 }
 .family-react-btn:active { transform:scale(0.92); background:rgba(255,255,255,0.1); }
+.family-call-btn {
+  background: rgba(52,211,153,0.12); border:1px solid rgba(52,211,153,0.28);
+  border-radius:20px; padding:6px 12px; font-size:16px; cursor:pointer;
+  transition: transform 0.15s, background 0.15s; color:#34d399; touch-action:manipulation;
+}
+.family-call-btn.video { background:rgba(99,102,241,0.12); border-color:rgba(99,102,241,0.28); color:#818cf8; }
+.family-call-btn:active { transform:scale(0.88); }
 .family-card-footer { display:flex; align-items:center; justify-content:space-between; margin-top:10px; }
 .family-last-seen { font-size:11px; color:#475569; }
+
+/* ── Family tabs ─────────────────────────────────────────────────────────── */
+.family-tabs-bar {
+  display:flex; gap:6px; margin-top:14px; background:rgba(255,255,255,0.04);
+  border-radius:12px; padding:4px;
+}
+.family-tab-btn {
+  flex:1; padding:8px 6px; font-size:12px; font-weight:600; cursor:pointer;
+  border:none; border-radius:9px; background:transparent; color:rgba(150,150,200,0.7);
+  transition:all 0.18s; touch-action:manipulation;
+}
+.family-tab-btn.active { background:rgba(99,102,241,0.3); color:#c4b5fd; }
+.family-tab-pane { margin-top:12px; }
 
 /* ── Family widgets ────────────────────────────────────────────────────────── */
 .family-widget {
@@ -2032,26 +2101,54 @@ body.fab-open .fab-backdrop { display: block; }
     </div>
     <div class="section-body" id="sec-family-body">
       <div class="section-content">
+        <!-- Family cards -->
         <div class="family-cards" id="family-list">
           <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div>
         </div>
-        <!-- Shared note widget -->
-        <div class="family-widget" id="family-note-widget">
-          <div class="family-widget-title">📌 Заметка для семьи</div>
-          <textarea class="family-note-textarea" id="family-note-text" placeholder="Напишите что-то важное для всех..." onblur="saveFamilyNote()"></textarea>
-          <div style="font-size:10px;color:#475569;margin-top:4px" id="family-note-meta"></div>
-        </div>
-        <!-- Cooking widget -->
-        <div class="family-widget" id="family-cooking-widget">
-          <div class="family-widget-title">👩‍🍳 Кто готовит сегодня?</div>
-          <div class="cooking-list" id="cooking-list">
-            <div style="color:#60608a;font-size:12px">Загрузка...</div>
-          </div>
-        </div>
-        <!-- Timeline -->
+        <!-- Reactions timeline -->
         <div class="family-widget" id="family-timeline-widget" style="display:none">
           <div class="family-widget-title">⏱ Активность</div>
           <div class="family-timeline" id="family-timeline"></div>
+        </div>
+        <!-- Family tabs: Chat | Reminders | Photos -->
+        <div class="family-tabs-bar">
+          <button class="family-tab-btn active" id="ftab-chat-btn" onclick="familyTab('chat')">💬 Чат</button>
+          <button class="family-tab-btn" id="ftab-remind-btn" onclick="familyTab('remind')">🔔 Напоминания</button>
+          <button class="family-tab-btn" id="ftab-photos-btn" onclick="familyTab('photos')">📸 Фото</button>
+        </div>
+        <!-- Tab: Chat -->
+        <div id="ftab-chat" class="family-tab-pane">
+          <div id="chat-messages" class="chat-messages-wrap"></div>
+          <div class="chat-input-row">
+            <input id="chat-input" type="text" placeholder="Сообщение..." class="chat-input-field" autocomplete="off" onkeydown="if(event.key==='Enter')sendChatMessage()">
+            <button class="btn btn-accent chat-send-btn" onclick="sendChatMessage()">↑</button>
+          </div>
+        </div>
+        <!-- Tab: Reminders -->
+        <div id="ftab-remind" class="family-tab-pane" style="display:none">
+          <div class="reminder-create-row">
+            <input id="reminder-text-input" type="text" placeholder="Текст напоминания..." class="chat-input-field" autocomplete="off">
+            <input id="reminder-dt-input" type="datetime-local" class="chat-input-field" style="margin-top:6px">
+            <div style="display:flex;gap:6px;margin-top:6px">
+              <button class="btn btn-accent" onclick="createReminder()" style="flex:1">＋ Добавить</button>
+              <button class="btn btn-neutral" id="reminder-global-btn" onclick="toggleReminderGlobal()" style="flex:1;font-size:12px">👪 Для всех: Нет</button>
+            </div>
+          </div>
+          <div class="divider" style="margin:10px 0"></div>
+          <div id="reminders-list"><div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div></div>
+        </div>
+        <!-- Tab: Photos -->
+        <div id="ftab-photos" class="family-tab-pane" style="display:none">
+          <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+            <label class="btn btn-accent" style="flex:1;text-align:center;cursor:pointer">
+              📷 Выбрать фото
+              <input type="file" id="photo-upload-input" accept="image/*" style="display:none" onchange="uploadPhoto(this)">
+            </label>
+          </div>
+          <input id="photo-caption-input" type="text" placeholder="Подпись (необязательно)" class="chat-input-field" style="margin-bottom:8px" autocomplete="off">
+          <div id="photos-grid" class="photos-grid">
+            <div style="color:#60608a;font-size:13px;text-align:center;padding:10px;grid-column:span 3">Загрузка...</div>
+          </div>
         </div>
       </div>
     </div>
@@ -2296,70 +2393,6 @@ body.fab-open .fab-backdrop { display: block; }
 
   <!-- dynamic sections rendered by JS -->
   <div id="dynamic-sections"></div>
-
-  <!-- REMINDERS -->
-  <div class="section" data-section-perm="family">
-    <div class="section-header" onclick="toggleSection('sec-reminders-body'); if(!_remindersLoaded) loadReminders()">
-      <span>🔔 Напоминания</span>
-      <span class="chevron">▾</span>
-    </div>
-    <div class="section-body" id="sec-reminders-body">
-      <div class="section-content">
-        <!-- Create reminder -->
-        <div class="reminder-create-row">
-          <input id="reminder-text-input" type="text" placeholder="Текст напоминания..." class="chat-input-field" autocomplete="off">
-          <input id="reminder-dt-input" type="datetime-local" class="chat-input-field" style="margin-top:6px">
-          <div style="display:flex;gap:6px;margin-top:6px">
-            <button class="btn btn-accent" onclick="createReminder()" style="flex:1">＋ Добавить</button>
-            <button class="btn btn-neutral" id="reminder-global-btn" onclick="toggleReminderGlobal()" style="flex:1;font-size:12px">👪 Для всех: Нет</button>
-          </div>
-        </div>
-        <div class="divider" style="margin:10px 0"></div>
-        <div id="reminders-list"><div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- FAMILY CHAT -->
-  <div class="section" data-section-perm="family">
-    <div class="section-header" onclick="toggleSection('sec-chat-body'); if(!_chatLoaded) loadChat()">
-      <span>💬 Семейный чат</span>
-      <span class="chevron">▾</span>
-    </div>
-    <div class="section-body" id="sec-chat-body">
-      <div class="section-content">
-        <div id="chat-messages" class="chat-messages-wrap"></div>
-        <div class="chat-input-row">
-          <input id="chat-input" type="text" placeholder="Сообщение..." class="chat-input-field" autocomplete="off" onkeydown="if(event.key==='Enter')sendChatMessage()">
-          <button class="btn btn-accent chat-send-btn" onclick="sendChatMessage()">↑</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- PHOTO ALBUM -->
-  <div class="section" data-section-perm="family">
-    <div class="section-header" onclick="toggleSection('sec-photos-body'); if(!_photosLoaded) loadPhotos()">
-      <span>📸 Фотоальбом</span>
-      <span class="chevron">▾</span>
-    </div>
-    <div class="section-body" id="sec-photos-body">
-      <div class="section-content">
-        <!-- Upload -->
-        <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
-          <label class="btn btn-accent" style="flex:1;text-align:center;cursor:pointer">
-            📷 Выбрать фото
-            <input type="file" id="photo-upload-input" accept="image/*" style="display:none" onchange="uploadPhoto(this)">
-          </label>
-        </div>
-        <input id="photo-caption-input" type="text" placeholder="Подпись (необязательно)" class="chat-input-field" style="margin-bottom:8px" autocomplete="off">
-        <!-- Gallery -->
-        <div id="photos-grid" class="photos-grid">
-          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px;grid-column:span 3">Загрузка...</div>
-        </div>
-      </div>
-    </div>
-  </div>
 
   <!-- SCENES -->
   <div class="section" data-section-perm="scenes">
@@ -2999,6 +3032,8 @@ function handleSSEUpdate(d) {
   if (!d) return;
   // Chat SSE event
   if (d.type === 'chat') { if (d.msg) onChatSSE(d.msg); return; }
+  // WebRTC call signaling
+  if (d.type === 'call_signal') { _handleCallSignal(d); return; }
   if (!d.entity_id) return;
   const eid = d.entity_id;
   const state = d.state;
@@ -3687,6 +3722,167 @@ function openPhotoLightbox(url, caption) {
   `;
 }
 
+// ── WebRTC Calls ────────────────────────────────────────────────────────────
+const _STUN_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+];
+let _rtcPeer = null;
+let _rtcLocalStream = null;
+let _rtcRemoteStream = null;
+let _rtcCallType = 'audio'; // 'audio' | 'video'
+let _rtcCallTarget = null;  // {username, display}
+let _rtcIsIncoming = false;
+let _rtcOfferSdp = null;
+
+async function _sendCallSignal(toUser, type, payload) {
+  await api('/call/signal', 'POST', { to_user: toUser, type, payload });
+}
+
+async function startCall(username, displayName, type) {
+  if (_rtcPeer) { showToast('⚠️ Звонок уже идёт'); return; }
+  _rtcCallType = type;
+  _rtcCallTarget = { username, display: displayName };
+  _rtcIsIncoming = false;
+  _showCallUI('outgoing', displayName, type);
+  try {
+    _rtcLocalStream = await navigator.mediaDevices.getUserMedia(
+      type === 'video' ? { video: true, audio: true } : { audio: true }
+    );
+    _rtcPeer = new RTCPeerConnection({ iceServers: _STUN_SERVERS });
+    _rtcLocalStream.getTracks().forEach(t => _rtcPeer.addTrack(t, _rtcLocalStream));
+    const localVideo = document.getElementById('call-local-video');
+    if (localVideo && type === 'video') { localVideo.srcObject = _rtcLocalStream; localVideo.play().catch(()=>{}); }
+    _rtcPeer.onicecandidate = e => {
+      if (e.candidate) _sendCallSignal(username, 'ice', { candidate: e.candidate });
+    };
+    _rtcPeer.ontrack = e => {
+      _rtcRemoteStream = e.streams[0];
+      const remoteVideo = document.getElementById('call-remote-video');
+      if (remoteVideo) { remoteVideo.srcObject = _rtcRemoteStream; remoteVideo.play().catch(()=>{}); }
+    };
+    const offer = await _rtcPeer.createOffer();
+    await _rtcPeer.setLocalDescription(offer);
+    await _sendCallSignal(username, 'offer', { sdp: offer.sdp, type: offer.type, callType: type });
+  } catch(e) {
+    showToast('❌ Нет доступа к микрофону: ' + e.message);
+    endCall();
+  }
+}
+
+async function _handleCallSignal(sig) {
+  const { from_user, from_display, signal_type, payload, to_user } = sig;
+  const me = HA_USERNAME || '';
+  if (to_user && to_user !== me) return; // not for me
+  if (signal_type === 'offer') {
+    if (_rtcPeer) { await _sendCallSignal(from_user, 'reject', {}); return; }
+    _rtcCallTarget = { username: from_user, display: from_display || from_user };
+    _rtcCallType = payload.callType || 'audio';
+    _rtcIsIncoming = true;
+    _rtcOfferSdp = payload;
+    _showCallUI('incoming', from_display || from_user, _rtcCallType);
+  } else if (signal_type === 'answer') {
+    if (!_rtcPeer) return;
+    await _rtcPeer.setRemoteDescription(new RTCSessionDescription(payload));
+    _setCallActive();
+  } else if (signal_type === 'ice') {
+    if (!_rtcPeer) return;
+    try { await _rtcPeer.addIceCandidate(new RTCIceCandidate(payload.candidate)); } catch(e) {}
+  } else if (signal_type === 'reject') {
+    showToast('📵 Вызов отклонён');
+    endCall();
+  } else if (signal_type === 'hangup') {
+    showToast('📵 Звонок завершён');
+    endCall();
+  }
+}
+
+async function acceptCall() {
+  if (!_rtcOfferSdp) return;
+  try {
+    _rtcLocalStream = await navigator.mediaDevices.getUserMedia(
+      _rtcCallType === 'video' ? { video: true, audio: true } : { audio: true }
+    );
+    _rtcPeer = new RTCPeerConnection({ iceServers: _STUN_SERVERS });
+    _rtcLocalStream.getTracks().forEach(t => _rtcPeer.addTrack(t, _rtcLocalStream));
+    const localVideo = document.getElementById('call-local-video');
+    if (localVideo && _rtcCallType === 'video') { localVideo.srcObject = _rtcLocalStream; localVideo.play().catch(()=>{}); }
+    _rtcPeer.onicecandidate = e => {
+      if (e.candidate) _sendCallSignal(_rtcCallTarget.username, 'ice', { candidate: e.candidate });
+    };
+    _rtcPeer.ontrack = e => {
+      _rtcRemoteStream = e.streams[0];
+      const remoteVideo = document.getElementById('call-remote-video');
+      if (remoteVideo) { remoteVideo.srcObject = _rtcRemoteStream; remoteVideo.play().catch(()=>{}); }
+    };
+    await _rtcPeer.setRemoteDescription(new RTCSessionDescription(_rtcOfferSdp));
+    const answer = await _rtcPeer.createAnswer();
+    await _rtcPeer.setLocalDescription(answer);
+    await _sendCallSignal(_rtcCallTarget.username, 'answer', { sdp: answer.sdp, type: answer.type });
+    _setCallActive();
+  } catch(e) {
+    showToast('❌ ' + e.message);
+    rejectCall();
+  }
+}
+
+function rejectCall() {
+  if (_rtcCallTarget) _sendCallSignal(_rtcCallTarget.username, 'reject', {});
+  endCall();
+}
+
+function endCall() {
+  if (_rtcCallTarget) _sendCallSignal(_rtcCallTarget.username, 'hangup', {}).catch(()=>{});
+  if (_rtcPeer) { _rtcPeer.close(); _rtcPeer = null; }
+  if (_rtcLocalStream) { _rtcLocalStream.getTracks().forEach(t => t.stop()); _rtcLocalStream = null; }
+  _rtcRemoteStream = null; _rtcCallTarget = null; _rtcOfferSdp = null;
+  const overlay = document.getElementById('call-overlay');
+  if (overlay) overlay.remove();
+}
+
+function _setCallActive() {
+  const overlay = document.getElementById('call-overlay');
+  if (!overlay) return;
+  const statusEl = overlay.querySelector('#call-status');
+  if (statusEl) statusEl.textContent = '🔴 Идёт звонок';
+  const acceptBtn = overlay.querySelector('#call-accept-btn');
+  if (acceptBtn) acceptBtn.style.display = 'none';
+  const rejectBtn = overlay.querySelector('#call-reject-btn');
+  if (rejectBtn) { rejectBtn.textContent = '⏹ Завершить'; rejectBtn.onclick = endCall; }
+}
+
+function _showCallUI(mode, name, type) {
+  let overlay = document.getElementById('call-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'call-overlay';
+    overlay.className = 'call-overlay';
+    document.body.appendChild(overlay);
+  }
+  const isVideo = type === 'video';
+  const isIncoming = mode === 'incoming';
+  overlay.innerHTML = `
+    <div class="call-box">
+      <div class="call-avatar-wrap">
+        <div class="call-avatar">${(name||'?').charAt(0).toUpperCase()}</div>
+        <div class="call-pulse-ring"></div>
+      </div>
+      <div class="call-name">${escapeHtml(name)}</div>
+      <div class="call-status" id="call-status">${isIncoming ? (isVideo?'📹 Входящий видеозвонок':'📞 Входящий звонок') : (isVideo?'📹 Видеозвонок...':'📞 Звонок...')}</div>
+      ${isVideo ? `<div class="call-videos">
+        <video id="call-remote-video" class="call-remote-video" autoplay playsinline muted></video>
+        <video id="call-local-video" class="call-local-video" autoplay playsinline muted></video>
+      </div>` : ''}
+      <div class="call-buttons">
+        ${isIncoming ? `<button id="call-accept-btn" class="call-btn call-btn-accept" onclick="acceptCall()">✅ Принять</button>` : ''}
+        <button id="call-reject-btn" class="call-btn call-btn-reject" onclick="${isIncoming?'rejectCall()':'endCall()'}">
+          ${isIncoming ? '❌ Отклонить' : '⏹ Завершить'}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
 // Vacuum
 function vacuumAction(service) {
   const btn = event.target.closest('button');
@@ -4346,6 +4542,10 @@ function renderFamilyCards() {
     const mapUrl      = (lat && lon) ? `https://www.google.com/maps?q=${lat},${lon}` : null;
     const pulse       = isHome ? '<div class="family-pulse"></div>' : '';
     const mapLink     = mapUrl ? `<a href="${mapUrl}" target="_blank" rel="noopener" style="font-size:14px;text-decoration:none;color:#64748b">📍</a>` : '';
+    const isSelf = (username === HA_USERNAME);
+    const callBtns = !isSelf ? `
+      <button class="family-call-btn" onclick="startCall('${escapeAttr(username)}','${escapeAttr(name)}','audio')" title="Аудио звонок">📞</button>
+      <button class="family-call-btn video" onclick="startCall('${escapeAttr(username)}','${escapeAttr(name)}','video')" title="Видео звонок">📹</button>` : '';
     return `<div class="family-card ${isHome?'home':''}">
       <div class="family-card-top">
         <div class="family-avatar ${isHome?'home':''}">${pulse}${initials}</div>
@@ -4356,11 +4556,12 @@ function renderFamilyCards() {
         <span class="family-card-badge ${isHome?'home':'away'}">${isHome?'🏠 Дома':'🚗 Не дома'}</span>
         <span class="family-emoji-status" onclick="familySetStatus()" title="Изменить статус">${emojiStatus}</span>
       </div>
-      <div style="display:flex;align-items:center;justify-content:space-between">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
         <div class="family-reactions">
           ${['🤗','❤️','👋','😘','💪'].map(r =>
             `<button class="family-react-btn" onclick="familySendReaction('${escapeAttr(name)}','${r}')">${r}</button>`
           ).join('')}
+          ${callBtns}
         </div>
         ${mapLink}
       </div>
@@ -4372,27 +4573,6 @@ function renderFamilyCards() {
 
 function renderFamilyWidgets() {
   const extra = _familyExtra || {};
-  // Note
-  const noteEl = document.getElementById('family-note-text');
-  const metaEl = document.getElementById('family-note-meta');
-  if (noteEl && extra.note) {
-    if (document.activeElement !== noteEl) noteEl.value = extra.note.content || '';
-    if (metaEl && extra.note.updated_by) {
-      metaEl.textContent = 'Обновил(а): ' + (extra.note.updated_by) + ' в ' + (extra.note.updated_at||'').slice(0,16);
-    }
-  }
-  // Cooking
-  const cookEl = document.getElementById('cooking-list');
-  if (cookEl) {
-    const cooking = extra.cooking || {};
-    const users = window._shopFamilyCache || [];
-    if (!users.length && window._shopFamilyCache === null) { _shopGetFamily().then(() => renderFamilyWidgets()); return; }
-    cookEl.innerHTML = users.map(u =>
-      `<button class="cooking-btn ${cooking.username===u.username?'active':''}"
-        onclick="familySetCooking('${escapeAttr(u.username)}','${escapeAttr(cooking.username)}')">
-        ${cooking.username===u.username?'👩‍🍳 ':''}${escapeHtml(u.display_name)}</button>`
-    ).join('') + `<button class="cooking-btn" onclick="familySetCooking('')" style="opacity:0.5">✕ Никто</button>`;
-  }
   // Reactions timeline
   const reactions = extra.reactions || [];
   const tlEl = document.getElementById('family-timeline');
@@ -4408,6 +4588,21 @@ function renderFamilyWidgets() {
       </div>`;
     }).join('');
   }
+  // Load chat on first open
+  if (!_chatLoaded) loadChat();
+  if (!_remindersLoaded) loadReminders();
+  if (!_photosLoaded) loadPhotos();
+}
+
+function familyTab(tab) {
+  ['chat','remind','photos'].forEach(t => {
+    const pane = document.getElementById('ftab-' + t);
+    const btn  = document.getElementById('ftab-' + t + '-btn');
+    if (!pane || !btn) return;
+    const active = t === tab;
+    pane.style.display = active ? '' : 'none';
+    btn.classList.toggle('active', active);
+  });
 }
 
 async function familySendReaction(haName, reaction) {

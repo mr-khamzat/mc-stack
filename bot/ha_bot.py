@@ -6883,6 +6883,44 @@ async def _web_photos_delete(request: aiohttp_web.Request) -> aiohttp_web.Respon
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
 
+# ── WebRTC Call Signaling ──────────────────────────────────────────────────────
+async def _web_call_signal(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/call/signal — relay WebRTC signaling via SSE."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body    = await request.json()
+        from_user = request.headers.get("X-HA-User", "")
+        to_user   = body.get("to_user", "")
+        sig_type  = body.get("type", "")   # offer | answer | ice | reject | hangup
+        payload   = body.get("payload", {})
+        if not to_user or not sig_type:
+            return aiohttp_web.Response(status=400, text='{"error":"missing fields"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        display = _get_display_name(from_user)
+        event_data = json.dumps({
+            "type": "call_signal",
+            "from_user": from_user,
+            "from_display": display,
+            "to_user": to_user,
+            "signal_type": sig_type,
+            "payload": payload,
+        }, ensure_ascii=False)
+        global _sse_clients
+        dead = set()
+        for q in _sse_clients:
+            try: q.put_nowait(event_data)
+            except asyncio.QueueFull: dead.add(q)
+        _sse_clients -= dead
+        # For incoming call — send push to wake up target
+        if sig_type == "offer":
+            asyncio.create_task(push_notify(to_user, f"📞 {display} звонит", "Входящий звонок", "/ha-app/"))
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
 async def _start_web():
     """Запустить aiohttp веб-сервер для Mini App на 127.0.0.1:8766.
 
@@ -7036,6 +7074,8 @@ async def _start_web():
     app.router.add_route("OPTIONS", "/ha-app/api/photos",     _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/photos/img/{filename}", _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/photos/{id}", _web_options)
+    app.router.add_post("/ha-app/api/call/signal",            _web_call_signal)
+    app.router.add_route("OPTIONS", "/ha-app/api/call/signal", _web_options)
     runner = aiohttp_web.AppRunner(app)
     await runner.setup()
     site = aiohttp_web.TCPSite(runner, "127.0.0.1", 8766)
