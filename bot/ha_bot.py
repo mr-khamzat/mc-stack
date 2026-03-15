@@ -7507,6 +7507,7 @@ async def _start_web():
     app.router.add_delete("/ha-app/api/photos/{id}",          _web_photos_delete)
     app.router.add_post("/ha-app/api/chat/voice",             _web_chat_voice_upload)
     app.router.add_post("/ha-app/api/chat/image",             _web_chat_image_upload)
+    app.router.add_route("OPTIONS", "/ha-app/api/chat/image", _web_options)
     app.router.add_get("/ha-app/api/chat/voice/{filename}",   _web_chat_voice_serve)
     app.router.add_get("/ha-app/api/call-history",            _web_call_history)
     app.router.add_get("/ha-app/api/timeline",                _web_timeline)
