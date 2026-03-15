@@ -1534,6 +1534,7 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
               <span><span class="stat-value" id="stat-cost-day" style="font-size:20px">—</span><span class="stat-unit"> ₽/день</span></span>
               <span id="stat-cost-week" style="font-size:13px;color:rgba(140,140,190,0.7)">нед: — ₽</span>
               <span id="stat-cost-month" style="font-size:13px;color:rgba(140,140,190,0.7)">мес: — ₽</span>
+              <span id="stat-cost-forecast" style="font-size:13px;color:rgba(140,140,190,0.7)">прогноз: — ₽</span>
             </div>
           </div>
           <div class="stat-card" style="grid-column: span 2" id="phases-card">
@@ -2148,15 +2149,23 @@ function applyStatus(d) {
   // --- Energy cost in status ---
   if (d.cost_day != null) {
     const cd = parseFloat(d.cost_day);
-    document.getElementById('stat-cost-day').textContent = isNaN(cd) ? d.cost_day : cd.toFixed(0);
+    const el = document.getElementById('stat-cost-day');
+    if (el) { el.textContent = isNaN(cd) ? d.cost_day : cd.toFixed(0); flashEl(el); }
   }
   if (d.cost_week != null) {
     const cw = parseFloat(d.cost_week);
-    document.getElementById('stat-cost-week').textContent = 'нед: ' + (isNaN(cw) ? d.cost_week : cw.toFixed(0)) + ' ₽';
+    const el = document.getElementById('stat-cost-week');
+    if (el) el.textContent = 'нед: ' + (isNaN(cw) ? d.cost_week : cw.toFixed(0)) + ' ₽';
   }
   if (d.cost_month != null) {
     const cm = parseFloat(d.cost_month);
-    document.getElementById('stat-cost-month').textContent = 'мес: ' + (isNaN(cm) ? d.cost_month : cm.toFixed(0)) + ' ₽';
+    const el = document.getElementById('stat-cost-month');
+    if (el) el.textContent = 'мес: ' + (isNaN(cm) ? d.cost_month : cm.toFixed(0)) + ' ₽';
+  }
+  if (d.cost_forecast != null) {
+    const cf = parseFloat(d.cost_forecast);
+    const el = document.getElementById('stat-cost-forecast');
+    if (el) el.textContent = 'прогноз: ' + (isNaN(cf) ? d.cost_forecast : cf.toFixed(0)) + ' ₽';
   }
 
   // --- Energy phases ---
@@ -2426,12 +2435,21 @@ function _updateUserBadge() {
   const avatar = document.getElementById('user-avatar');
   const nameEl = document.getElementById('user-display-name');
   if (!badge) return;
+  // Prefer display_name (e.g. "Хамзат") over login username ("khamzat")
   const name = HA_DISPLAY_NAME || HA_USERNAME;
   badge.style.display = 'flex';
   nameEl.textContent = name || 'Аккаунт';
   if (HA_AVATAR_URL) {
-    avatar.innerHTML = `<img src="${HA_AVATAR_URL}" style="width:24px;height:24px;border-radius:50%;object-fit:cover" onerror="this.parentElement.innerHTML='${name ? name.charAt(0).toUpperCase() : '👤'}'">`;
+    // Append token so bot proxy can authenticate
+    const avatarSrc = HA_AVATAR_URL.includes('?')
+      ? HA_AVATAR_URL + '&token=' + API_TOKEN
+      : HA_AVATAR_URL + '?token=' + API_TOKEN;
+    const fallbackLetter = name ? name.charAt(0).toUpperCase() : '?';
     avatar.style.background = 'transparent';
+    avatar.innerHTML = `<img src="${avatarSrc}"
+      style="width:24px;height:24px;border-radius:50%;object-fit:cover;display:block"
+      onerror="this.style.display='none';this.parentElement.textContent='${fallbackLetter}';this.parentElement.style.background='${HA_USER_ROLE === 'admin' ? '#3b82f6' : '#6366f1'}'"
+    >`;
   } else {
     avatar.innerHTML = '';
     avatar.textContent = name ? name.charAt(0).toUpperCase() : '👤';

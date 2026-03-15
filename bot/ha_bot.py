@@ -2151,14 +2151,14 @@ async def _ha_today_kwh() -> float | None:
         return None
 
 async def build_energy_text() -> str:
-    power, v1, v2, v3, day, month, prog = await asyncio.gather(
+    import calendar as _cal
+    power, v1, v2, v3, kwh_month_s, tariff_s = await asyncio.gather(
         ha_state("sensor.moshchnost_vsego_doma"),
         ha_state("sensor.vvod_1_moshchnost"),
         ha_state("sensor.vvod_2_moshchnost"),
         ha_state("sensor.vvod_3_moshchnost"),
-        ha_state("sensor.elektroenergiia_stoimost_za_den"),
-        ha_state("sensor.elektroenergiia_stoimost_za_mesiats"),
-        ha_state("sensor.elektroenergiia_prognoz_scheta_za_mesiats"),
+        ha_state("sensor.house_energy_monthly"),
+        ha_state("input_number.tarif_den_kvt_ch"),
     )
     power_alert = ""
     try:
@@ -2166,18 +2166,34 @@ async def build_energy_text() -> str:
             power_alert = " ⚠️"
     except Exception:
         pass
-    # Fix: if daily cost sensor is stuck at 0, compute from history
     try:
-        if float(day) < 0.1:
-            kwh = await _ha_today_kwh()
-            if kwh is not None and kwh > 0:
-                try:
-                    tariff = max(float(await ha_state("input_number.tarif_den_kvt_ch")), 0.5)
-                except Exception:
-                    tariff = 5.68
-                day = f"{kwh * tariff:.2f}"
+        tariff = max(float(tariff_s), 0.5)
+    except Exception:
+        tariff = 5.5
+
+    # Daily cost from history
+    day = "—"
+    try:
+        kwh_today = await _ha_today_kwh()
+        if kwh_today is not None and kwh_today > 0:
+            day = f"{kwh_today * tariff:.2f}"
     except Exception:
         pass
+
+    # Monthly cost from real kWh sensor
+    month = "—"
+    forecast = "—"
+    try:
+        kwh_m = float(kwh_month_s)
+        month = f"{kwh_m * tariff:.0f}"
+        now_msk = datetime.now(MSK)
+        day_num = now_msk.day
+        days_in_month = _cal.monthrange(now_msk.year, now_msk.month)[1]
+        if day_num > 0:
+            forecast = f"{kwh_m / day_num * days_in_month * tariff:.0f}"
+    except Exception:
+        pass
+
     return (
         f"⚡ <b>Энергия</b>\n\n"
         f"🏠 Общая мощность: <b>{power} Вт{power_alert}</b>\n"
@@ -2186,7 +2202,7 @@ async def build_energy_text() -> str:
         f"  └ Ввод 3: {v3} Вт\n\n"
         f"💰 Сегодня: <b>{day} ₽</b>\n"
         f"💰 Месяц:   {month} ₽\n"
-        f"📈 Прогноз: {prog} ₽"
+        f"📈 Прогноз: {forecast} ₽  (тариф {tariff} ₽/кВт⋅ч)"
     )
 
 def _energy_kb() -> InlineKeyboardMarkup:
@@ -3631,6 +3647,39 @@ _CORS_HEADERS = {
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
 }
 
+# In-memory кеш путей аватаров (username → entity_picture path)
+_user_avatar_cache: dict[str, str] = {}
+
+async def _web_user_avatar(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/user-avatar/{username} — прокси аватара из HA с bot-токеном."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    username = request.match_info.get("username", "")
+    ep = _user_avatar_cache.get(username)
+    if not ep:
+        # Попробуем загрузить из HA напрямую
+        try:
+            d = await ha_get(f"states/person.{username.lower()}")
+            ep = (d.get("attributes") or {}).get("entity_picture")
+            if ep:
+                _user_avatar_cache[username] = ep
+        except Exception:
+            pass
+    if not ep:
+        return aiohttp_web.Response(status=404, text="No avatar", headers=_CORS_HEADERS)
+    url = (HA_URL + ep) if ep.startswith("/") else ep
+    try:
+        async with _ha_cs() as s:
+            r = await s.get(url, headers={"Authorization": f"Bearer {HA_TOKEN}"}, ssl=False)
+            if r.status != 200:
+                return aiohttp_web.Response(status=r.status, headers=_CORS_HEADERS)
+            data = await r.read()
+            ct = r.headers.get("Content-Type", "image/jpeg")
+            return aiohttp_web.Response(body=data, content_type=ct, headers=_CORS_HEADERS)
+    except Exception as e:
+        log.warning(f"user_avatar proxy: {e}")
+        return aiohttp_web.Response(status=502, text="Proxy error", headers=_CORS_HEADERS)
+
 async def _web_manifest(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/manifest.json — PWA manifest."""
     path = WEBAPP_DIR / "manifest.json"
@@ -4137,7 +4186,7 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
             ha_get(f"states/{TV_EID}"),
             ha_get("states/vacuum.pylik"),
             ha_get("states/sensor.elektroenergiia_stoimost_za_den"),
-            ha_get("states/sensor.elektroenergiia_stoimost_za_mesiats"),
+            ha_get("states/sensor.house_energy_monthly"),
             *[ha_get(f"states/{eid}") for eid in family.values()],
             *[ha_get(f"states/{eid}") for _, (_, eid) in LIGHTS.items()],
             *[ha_get(f"states/{eid}") for eid in _HA_PRAYER_EIDS.values()],
@@ -4148,7 +4197,7 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
         n_lights = len(LIGHTS)
         n_prayers = len(_HA_PRAYER_EIDS)
         n_custom = len(custom_sect_eids)
-        power_d, temp_d, hum_d, inet_d, floor_d, tv_d, vac_d, cost_day_d, cost_month_d = results[:n_fixed]
+        power_d, temp_d, hum_d, inet_d, floor_d, tv_d, vac_d, cost_day_d, kwh_month_d = results[:n_fixed]
         family_results  = results[n_fixed:n_fixed + n_family]
         lights_results  = results[n_fixed + n_family:n_fixed + n_family + n_lights]
         prayer_results  = results[n_fixed + n_family + n_lights:n_fixed + n_family + n_lights + n_prayers]
@@ -4225,18 +4274,51 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
         if weather_payload:
             outdoor_temp = weather_payload.get("temp")
 
-        # Daily cost: fix if sensor stuck at 0
+        # Тариф — читаем из HA, fallback 5.5 р/кВт⋅ч (Грозный 2026)
+        TARIFF_FALLBACK = 5.5
+        try:
+            tariff = max(float(await ha_state("input_number.tarif_den_kvt_ch")), 0.5)
+        except Exception:
+            tariff = TARIFF_FALLBACK
+
+        # Daily cost: сенсор всегда 0 → считаем из истории счётчика
         cost_day_raw = st(cost_day_d)
         cost_day_val = cost_day_raw
         try:
-            if float(cost_day_raw) < 0.1:
-                kwh = await _ha_today_kwh()
-                if kwh is not None and kwh > 0:
-                    try:
-                        tariff = max(float(await ha_state("input_number.tarif_den_kvt_ch")), 0.5)
-                    except Exception:
-                        tariff = 5.68
-                    cost_day_val = f"{kwh * tariff:.2f}"
+            kwh_today = await _ha_today_kwh()
+            if kwh_today is not None and kwh_today > 0:
+                cost_day_val = f"{kwh_today * tariff:.2f}"
+        except Exception:
+            pass
+
+        # Monthly cost: house_energy_monthly (kWh) × tariff
+        kwh_month_raw = st(kwh_month_d)
+        cost_month_val = None
+        kwh_month_float = None
+        try:
+            kwh_month_float = float(kwh_month_raw)
+            cost_month_val = f"{kwh_month_float * tariff:.0f}"
+        except Exception:
+            pass
+
+        # Forecast: (kWh_month / days_elapsed) × days_in_month × tariff
+        cost_forecast_val = None
+        try:
+            now_msk = datetime.now(MSK)
+            day_num = now_msk.day
+            import calendar
+            days_in_month = calendar.monthrange(now_msk.year, now_msk.month)[1]
+            if kwh_month_float is not None and day_num > 0:
+                kwh_forecast = kwh_month_float / day_num * days_in_month
+                cost_forecast_val = f"{kwh_forecast * tariff:.0f}"
+        except Exception:
+            pass
+
+        # Week cost: avg daily × 7
+        cost_week_val = None
+        try:
+            if kwh_month_float is not None and day_num > 0:
+                cost_week_val = f"{kwh_month_float / day_num * 7 * tariff:.0f}"
         except Exception:
             pass
 
@@ -4317,10 +4399,9 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
             "floor_setpoint": str(floor_attrs.get("temperature", "?")),
             "floor_temp":    str(floor_attrs.get("current_temperature", "?")),
             "cost_day":      cost_day_val,
-            "cost_month":    st(cost_month_d),
-            "cost_week":     (lambda: (lambda cm, dn: (f"{float(cm)/max(dn,1)*7:.0f}"
-                              if dn > 0 else None) if cm and cm != "?" else None)(
-                              st(cost_month_d), datetime.now(MSK).day))(),
+            "cost_month":    cost_month_val,
+            "cost_forecast": cost_forecast_val,
+            "cost_week":     cost_week_val,
             "outdoor_temp":  outdoor_temp,
             "family":        family_data,
             "lights":        lights_data,
@@ -4618,7 +4699,7 @@ async def _web_frigate_clip_proxy(request: aiohttp_web.Request) -> aiohttp_web.R
     if "Range" in request.headers:
         req_headers["Range"] = request.headers["Range"]
     try:
-        async with aiohttp.ClientSession() as sess:
+        async with _ha_cs() as sess:
             for clip_url in candidate_urls:
                 async with sess.get(clip_url, headers=req_headers,
                                     timeout=aiohttp.ClientTimeout(total=90),
@@ -4649,10 +4730,10 @@ async def _web_frigate_thumb_proxy(request: aiohttp_web.Request) -> aiohttp_web.
         return aiohttp_web.Response(status=400, text="event_id required", headers=_CORS_HEADERS)
     snap_url = f"{HA_URL}/api/frigate/notifications/{event_id}/snapshot.jpg"
     try:
-        async with aiohttp.ClientSession() as sess:
+        async with _ha_cs() as sess:
             async with sess.get(snap_url, headers={"Authorization": f"Bearer {HA_TOKEN}"},
                                 timeout=aiohttp.ClientTimeout(total=15),
-                                allow_redirects=True) as resp:
+                                ssl=False, allow_redirects=True) as resp:
                 if resp.status == 200:
                     data = await resp.read()
                     ct = resp.headers.get("Content-Type", "image/jpeg")
@@ -4689,7 +4770,7 @@ async def _web_frigate_send(request: aiohttp_web.Request) -> aiohttp_web.Respons
                 clip_url = HA_URL + clip_url
             ha_headers = {"Authorization": f"Bearer {HA_TOKEN}"}
             log.info(f"frigate_send: downloading {clip_url[:80]}")
-            async with aiohttp.ClientSession() as sess:
+            async with _ha_cs() as sess:
                 async with sess.get(clip_url, headers=ha_headers,
                                     timeout=aiohttp.ClientTimeout(total=120)) as resp:
                     ct = resp.headers.get("Content-Type", "")
@@ -4714,7 +4795,7 @@ async def _web_frigate_send(request: aiohttp_web.Request) -> aiohttp_web.Respons
         if img_d:
             img_tok = img_d.get("attributes", {}).get("access_token", "")
             snap_url = f"{HA_URL}/api/image_proxy/{img_eid}?token={img_tok}"
-            async with aiohttp.ClientSession() as sess:
+            async with _ha_cs() as sess:
                 async with sess.get(snap_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                     if resp.status == 200:
                         data = await resp.read()
@@ -4769,7 +4850,7 @@ async def _frigate_ha_notify_task(camera: str, label: str):
         if img_d:
             img_tok = img_d.get("attributes", {}).get("access_token", "")
             img_url = f"{HA_URL}/api/image_proxy/image.{camera}_{label}?token={img_tok}"
-            async with aiohttp.ClientSession() as sess:
+            async with _ha_cs() as sess:
                 async with sess.get(img_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     if resp.status == 200:
                         data = await resp.read()
@@ -4839,7 +4920,7 @@ async def _frigate_ha_notify_task(camera: str, label: str):
                     f"{HA_URL}/api/frigate/api/recordings/explore/{camera}",
                 ]:
                     try:
-                        async with aiohttp.ClientSession() as sess:
+                        async with _ha_cs() as sess:
                             async with sess.get(rec_url, headers=HA_HEADERS,
                                                 timeout=aiohttp.ClientTimeout(total=120)) as resp:
                                 if resp.status == 200:
@@ -4858,7 +4939,7 @@ async def _frigate_ha_notify_task(camera: str, label: str):
                     f"{HA_URL}/api/frigate/notifications/{event_id}/clip.mp4",
                 ]:
                     try:
-                        async with aiohttp.ClientSession() as sess:
+                        async with _ha_cs() as sess:
                             async with sess.get(clip_url, headers=HA_HEADERS,
                                                 timeout=aiohttp.ClientTimeout(total=120)) as resp:
                                 if resp.status == 200:
@@ -4914,7 +4995,7 @@ async def _frigate_person_identified_task(camera: str, person: str, event_id: st
     if event_id:
         try:
             snap_url = f"{HA_URL}/api/frigate/notifications/{event_id}/snapshot.jpg"
-            async with aiohttp.ClientSession() as sess:
+            async with _ha_cs() as sess:
                 async with sess.get(snap_url, headers=HA_HEADERS,
                                     timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     if resp.status == 200:
@@ -4981,31 +5062,25 @@ async def _web_ha_login(request: aiohttp_web.Request) -> aiohttp_web.Response:
                 ssl=False)
             d2 = await r2.json()
 
-            # Шаг 3: получить имя и аватар пользователя из HA
+            # Шаг 3: получить имя и аватар пользователя из HA (person entity)
             display_name = username
             avatar_url = None
             if d2.get("type") == "create_entry":
-                result = d2.get("result")
-                ha_token = result.get("access_token") if isinstance(result, dict) else None
-                if ha_token:
-                    try:
-                        r3 = await s.get(f"{HA_URL}/auth/current_user",
-                            headers={"Authorization": f"Bearer {ha_token}"}, ssl=False)
-                        if r3.status == 200:
-                            u = await r3.json()
-                            display_name = u.get("name") or username
-                    except Exception:
-                        pass
-                    try:
-                        r4 = await s.get(f"{HA_URL}/api/states/person.{username.lower()}",
-                            headers={"Authorization": f"Bearer {HA_TOKEN}"}, ssl=False)
-                        if r4.status == 200:
-                            ps = await r4.json()
-                            ep = (ps.get("attributes") or {}).get("entity_picture")
-                            if ep:
-                                avatar_url = (HA_URL + ep) if ep.startswith("/") else ep
-                    except Exception:
-                        pass
+                try:
+                    r4 = await s.get(f"{HA_URL}/api/states/person.{username.lower()}",
+                        headers={"Authorization": f"Bearer {HA_TOKEN}"}, ssl=False)
+                    if r4.status == 200:
+                        ps = await r4.json()
+                        attrs = ps.get("attributes") or {}
+                        # friendly_name из person — реальное имя (напр. "Хамзат")
+                        display_name = attrs.get("friendly_name") or username
+                        ep = attrs.get("entity_picture")
+                        if ep:
+                            # Кешируем путь, отдаём прокси-URL (без HA credentials в браузере)
+                            _user_avatar_cache[username] = ep
+                            avatar_url = f"/ha-app/api/user-avatar/{username}"
+                except Exception:
+                    pass
     except Exception as e:
         log.error(f"ha_login: {e}")
         return aiohttp_web.Response(
@@ -5430,7 +5505,7 @@ async def _frigate_notify(entry: dict):
     snap_url = entry.get("snapshot_url", "")
     if snap_url:
         try:
-            async with aiohttp.ClientSession() as sess:
+            async with _ha_cs() as sess:
                 async with sess.get(snap_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     if resp.status == 200:
                         data = await resp.read()
@@ -5750,7 +5825,7 @@ async def _web_night_mode_post(request: aiohttp_web.Request) -> aiohttp_web.Resp
                 }
                 try:
                     url = f"{HA_URL}/api/config/automation/config/miniapp_night_mode"
-                    async with aiohttp.ClientSession() as sess:
+                    async with _ha_cs() as sess:
                         async with sess.post(url, headers=HA_HEADERS, json=payload,
                                              timeout=aiohttp.ClientTimeout(total=15)) as resp:
                             if resp.status in (200, 201):
@@ -5858,6 +5933,7 @@ async def _start_web():
     app.router.add_route("OPTIONS", "/ha-app/api/alerts",       _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/scenes",            _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/scenes/{scene_id}", _web_options)
+    app.router.add_get("/ha-app/api/user-avatar/{username}", _web_user_avatar)
     app.router.add_get("/ha-app/api/webapp-users",  _web_webapp_users)
     app.router.add_get("/ha-app/api/user-perms",    _web_user_perms_get)
     app.router.add_post("/ha-app/api/user-perms",   _web_user_perms_post)
