@@ -2248,7 +2248,7 @@ function applyStatus(d) {
   // --- Prayers section ---
   const prayersEl = document.getElementById('prayers-list');
   if (d.prayers && Object.keys(d.prayers).length > 0) {
-    document.getElementById('prayers-section').style.display = '';
+    const _ps = document.getElementById('prayers-section'); if (_ps) _ps.style.display = '';
     const now = new Date();
     const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
@@ -2284,7 +2284,7 @@ function applyStatus(d) {
       </div>`;
     }).join('');
   } else {
-    document.getElementById('prayers-section').style.display = 'none';
+    const _ps2 = document.getElementById('prayers-section'); if (_ps2) _ps2.style.display = 'none';
   }
 
   // --- Weather section ---
@@ -2435,22 +2435,10 @@ function _updateUserBadge() {
   const avatar = document.getElementById('user-avatar');
   const nameEl = document.getElementById('user-display-name');
   if (!badge) return;
-  // Prefer display_name (e.g. "Хамзат") over login username ("khamzat")
   const name = HA_DISPLAY_NAME || HA_USERNAME;
   badge.style.display = 'flex';
-  nameEl.textContent = name || 'Аккаунт';
-  if (HA_AVATAR_URL) {
-    // Append token so bot proxy can authenticate
-    const avatarSrc = HA_AVATAR_URL.includes('?')
-      ? HA_AVATAR_URL + '&token=' + API_TOKEN
-      : HA_AVATAR_URL + '?token=' + API_TOKEN;
-    const fallbackLetter = name ? name.charAt(0).toUpperCase() : '?';
-    avatar.style.background = 'transparent';
-    avatar.innerHTML = `<img src="${avatarSrc}"
-      style="width:24px;height:24px;border-radius:50%;object-fit:cover;display:block"
-      onerror="this.style.display='none';this.parentElement.textContent='${fallbackLetter}';this.parentElement.style.background='${HA_USER_ROLE === 'admin' ? '#3b82f6' : '#6366f1'}'"
-    >`;
-  } else {
+  if (nameEl) nameEl.textContent = name || 'Аккаунт';
+  if (avatar) {
     avatar.innerHTML = '';
     avatar.textContent = name ? name.charAt(0).toUpperCase() : '👤';
     avatar.style.background = HA_USER_ROLE === 'admin' ? '#3b82f6' : '#6366f1';
@@ -5500,8 +5488,8 @@ async function admInitPerms() {
 async function admSelectUser(username, displayName) {
     _admSelectedUser = username;
     document.getElementById('adm-selected-user-label').textContent = displayName || username;
-    document.getElementById('adm-user-list-view').style.display = 'none';
-    document.getElementById('adm-user-perms-view').style.display = '';
+    const _lv = document.getElementById('adm-user-list-view'); if (_lv) _lv.style.display = 'none';
+    const _pv = document.getElementById('adm-user-perms-view'); if (_pv) _pv.style.display = '';
     const list = document.getElementById('adm-perms-list');
     list.innerHTML = '<div style="color:#64748b;text-align:center;padding:8px">Загрузка...</div>';
     try {
@@ -5520,8 +5508,8 @@ async function admSelectUser(username, displayName) {
 
 function admBackToUsers() {
     _admSelectedUser = null;
-    document.getElementById('adm-user-perms-view').style.display = 'none';
-    document.getElementById('adm-user-list-view').style.display = '';
+    const _pv2 = document.getElementById('adm-user-perms-view'); if (_pv2) _pv2.style.display = 'none';
+    const _lv2 = document.getElementById('adm-user-list-view'); if (_lv2) _lv2.style.display = '';
     admInitPerms();
 }
 
