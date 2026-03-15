@@ -5240,13 +5240,15 @@ async def _web_camera_info(request: aiohttp_web.Request) -> aiohttp_web.Response
         d = await ha_get(f"states/{eid}")
         if not d:
             return aiohttp_web.Response(status=404, text="Not found", headers=_CORS_HEADERS)
-        tok = d.get("attributes", {}).get("access_token", "")
+        attrs = d.get("attributes", {})
+        tok = attrs.get("access_token", "")
         payload = {
             "entity_id":    eid,
-            "name":         d.get("attributes", {}).get("friendly_name", eid),
+            "name":         attrs.get("friendly_name", eid),
             "state":        d.get("state", ""),
             "stream_url":   f"{HA_URL}/api/camera_proxy_stream/{eid}?token={tok}",
             "snapshot_url": f"{HA_URL}/api/camera_proxy/{eid}?token={tok}",
+            "hls_url":      f"{HA_URL}/api/hls/{tok}/index.m3u8",
         }
         return aiohttp_web.Response(text=json.dumps(payload, ensure_ascii=False),
                                     content_type="application/json", headers=_CORS_HEADERS)

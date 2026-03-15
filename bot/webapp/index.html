@@ -6351,6 +6351,13 @@ async function openCameraModal(eid) {
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:4000;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:0';
 
   const camId = eid.replace('camera.', '');
+  const hlsUrl = info.hls_url || '';
+  const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const isMobile = isIOS || /Android/i.test(navigator.userAgent);
+  const streamLabel = isIOS ? 'HLS · нажмите ✕ для остановки'
+                   : isMobile ? 'Прямой поток · нажмите ✕ для остановки'
+                   : 'Прямой поток MJPEG · нажмите ✕ для остановки';
+
   ov.innerHTML = `
     <div style="width:100%;max-width:600px;display:flex;flex-direction:column;height:100%">
       <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;flex-shrink:0">
@@ -6361,11 +6368,15 @@ async function openCameraModal(eid) {
           style="background:rgba(255,255,255,0.1);border:none;border-radius:8px;padding:6px 12px;color:#c0c0e0;cursor:pointer;font-size:13px">✕</button>
       </div>
       <div id="cam-stream-wrap" style="position:relative;background:#000;flex-shrink:0">
-        <img id="cam-modal-img" alt="camera stream"
-          style="width:100%;display:block;max-height:55vh;object-fit:contain">
+        ${isIOS && hlsUrl
+          ? `<video id="cam-modal-video" autoplay playsinline muted controls
+               style="width:100%;display:block;max-height:55vh;object-fit:contain"></video>`
+          : `<img id="cam-modal-img" alt="camera stream"
+               style="width:100%;display:block;max-height:55vh;object-fit:contain">`
+        }
         <div id="cam-modal-err" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:#6060a0;font-size:13px">
           <span style="font-size:30px">📷</span><span>Поток недоступен</span>
-          <button onclick="retryCamera('${escapeAttr(streamUrl)}')" class="btn btn-neutral" style="margin-top:4px">↺ Повторить</button>
+          <button onclick="retryCameraModal('${escapeAttr(eid)}')" class="btn btn-neutral" style="margin-top:4px">↺ Повторить</button>
         </div>
       </div>
       <div style="flex:1;overflow-y:auto;padding:10px 16px">
@@ -6375,19 +6386,42 @@ async function openCameraModal(eid) {
         </div>
       </div>
       <div style="padding:8px 16px 12px;font-size:11px;color:#50508a;text-align:center;flex-shrink:0">
-        Прямой поток MJPEG · нажмите ✕ для остановки
+        ${streamLabel}
       </div>
     </div>`;
 
   ov.addEventListener('click', e => { if (e.target === ov) closeCameraModal(); });
   document.body.appendChild(ov);
   _camModal = ov;
-  // Set src via JS after appendChild so onerror fires only when both elements exist in DOM
-  const _cmImg = document.getElementById('cam-modal-img');
+
   const _cmErr = document.getElementById('cam-modal-err');
-  if (_cmImg) {
-    if (_cmErr) _cmImg.addEventListener('error', () => { _cmErr.style.display = 'flex'; }, { once: true });
-    _cmImg.src = streamUrl;
+  if (isIOS && hlsUrl) {
+    // iOS: try HLS via native <video> (Safari supports HLS natively)
+    const vid = document.getElementById('cam-modal-video');
+    if (vid) {
+      vid.addEventListener('error', () => {
+        // HLS failed → fall back to snapshot polling
+        vid.style.display = 'none';
+        _startSnapshotPolling(snapUrl, _cmErr);
+      }, { once: true });
+      vid.src = hlsUrl;
+      vid.load();
+      vid.play().catch(() => {});
+    }
+  } else if (isMobile) {
+    // Android and other mobile: snapshot polling (more compatible than MJPEG)
+    const img = document.getElementById('cam-modal-img');
+    if (img) _startSnapshotPolling(snapUrl, _cmErr, img);
+  } else {
+    // Desktop: MJPEG stream
+    const _cmImg = document.getElementById('cam-modal-img');
+    if (_cmImg) {
+      if (_cmErr) _cmImg.addEventListener('error', () => {
+        _cmImg.style.display = 'none';
+        _startSnapshotPolling(snapUrl, _cmErr, _cmImg);
+      }, { once: true });
+      _cmImg.src = streamUrl;
+    }
   }
 
   // Load recordings async
@@ -6451,14 +6485,29 @@ function expandCamFullscreen() {
   }
 }
 
+let _snapPollTimer = null;
+function _startSnapshotPolling(snapUrl, errEl, imgEl) {
+  if (_snapPollTimer) clearInterval(_snapPollTimer);
+  const target = imgEl || document.getElementById('cam-modal-img');
+  if (!target) { if (errEl) errEl.style.display = 'flex'; return; }
+  target.style.display = 'block';
+  if (errEl) errEl.style.display = 'none';
+  const refresh = () => {
+    if (!document.getElementById('cam-modal-overlay')) { clearInterval(_snapPollTimer); return; }
+    target.src = snapUrl + '&_t=' + Date.now();
+  };
+  refresh();
+  _snapPollTimer = setInterval(refresh, 2000);
+}
+
 function closeCameraModal() {
   _camFsActive = false;
+  if (_snapPollTimer) { clearInterval(_snapPollTimer); _snapPollTimer = null; }
   document.getElementById('cam-fs-exit-btn')?.remove();
   const ov = document.getElementById('cam-modal-overlay');
   if (ov) {
     const img = ov.querySelector('#cam-modal-img');
     if (img) img.src = '';
-    // Stop any video players
     ov.querySelectorAll('video').forEach(v => { v.pause(); v.src = ''; });
     ov.remove();
   }
@@ -6470,6 +6519,11 @@ function retryCamera(url) {
   const err = document.getElementById('cam-modal-err');
   if (img) { img.src = url + '&t=' + Date.now(); }
   if (err) err.style.display = 'none';
+}
+
+function retryCameraModal(eid) {
+  closeCameraModal();
+  openCameraModal(eid);
 }
 
 function _vpFullscreen() {
