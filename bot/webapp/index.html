@@ -2,10 +2,10 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Умный Дом</title>
 <link rel="manifest" href="/ha-app/manifest.json">
-<meta name="theme-color" id="meta-theme-color" content="#6366f1">
+<meta name="theme-color" id="meta-theme-color" content="#0a0a1a">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -71,11 +71,12 @@
 .compact-bar {
   position: fixed;
   top: 0; left: 0; right: 0;
-  height: 48px;
+  height: calc(48px + env(safe-area-inset-top, 0px));
   z-index: 200;
   display: flex;
-  align-items: center;
-  padding: 0 16px;
+  align-items: flex-end;
+  padding: 0 16px env(safe-area-inset-bottom, 0px);
+  padding-top: env(safe-area-inset-top, 0px);
   gap: 12px;
   background: linear-gradient(170deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 100%);
   border-bottom: 0.5px solid rgba(255,255,255,0.08);
