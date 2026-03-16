@@ -873,13 +873,25 @@ body::before {
   margin-bottom: 14px;
 }
 .clim-card {
-  background: linear-gradient(145deg, rgba(255,255,255,0.065) 0%, rgba(255,255,255,0.025) 100%);
-  border: 0.5px solid rgba(255,255,255,0.1);
-  border-top-color: rgba(255,255,255,0.16);
+  background: linear-gradient(170deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.005) 50%, rgba(255,255,255,0.001) 100%);
+  border: 0.5px solid rgba(255,255,255,0.07);
+  border-top-color: rgba(255,255,255,0.13);
   border-radius: var(--r-md);
   padding: 11px 8px;
   text-align: center;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.24), 0 1px 0 rgba(255,255,255,0.05) inset;
+  box-shadow: 0 0.5px 0 rgba(255,255,255,0.10) inset, 0 -0.5px 0 rgba(0,0,0,0.10) inset,
+              0 4px 9px rgba(0,0,0,0.18), 0 14px 34px rgba(0,0,0,0.32), 0 26px 48px rgba(0,0,0,0.10);
+  backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
+  position: relative; overflow: hidden;
+}
+.clim-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0) 50%);
+  pointer-events: none;
 }
 .clim-icon { font-size: 18px; margin-bottom: 5px; }
 .clim-val  { font-size: 17px; font-weight: 700; color: #eaeaf8; letter-spacing: -0.3px; }
@@ -953,11 +965,24 @@ body::before {
   align-items: center;
   justify-content: space-between;
   padding: 12px 15px;
-  background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.018) 100%);
+  background: linear-gradient(170deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.005) 50%, rgba(255,255,255,0.001) 100%);
   border-radius: var(--r-md);
-  border: 0.5px solid rgba(255,255,255,0.09);
+  border: 0.5px solid rgba(255,255,255,0.07);
+  border-top-color: rgba(255,255,255,0.13);
   transition: all 0.25s ease;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+  box-shadow: 0 0.5px 0 rgba(255,255,255,0.10) inset, 0 -0.5px 0 rgba(0,0,0,0.10) inset,
+              0 4px 9px rgba(0,0,0,0.18), 0 14px 34px rgba(0,0,0,0.32), 0 26px 48px rgba(0,0,0,0.10);
+  backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
+  position: relative; overflow: hidden;
+}
+.prayer-item::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0) 50%);
+  pointer-events: none;
 }
 .prayer-item.next {
   background: linear-gradient(135deg, rgba(99,102,241,0.18) 0%, rgba(139,92,246,0.12) 100%);
@@ -1259,43 +1284,121 @@ body::before {
 .map-link-off { opacity: 0.2; pointer-events: none; background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.08); box-shadow: none; }
 
 /* ── Weather ── */
-.weather-current {
+/* ── Weather redesign ── */
+@keyframes weatherFloat {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50%       { transform: translateY(-7px) scale(1.06); }
+}
+@keyframes metricBob {
+  0%, 100% { transform: scale(1); }
+  50%       { transform: scale(1.18); }
+}
+@keyframes wCardIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.weather-hero {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 4px 0 16px;
-  border-bottom: 0.5px solid rgba(255,255,255,0.08);
-  margin-bottom: 14px;
+  gap: 18px;
+  padding: 18px 16px;
+  background: linear-gradient(170deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.005) 50%, rgba(255,255,255,0.001) 100%);
+  border: 0.5px solid rgba(255,255,255,0.07);
+  border-top-color: rgba(255,255,255,0.13);
+  border-radius: 20px;
+  box-shadow: 0 0.5px 0 rgba(255,255,255,0.10) inset, 0 -0.5px 0 rgba(0,0,0,0.10) inset,
+              0 4px 9px rgba(0,0,0,0.18), 0 14px 34px rgba(0,0,0,0.32), 0 26px 48px rgba(0,0,0,0.10);
+  backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
+  margin-bottom: 10px;
+  position: relative; overflow: hidden;
+  animation: wCardIn 0.4s ease both;
 }
-.weather-icon { font-size: 48px; line-height: 1; filter: drop-shadow(0 4px 12px rgba(0,0,0,0.4)); }
-.weather-main { flex: 1; min-width: 0; }
-.weather-temp { font-size: 38px; font-weight: 700; color: #eaeaf8; line-height: 1; margin-bottom: 3px; letter-spacing: -1px; }
-.weather-cond { font-size: 13px; color: rgba(140,140,190,0.8); font-weight: 500; }
-.weather-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 13px; }
-.weather-meta-item {
-  background: linear-gradient(145deg, rgba(255,255,255,0.055) 0%, rgba(255,255,255,0.02) 100%);
-  border: 0.5px solid rgba(255,255,255,0.09);
-  border-top-color: rgba(255,255,255,0.14);
-  border-radius: 11px;
-  padding: 9px 11px;
-  font-size: 12px;
-  color: rgba(130,130,178,0.8);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.18), 0 1px 0 rgba(255,255,255,0.04) inset;
+.weather-hero::before {
+  content: '';
+  position: absolute; inset: 0; border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0) 50%);
+  pointer-events: none;
 }
-.weather-meta-item strong { display: block; color: rgba(210,210,250,0.95); font-size: 14px; font-weight: 700; margin-top: 2px; letter-spacing: -0.2px; }
-.weather-forecast { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
-.forecast-day {
-  background: linear-gradient(145deg, rgba(255,255,255,0.055) 0%, rgba(255,255,255,0.02) 100%);
-  border: 0.5px solid rgba(255,255,255,0.09);
-  border-top-color: rgba(255,255,255,0.14);
-  border-radius: 12px;
-  padding: 11px 6px;
+.weather-icon-big {
+  font-size: 64px;
+  line-height: 1;
+  flex-shrink: 0;
+  animation: weatherFloat 3.4s ease-in-out infinite;
+  filter: drop-shadow(0 6px 18px rgba(0,0,0,0.4));
+}
+.weather-hero-info { flex: 1; min-width: 0; }
+.weather-temp-big { font-size: 54px; font-weight: 800; color: #eaeaf8; letter-spacing: -2px; line-height: 1; }
+.weather-cond-big { font-size: 14px; color: rgba(160,160,210,0.85); font-weight: 500; margin-top: 5px; }
+.weather-feel { font-size: 12px; color: rgba(120,120,168,0.65); margin-top: 2px; }
+.weather-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.weather-metric {
+  background: linear-gradient(170deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.004) 50%, rgba(255,255,255,0.001) 100%);
+  border: 0.5px solid rgba(255,255,255,0.07);
+  border-top-color: rgba(255,255,255,0.13);
+  border-radius: 14px;
+  padding: 12px 8px;
   text-align: center;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.2), 0 1px 0 rgba(255,255,255,0.04) inset;
+  box-shadow: 0 0.5px 0 rgba(255,255,255,0.10) inset, 0 -0.5px 0 rgba(0,0,0,0.10) inset,
+              0 4px 9px rgba(0,0,0,0.18), 0 12px 28px rgba(0,0,0,0.28);
+  backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
+  position: relative; overflow: hidden;
+  animation: wCardIn 0.4s ease both;
 }
-.forecast-label { font-size: 11px; color: rgba(110,110,158,0.7); margin-bottom: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
-.forecast-icon  { font-size: 24px; margin: 4px 0; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.3)); }
-.forecast-range { font-size: 12px; font-weight: 700; color: rgba(200,200,248,0.9); letter-spacing: -0.2px; }
+.weather-metric:nth-child(1) { animation-delay: 0.05s; }
+.weather-metric:nth-child(2) { animation-delay: 0.10s; }
+.weather-metric:nth-child(3) { animation-delay: 0.15s; }
+.weather-metric::before {
+  content: '';
+  position: absolute; inset: 0; border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,0.055) 0%, rgba(255,255,255,0) 50%);
+  pointer-events: none;
+}
+.weather-metric-icon {
+  font-size: 22px;
+  margin-bottom: 6px;
+  display: block;
+}
+.weather-metric:nth-child(1) .weather-metric-icon { animation: metricBob 3.0s ease-in-out infinite; }
+.weather-metric:nth-child(2) .weather-metric-icon { animation: metricBob 3.0s ease-in-out infinite 0.6s; }
+.weather-metric:nth-child(3) .weather-metric-icon { animation: metricBob 3.0s ease-in-out infinite 1.2s; }
+.weather-metric-val { font-size: 16px; font-weight: 700; color: rgba(215,215,252,0.95); letter-spacing: -0.3px; }
+.weather-metric-label { font-size: 10px; color: rgba(110,110,158,0.7); margin-top: 3px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
+.weather-forecast-title { font-size: 11px; color: rgba(130,130,180,0.55); font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin: 12px 0 8px 2px; }
+.weather-forecast { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.forecast-day {
+  background: linear-gradient(170deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.004) 50%, rgba(255,255,255,0.001) 100%);
+  border: 0.5px solid rgba(255,255,255,0.07);
+  border-top-color: rgba(255,255,255,0.13);
+  border-radius: 14px;
+  padding: 13px 6px;
+  text-align: center;
+  box-shadow: 0 0.5px 0 rgba(255,255,255,0.10) inset, 0 -0.5px 0 rgba(0,0,0,0.10) inset,
+              0 4px 9px rgba(0,0,0,0.18), 0 12px 28px rgba(0,0,0,0.28);
+  backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
+  position: relative; overflow: hidden;
+  animation: wCardIn 0.4s ease both;
+}
+.forecast-day:nth-child(1) { animation-delay: 0.18s; }
+.forecast-day:nth-child(2) { animation-delay: 0.24s; }
+.forecast-day:nth-child(3) { animation-delay: 0.30s; }
+.forecast-day::before {
+  content: '';
+  position: absolute; inset: 0; border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,0.055) 0%, rgba(255,255,255,0) 50%);
+  pointer-events: none;
+}
+.forecast-label { font-size: 11px; color: rgba(110,110,158,0.75); margin-bottom: 5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
+.forecast-icon  { font-size: 26px; margin: 4px 0; display: block; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.35)); }
+.forecast-range { font-size: 13px; font-weight: 700; color: rgba(205,205,250,0.9); letter-spacing: -0.3px; }
+.weather-updated { font-size: 10px; color: rgba(100,100,150,0.45); text-align: right; margin-top: 8px; }
 
 /* ── Devices ── */
 .dev-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; transition: opacity 0.2s; }
@@ -3316,7 +3419,8 @@ function applyStatus(d) {
     const wfeel = w.feels_like != null ? Math.round(w.feels_like) : '?';
 
     const forecastHtml = (w.forecast && w.forecast.length)
-      ? `<div class="weather-forecast">
+      ? `<div class="weather-forecast-title">Прогноз на 3 дня</div>
+         <div class="weather-forecast">
           ${w.forecast.map(f => `
             <div class="forecast-day">
               <div class="forecast-label">${escapeHtml(f.label)}</div>
@@ -3326,20 +3430,33 @@ function applyStatus(d) {
         </div>` : '';
 
     document.getElementById('weather-content').innerHTML =
-      `<div class="weather-current">
-        <div class="weather-icon">${wicon}</div>
-        <div class="weather-main">
-          <div class="weather-temp">${wtemp}°C</div>
-          <div class="weather-cond">${escapeHtml(wcond)} · ощущается ${wfeel}°</div>
+      `<div class="weather-hero">
+        <div class="weather-icon-big">${wicon}</div>
+        <div class="weather-hero-info">
+          <div class="weather-temp-big">${wtemp}°</div>
+          <div class="weather-cond-big">${escapeHtml(wcond)}</div>
+          <div class="weather-feel">Ощущается ${wfeel}°</div>
         </div>
       </div>
-      <div class="weather-meta">
-        <div class="weather-meta-item">💧 Влажность<strong>${w.humidity ?? '?'}%</strong></div>
-        <div class="weather-meta-item">💨 Ветер<strong>${w.wind ?? '?'} км/ч</strong></div>
-        <div class="weather-meta-item">🌧 Осадки<strong>${w.precip ?? 0} мм</strong></div>
-        <div class="weather-meta-item">🕒 Обновлено<strong>${escapeHtml(w.updated ?? '?')}</strong></div>
+      <div class="weather-metrics">
+        <div class="weather-metric">
+          <span class="weather-metric-icon">💧</span>
+          <div class="weather-metric-val">${w.humidity ?? '?'}%</div>
+          <div class="weather-metric-label">Влажность</div>
+        </div>
+        <div class="weather-metric">
+          <span class="weather-metric-icon">💨</span>
+          <div class="weather-metric-val">${w.wind ?? '?'} км/ч</div>
+          <div class="weather-metric-label">Ветер</div>
+        </div>
+        <div class="weather-metric">
+          <span class="weather-metric-icon">🌧</span>
+          <div class="weather-metric-val">${w.precip ?? 0} мм</div>
+          <div class="weather-metric-label">Осадки</div>
+        </div>
       </div>
-      ${forecastHtml}`;
+      ${forecastHtml}
+      <div class="weather-updated">🕒 ${escapeHtml(w.updated ?? '')}</div>`;
   }
 
   // --- Namaz widget ---
