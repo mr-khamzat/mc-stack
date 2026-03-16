@@ -87,12 +87,13 @@
 }
 .compact-bar.visible { transform: translateY(0); }
 .cb-clock {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 700;
   color: rgba(220,220,252,0.9);
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.3px;
+  letter-spacing: -0.2px;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 .cb-dot {
   width: 7px; height: 7px; border-radius: 50%;
@@ -2451,6 +2452,7 @@ body.fab-open .fab-backdrop { display: block; }
   <div class="cb-clock" id="cb-clock">--:--</div>
   <div class="cb-chips" id="cb-chips">
     <span class="cb-chip" id="cb-temp">--°</span>
+    <span class="cb-chip" id="cb-outdoor" style="display:none">🌡 --°</span>
     <span class="cb-chip" id="cb-power">-- Вт</span>
   </div>
 </div>
@@ -3668,7 +3670,8 @@ function applyStatus(d) {
   // Update compact bar
   updateCompactBar(
     d.temp_detskaia != null ? parseFloat(d.temp_detskaia) : null,
-    d.power != null ? parseFloat(d.power) : null
+    d.power != null ? parseFloat(d.power) : null,
+    d.weather?.temp != null ? parseFloat(d.weather.temp) : null
   );
 
   // Update timestamp
@@ -9294,12 +9297,14 @@ function pwaDismiss() {
   }, { passive: true });
 
   // Clock - update every second
+  const _CB_DAYS = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
   function _cbTick() {
     const el = document.getElementById('cb-clock');
     if (!el) return;
     const now = new Date();
-    el.textContent = now.getHours().toString().padStart(2,'0') + ':' +
-                     now.getMinutes().toString().padStart(2,'0');
+    const hh = now.getHours().toString().padStart(2,'0');
+    const mm = now.getMinutes().toString().padStart(2,'0');
+    el.textContent = `${_CB_DAYS[now.getDay()]} · ${hh}:${mm} · ${now.getFullYear()}`;
   }
   _cbTick();
   setInterval(_cbTick, 1000);
@@ -9315,11 +9320,13 @@ function pwaDismiss() {
 })();
 
 // Call this from applyStatus / wherever temp + power are updated to sync compact bar
-function updateCompactBar(tempVal, powerVal) {
+function updateCompactBar(tempVal, powerVal, outdoorVal) {
   const t = document.getElementById('cb-temp');
   const p = document.getElementById('cb-power');
+  const o = document.getElementById('cb-outdoor');
   if (t && tempVal != null) t.textContent = Math.round(tempVal) + '°';
   if (p && powerVal != null) p.textContent = Math.round(powerVal) + ' Вт';
+  if (o && outdoorVal != null) { o.textContent = '🌡 ' + Math.round(outdoorVal) + '°'; o.style.display = ''; }
 }
 </script>
 </body>
