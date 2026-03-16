@@ -107,11 +107,8 @@ from urllib import parse as urlparse
 import psutil
 import aiohttp
 from aiohttp import web as aiohttp_web
-try:
-    import websockets
-    HAS_WS = True
-except ImportError:
-    HAS_WS = False
+import websockets
+HAS_WS = True  # websockets всегда установлен (pip install websockets)
 
 import matplotlib
 matplotlib.use('Agg')
@@ -443,6 +440,11 @@ _ALERTS_DEFAULTS = {
     "temp_max":          27,
     "quiet_hours_start": 23,
     "quiet_hours_end":   7,
+    # Настраиваемые entity_id сенсоров (можно менять через API /api/alerts)
+    "entity_power":      "sensor.moshchnost_vsego_doma",
+    "entity_temp":       "sensor.temp_detskaia_temperature",
+    "entity_hum":        "sensor.temp_detskaia_humidity",
+    "entity_inet":       "binary_sensor.keenetic_gateway_wan_status_2",
     "enabled": {
         "power":   True,
         "temp":    True,
@@ -1176,14 +1178,14 @@ _prayer_cache: dict = {"date": None, "timings": None}
 
 # ── Журнал активности ─────────────────────────────────────────────────────────
 def _activity_log(action: str, detail: str = "", username: str = ""):
-    """Append event to activity_log table, keep last 200 entries."""
+    """Append event to activity_log table, keep last 500 entries."""
     try:
         with _DB_LOCK:
             c = _db()
             c.execute("INSERT INTO activity_log (ts,action,detail,username) VALUES (?,?,?,?)",
                 (datetime.now(MSK).strftime("%Y-%m-%d %H:%M:%S"), action, detail, username))
             c.execute("DELETE FROM activity_log WHERE id NOT IN "
-                      "(SELECT id FROM activity_log ORDER BY id DESC LIMIT 200)")
+                      "(SELECT id FROM activity_log ORDER BY id DESC LIMIT 500)")
             c.commit()
     except Exception as e:
         log.error(f"activity_log: {e}")
@@ -1400,7 +1402,7 @@ async def cmd_start(msg: Message, state: FSMContext):
             role  = inv["role"]
             fname = msg.from_user.full_name or str(uid)
             users = _load_family_users()
-            users[str(uid)] = {"name": fname, "role": role, "added_ts": datetime.now().isoformat()}
+            users[str(uid)] = {"name": fname, "role": role, "added_ts": datetime.now(MSK).isoformat()}
             _save_family_users(users)
             _activity_log("user_joined_invite", f"{fname} [{role}]")
             kb = main_kb() if role == "admin" else family_kb()
@@ -1477,7 +1479,7 @@ async def usr_approve_cb(cb: CallbackQuery):
         pass
 
     users = _load_family_users()
-    users[str(uid)] = {"name": fname, "role": role, "added_ts": datetime.now().isoformat()}
+    users[str(uid)] = {"name": fname, "role": role, "added_ts": datetime.now(MSK).isoformat()}
     _save_family_users(users)
     _activity_log("user_approved", f"{fname} [{role}]")
 
@@ -2179,7 +2181,10 @@ def _climate_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🌡️ Пол +1°",  callback_data="floor_temp:+1"),
             InlineKeyboardButton(text="🌡️ Пол -1°",  callback_data="floor_temp:-1"),
         ],
-        [InlineKeyboardButton(text="📈 История темп 24ч", callback_data="temp_chart")],
+        [
+            InlineKeyboardButton(text="📈 Температура 24ч",  callback_data="temp_chart"),
+            InlineKeyboardButton(text="💧 Влажность 24ч",    callback_data="hum_chart"),
+        ],
         [InlineKeyboardButton(text="🔄 Обновить",         callback_data="climate_refresh")],
     ])
 
@@ -2223,6 +2228,26 @@ async def temp_chart_cb(cb: CallbackQuery):
     await cb.message.answer_photo(
         BufferedInputFile(img, filename="temp.png"),
         caption="🌡️ <b>Температура детской — 24 ч</b>",
+        parse_mode="HTML"
+    )
+
+@dp.callback_query(F.data == "hum_chart")
+async def hum_chart_cb(cb: CallbackQuery):
+    if not is_bot_admin(cb.from_user.id):
+        await cb.answer("🚫 Только просмотр", show_alert=True); return
+    await cb.answer("💧 Строю график влажности...")
+    acfg = _alerts_load()
+    points = await ha_history(acfg["entity_hum"], hours=24)
+    if not points:
+        await cb.message.answer("❌ Нет данных истории влажности в HA")
+        return
+    img = _make_chart(points, "💧 Влажность детской — 24 ч", "%", "#29b6f6")
+    if not img:
+        await cb.message.answer("❌ Не удалось построить график")
+        return
+    await cb.message.answer_photo(
+        BufferedInputFile(img, filename="humidity.png"),
+        caption="💧 <b>Влажность детской — 24 ч</b>",
         parse_mode="HTML"
     )
 
@@ -3209,6 +3234,7 @@ _alert_state = {
     "person_khamzat":          None,   # kept for compat
     "person_khamzat_notif_ts": None,
     "persons":                 {},     # {entity_id: state} для всех членов семьи
+    "persons_notif_ts":        {},     # {entity_id: datetime} последнее уведомление о присутствии
     "namaz_notified_prayer":   None,   # kept for compat
     "namaz_done_keys":         set(),  # {"2026-03-09_Asr_15", ...} — отправленные уведомления
     "namaz_done_day":          None,   # дата для сброса namaz_done_keys
@@ -3259,11 +3285,12 @@ async def _check_alerts():
     """
     family = await get_family()  # {name: entity_id}
     person_eids = list(family.values()) or ["person.khamzat"]
+    acfg = _alerts_load()
     gather_items = [
-        ha_get("states/sensor.moshchnost_vsego_doma"),
-        ha_get("states/sensor.temp_detskaia_temperature"),
+        ha_get(f"states/{acfg['entity_power']}"),
+        ha_get(f"states/{acfg['entity_temp']}"),
         ha_get("states/person.khamzat"),
-        ha_get("states/binary_sensor.keenetic_gateway_wan_status_2"),
+        ha_get(f"states/{acfg['entity_inet']}"),
         ha_get("states/image.cam_a6810678_person"),
         *[ha_get(f"states/{eid}") for eid in person_eids],
     ]
@@ -3275,7 +3302,6 @@ async def _check_alerts():
     person_img_d = results[4]
     all_persons = results[5:]  # parallel to person_eids
 
-    acfg = _alerts_load()
     now_h = datetime.now(MSK).hour
     # Quiet hours check
     qs, qe = acfg["quiet_hours_start"], acfg["quiet_hours_end"]
@@ -3289,6 +3315,7 @@ async def _check_alerts():
             if power > thr and not _alert_state["power_high"]:
                 _alert_state["power_high"] = True
                 await bot.send_message(ADMIN_ID, f"⚡ <b>Высокая нагрузка!</b> {power:.0f} Вт (порог {thr} Вт)", parse_mode="HTML")
+                asyncio.create_task(push_notify(None, "⚡ Высокая нагрузка", f"{power:.0f} Вт (порог {thr} Вт)", "/ha-app/"))
             elif power <= thr and _alert_state["power_high"]:
                 _alert_state["power_high"] = False
         except Exception as e:
@@ -3302,11 +3329,13 @@ async def _check_alerts():
             if temp < t_min and not _alert_state["temp_low"]:
                 _alert_state["temp_low"] = True
                 await bot.send_message(ADMIN_ID, f"🥶 <b>Холодно в детской!</b> {temp}°C (мин {t_min}°C)", parse_mode="HTML")
+                asyncio.create_task(push_notify(None, "🥶 Холодно в детской", f"{temp}°C (мин {t_min}°C)", "/ha-app/"))
             elif temp >= t_min:
                 _alert_state["temp_low"] = False
             if temp > t_max and not _alert_state["temp_high"]:
                 _alert_state["temp_high"] = True
                 await bot.send_message(ADMIN_ID, f"🥵 <b>Жарко в детской!</b> {temp}°C (макс {t_max}°C)", parse_mode="HTML")
+                asyncio.create_task(push_notify(None, "🥵 Жарко в детской", f"{temp}°C (макс {t_max}°C)", "/ha-app/"))
             elif temp <= t_max:
                 _alert_state["temp_high"] = False
         except Exception as e:
@@ -3317,17 +3346,25 @@ async def _check_alerts():
         try:
             now_utc = datetime.now(timezone.utc)
             family_names = {v: k for k, v in family.items()}  # {entity_id: name}
+            PERSON_NOTIF_COOLDOWN = 600  # 10 минут между уведомлениями об одном человеке
             for eid, d in zip(person_eids, all_persons):
                 state = d.get("state", "?") if d else "?"
                 prev  = _alert_state["persons"].get(eid)
                 if prev is not None and prev != state:
                     name = family_names.get(eid, eid.split(".")[-1].capitalize())
-                    if state == "home":
+                    last_ts = _alert_state["persons_notif_ts"].get(eid)
+                    cooldown_ok = (last_ts is None or
+                                   (now_utc - last_ts).total_seconds() >= PERSON_NOTIF_COOLDOWN)
+                    if state == "home" and cooldown_ok:
                         await bot.send_message(ADMIN_ID, f"🏠 <b>{name}</b> дома!", parse_mode="HTML")
+                        asyncio.create_task(push_notify(None, "🏠 Дома", f"{name} вернулся домой", "/ha-app/"))
                         _activity_log("person_home", name)
-                    elif prev == "home":
+                        _alert_state["persons_notif_ts"][eid] = now_utc
+                    elif prev == "home" and cooldown_ok:
                         await bot.send_message(ADMIN_ID, f"🚗 <b>{name}</b> ушёл(а)", parse_mode="HTML")
+                        asyncio.create_task(push_notify(None, "🚗 Ушёл", f"{name} покинул дом", "/ha-app/"))
                         _activity_log("person_away", name)
+                        _alert_state["persons_notif_ts"][eid] = now_utc
                 _alert_state["persons"][eid] = state
             # backwards compat
             _alert_state["person_khamzat"] = _alert_state["persons"].get("person.khamzat",
@@ -4109,16 +4146,22 @@ async def _web_alerts_post(request: aiohttp_web.Request) -> aiohttp_web.Response
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
 async def _web_activity(request: aiohttp_web.Request) -> aiohttp_web.Response:
-    """GET /ha-app/api/activity — последние 50 событий из SQLite."""
+    """GET /ha-app/api/activity — события из SQLite. Поддерживает ?limit=N&offset=M."""
     if not _check_token(request):
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
     try:
-        rows = _db().execute(
-            "SELECT ts,action,detail FROM activity_log ORDER BY id DESC LIMIT 50"
+        limit  = min(int(request.rel_url.query.get("limit",  "50")), 500)
+        offset = max(int(request.rel_url.query.get("offset", "0")),  0)
+        db = _db()
+        total = db.execute("SELECT COUNT(*) FROM activity_log").fetchone()[0]
+        rows  = db.execute(
+            "SELECT ts,action,detail FROM activity_log ORDER BY id DESC LIMIT ? OFFSET ?",
+            (limit, offset)
         ).fetchall()
         entries = [{"ts": r["ts"], "action": r["action"], "detail": r["detail"]} for r in rows]
         return aiohttp_web.Response(
-            text=json.dumps(entries, ensure_ascii=False),
+            text=json.dumps({"total": total, "offset": offset, "limit": limit, "items": entries},
+                            ensure_ascii=False),
             content_type="application/json",
             headers=_CORS_HEADERS,
         )
@@ -4775,13 +4818,12 @@ async def _ha_state_watch_loop():
     При обрыве соединения — автоматически переподключается через 5 секунд.
     Требует: библиотека websockets (pip install websockets).
     """
-    if not HAS_WS:
-        return
     ha_ws = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
     ssl_ctx = _ssl.create_default_context()
     ssl_ctx.check_hostname = False
     ssl_ctx.verify_mode = _ssl.CERT_NONE
     watch_eids: set[str] = set()
+    _ws_backoff = 5  # exponential backoff: 5→10→30→60 сек
 
     while True:
         try:
@@ -4828,9 +4870,11 @@ async def _ha_state_watch_loop():
                             })
                     except Exception:
                         pass
+            _ws_backoff = 5  # успешное подключение — сбрасываем backoff
         except Exception as e:
-            log.warning(f"HA state watch loop: {e}")
-            await asyncio.sleep(10)
+            log.warning(f"HA state watch loop: {e} (retry in {_ws_backoff}s)")
+            await asyncio.sleep(_ws_backoff)
+            _ws_backoff = min(_ws_backoff * 2, 60)  # 5→10→20→40→60 сек
 
 async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/api/status — главный эндпоинт: полный статус умного дома.
