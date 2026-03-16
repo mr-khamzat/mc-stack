@@ -6044,7 +6044,7 @@ async def _web_frigate_faces_history(request: aiohttp_web.Request) -> aiohttp_we
         c = _db()
         rows = c.execute(
             "SELECT ts, person, event_id, camera FROM faces_log "
-            "WHERE ts >= datetime('now', '-2 days') ORDER BY id DESC LIMIT 100"
+            "ORDER BY id DESC LIMIT 100"
         ).fetchall()
         result = []
         for r in rows:

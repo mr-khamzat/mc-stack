@@ -616,21 +616,28 @@ body::before {
   60%  { box-shadow: 0 0 0 7px rgba(52,211,153,0); }
   100% { box-shadow: 0 0 0 0   rgba(52,211,153,0); }
 }
-.status-time { font-size:11px; color:rgba(130,130,185,0.55); font-variant-numeric:tabular-nums; font-weight:500; }
+.status-clock-line { font-size:12px; font-weight:600; color:rgba(190,190,238,0.7); font-variant-numeric:tabular-nums; letter-spacing:0.1px; white-space:nowrap; }
 
 /* Hero row */
 .status-hero-row { display:grid; grid-template-columns:120px 1fr; gap:9px; margin-bottom:9px; }
 .power-ring-card {
   display:flex; flex-direction:column; align-items:center; gap:5px;
-  background:linear-gradient(160deg,rgba(255,255,255,0.055) 0%,rgba(255,255,255,0.012) 100%);
-  border:0.5px solid rgba(255,255,255,0.08); border-top-color:rgba(255,255,255,0.14);
+  background:linear-gradient(170deg,rgba(255,255,255,0.09) 0%,rgba(255,255,255,0.015) 45%,rgba(255,255,255,0.004) 100%);
+  border:0.5px solid rgba(255,255,255,0.13); border-top-color:rgba(255,255,255,0.22);
   border-radius:var(--r-lg); padding:12px 8px 10px;
-  box-shadow:0 1px 1px rgba(255,255,255,0.04) inset,
-             0 4px 8px rgba(0,0,0,0.18),
-             0 12px 32px rgba(0,0,0,0.32),
-             0 24px 48px rgba(0,0,0,0.10);
-  backdrop-filter:blur(14px) saturate(1.15);
-  -webkit-backdrop-filter:blur(14px) saturate(1.15);
+  box-shadow:0 0.5px 0 rgba(255,255,255,0.18) inset,
+             0 -0.5px 0 rgba(0,0,0,0.15) inset,
+             0 4px 8px rgba(0,0,0,0.20),
+             0 14px 36px rgba(0,0,0,0.36),
+             0 28px 52px rgba(0,0,0,0.12);
+  backdrop-filter:blur(20px) saturate(1.4) brightness(1.04);
+  -webkit-backdrop-filter:blur(20px) saturate(1.4) brightness(1.04);
+  position:relative; overflow:hidden;
+}
+.power-ring-card::before {
+  content:''; position:absolute; top:0; left:0; right:0; height:38%;
+  background:linear-gradient(180deg,rgba(255,255,255,0.08) 0%,rgba(255,255,255,0) 100%);
+  border-radius:var(--r-lg) var(--r-lg) 0 0; pointer-events:none;
 }
 .power-ring-wrap { position:relative; width:82px; height:82px; }
 .power-ring-svg  { width:82px; height:82px; transform:rotate(-90deg); }
@@ -653,15 +660,22 @@ body::before {
 .status-right-col { display:flex; flex-direction:column; gap:8px; }
 .status-metric-card {
   flex:1; display:flex; align-items:center; gap:10px;
-  background:linear-gradient(160deg,rgba(255,255,255,0.05) 0%,rgba(255,255,255,0.01) 100%);
-  border:0.5px solid rgba(255,255,255,0.08); border-top-color:rgba(255,255,255,0.14);
+  background:linear-gradient(170deg,rgba(255,255,255,0.08) 0%,rgba(255,255,255,0.012) 45%,rgba(255,255,255,0.003) 100%);
+  border:0.5px solid rgba(255,255,255,0.12); border-top-color:rgba(255,255,255,0.20);
   border-radius:var(--r-md); padding:10px 12px;
-  box-shadow:0 1px 1px rgba(255,255,255,0.04) inset,
-             0 3px 6px rgba(0,0,0,0.15),
-             0 10px 28px rgba(0,0,0,0.28),
-             0 20px 40px rgba(0,0,0,0.08);
-  backdrop-filter:blur(14px) saturate(1.15);
-  -webkit-backdrop-filter:blur(14px) saturate(1.15);
+  box-shadow:0 0.5px 0 rgba(255,255,255,0.16) inset,
+             0 -0.5px 0 rgba(0,0,0,0.12) inset,
+             0 3px 7px rgba(0,0,0,0.18),
+             0 11px 30px rgba(0,0,0,0.32),
+             0 22px 42px rgba(0,0,0,0.10);
+  backdrop-filter:blur(20px) saturate(1.4) brightness(1.04);
+  -webkit-backdrop-filter:blur(20px) saturate(1.4) brightness(1.04);
+  position:relative; overflow:hidden;
+}
+.status-metric-card::before {
+  content:''; position:absolute; top:0; left:0; right:0; height:40%;
+  background:linear-gradient(180deg,rgba(255,255,255,0.07) 0%,rgba(255,255,255,0) 100%);
+  pointer-events:none;
 }
 .status-metric-icon { font-size:17px; flex-shrink:0; }
 .status-metric-val  { font-size:19px; font-weight:800; color:#eaeaf8; letter-spacing:-0.5px; line-height:1; font-variant-numeric:tabular-nums; transition:color 0.5s ease; }
@@ -673,17 +687,24 @@ body::before {
 /* Quick stats row */
 .status-quick-row { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:9px; }
 .quick-stat-card {
-  background:linear-gradient(160deg,rgba(255,255,255,0.045) 0%,rgba(255,255,255,0.008) 100%);
-  border:0.5px solid rgba(255,255,255,0.07); border-top-color:rgba(255,255,255,0.13);
+  background:linear-gradient(170deg,rgba(255,255,255,0.08) 0%,rgba(255,255,255,0.010) 50%,rgba(255,255,255,0.002) 100%);
+  border:0.5px solid rgba(255,255,255,0.11); border-top-color:rgba(255,255,255,0.19);
   border-radius:var(--r-md); padding:10px 6px 9px;
   text-align:center;
-  box-shadow:0 1px 1px rgba(255,255,255,0.04) inset,
-             0 3px 6px rgba(0,0,0,0.14),
-             0 9px 22px rgba(0,0,0,0.26),
-             0 18px 36px rgba(0,0,0,0.08);
-  backdrop-filter:blur(14px) saturate(1.1);
-  -webkit-backdrop-filter:blur(14px) saturate(1.1);
+  box-shadow:0 0.5px 0 rgba(255,255,255,0.15) inset,
+             0 -0.5px 0 rgba(0,0,0,0.10) inset,
+             0 3px 6px rgba(0,0,0,0.16),
+             0 10px 24px rgba(0,0,0,0.30),
+             0 20px 38px rgba(0,0,0,0.09);
+  backdrop-filter:blur(20px) saturate(1.4) brightness(1.04);
+  -webkit-backdrop-filter:blur(20px) saturate(1.4) brightness(1.04);
   display:flex; flex-direction:column; align-items:center; gap:2px;
+  position:relative; overflow:hidden;
+}
+.quick-stat-card::before {
+  content:''; position:absolute; top:0; left:0; right:0; height:42%;
+  background:linear-gradient(180deg,rgba(255,255,255,0.07) 0%,rgba(255,255,255,0) 100%);
+  pointer-events:none;
 }
 .quick-stat-top { font-size:15px; font-weight:800; color:#eaeaf8; font-variant-numeric:tabular-nums; line-height:1.2; }
 .quick-stat-sub { font-size:10px; color:rgba(130,130,185,0.65); font-weight:600; }
@@ -694,15 +715,22 @@ body::before {
 
 /* Cost block */
 .status-cost-block {
-  background:linear-gradient(160deg,rgba(255,255,255,0.045) 0%,rgba(255,255,255,0.008) 100%);
-  border:0.5px solid rgba(255,255,255,0.07); border-top-color:rgba(255,255,255,0.13);
+  background:linear-gradient(170deg,rgba(255,255,255,0.07) 0%,rgba(255,255,255,0.010) 50%,rgba(255,255,255,0.002) 100%);
+  border:0.5px solid rgba(255,255,255,0.11); border-top-color:rgba(255,255,255,0.19);
   border-radius:var(--r-lg); padding:12px 14px; margin-bottom:9px;
-  box-shadow:0 1px 1px rgba(255,255,255,0.04) inset,
-             0 4px 8px rgba(0,0,0,0.16),
-             0 12px 30px rgba(0,0,0,0.28),
-             0 22px 44px rgba(0,0,0,0.08);
-  backdrop-filter:blur(14px) saturate(1.1);
-  -webkit-backdrop-filter:blur(14px) saturate(1.1);
+  box-shadow:0 0.5px 0 rgba(255,255,255,0.14) inset,
+             0 -0.5px 0 rgba(0,0,0,0.10) inset,
+             0 4px 9px rgba(0,0,0,0.18),
+             0 14px 34px rgba(0,0,0,0.32),
+             0 26px 48px rgba(0,0,0,0.10);
+  backdrop-filter:blur(20px) saturate(1.4) brightness(1.04);
+  -webkit-backdrop-filter:blur(20px) saturate(1.4) brightness(1.04);
+  position:relative; overflow:hidden;
+}
+.status-cost-block::before {
+  content:''; position:absolute; top:0; left:0; right:0; height:36%;
+  background:linear-gradient(180deg,rgba(255,255,255,0.06) 0%,rgba(255,255,255,0) 100%);
+  border-radius:var(--r-lg) var(--r-lg) 0 0; pointer-events:none;
 }
 .cost-header { font-size:10px; color:rgba(130,130,185,0.6); font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:9px; }
 .cost-row    { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
@@ -712,15 +740,22 @@ body::before {
 
 /* Phases block */
 .phases-block {
-  background:linear-gradient(160deg,rgba(255,255,255,0.045) 0%,rgba(255,255,255,0.008) 100%);
-  border:0.5px solid rgba(255,255,255,0.07); border-top-color:rgba(255,255,255,0.13);
+  background:linear-gradient(170deg,rgba(255,255,255,0.07) 0%,rgba(255,255,255,0.010) 50%,rgba(255,255,255,0.002) 100%);
+  border:0.5px solid rgba(255,255,255,0.11); border-top-color:rgba(255,255,255,0.19);
   border-radius:var(--r-lg); padding:12px 14px; margin-bottom:9px;
-  box-shadow:0 1px 1px rgba(255,255,255,0.04) inset,
-             0 4px 8px rgba(0,0,0,0.16),
-             0 12px 30px rgba(0,0,0,0.28),
-             0 22px 44px rgba(0,0,0,0.08);
-  backdrop-filter:blur(14px) saturate(1.1);
-  -webkit-backdrop-filter:blur(14px) saturate(1.1);
+  box-shadow:0 0.5px 0 rgba(255,255,255,0.14) inset,
+             0 -0.5px 0 rgba(0,0,0,0.10) inset,
+             0 4px 9px rgba(0,0,0,0.18),
+             0 14px 34px rgba(0,0,0,0.32),
+             0 26px 48px rgba(0,0,0,0.10);
+  backdrop-filter:blur(20px) saturate(1.4) brightness(1.04);
+  -webkit-backdrop-filter:blur(20px) saturate(1.4) brightness(1.04);
+  position:relative; overflow:hidden;
+}
+.phases-block::before {
+  content:''; position:absolute; top:0; left:0; right:0; height:36%;
+  background:linear-gradient(180deg,rgba(255,255,255,0.06) 0%,rgba(255,255,255,0) 100%);
+  border-radius:var(--r-lg) var(--r-lg) 0 0; pointer-events:none;
 }
 .phases-header    { font-size:10px; color:rgba(130,130,185,0.6); font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; }
 .phase-row        { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
@@ -2209,7 +2244,7 @@ body.fab-open .fab-backdrop { display: block; }
         <span>📊 Статус</span>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
-        <span class="status-time" id="status-time"></span>
+        <span class="status-clock-line" id="status-clock-line">—</span>
         <span class="chevron">▴</span>
       </div>
     </div>
@@ -3014,12 +3049,16 @@ function animateCounter(el, toVal, decimals, suffix) {
 }
 
 // Live clock in status header
+const _DAYS_RU   = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
+const _MONTHS_RU = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
 function startStatusClock() {
   function tick() {
-    const el = document.getElementById('status-time');
+    const el = document.getElementById('status-clock-line');
     if (!el) return;
     const n = new Date();
-    el.textContent = n.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    const time = n.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    const date = _DAYS_RU[n.getDay()] + ' ' + n.getDate() + ' ' + _MONTHS_RU[n.getMonth()] + ' ' + n.getFullYear();
+    el.textContent = time + ' · ' + date;
   }
   tick();
   setInterval(tick, 1000);
