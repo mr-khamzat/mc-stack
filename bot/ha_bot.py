@@ -87,6 +87,18 @@ HA Home Bot — Telegram-бот + Mini App для управления умны�
 
 Версия: 3.5  |  Язык: Python 3.11+  |  Лицензия: MIT
 """
+# ════════════════════════════════════════════════════════════════════════════════
+# СТРУКТУРА ФАЙЛА:
+#   Строки   90-690:  Импорты, загрузка .env, SQLite БД, FSM состояния
+#   Строки  690-900:  Подключение к Home Assistant (REST API, WebSocket)
+#   Строки  900-1400: Вспомогательные функции (погода, семья, клавиатуры)
+#   Строки 1400-1710: Команды бота (/start, /status, /lights ...)
+#   Строки 1710-3230: Управление устройствами HA (свет, климат, сцены ...)
+#   Строки 3230-3790: Mini App API эндпоинты — статика и первые роуты
+#   Строки 3790-7630: Остальные API роуты (алерты, сцены, устройства, HA прокси)
+#   Строки 7630-8028: Запуск aiohttp веб-сервера, регистрация всех роутов
+#   Строки 8028-8074: Точка входа main() — инициализация и start_polling
+# ════════════════════════════════════════════════════════════════════════════════
 import asyncio
 import hashlib
 import hmac
@@ -143,6 +155,8 @@ WEBAPP_URL   = os.environ.get("WEBAPP_URL", "").rstrip("/") + "/"  # читае�
 WEBAPP_DIR   = Path(os.environ.get("WEBAPP_DIR", "/opt/ha-bot/webapp"))
 # Логины HA-пользователей с ролью admin в мини апс (из .env, через запятую)
 _HA_WEBAPP_ADMINS = {u.strip().lower() for u in os.environ.get("HA_WEBAPP_ADMINS", "").split(",") if u.strip()}
+# SSL domains to check (из .env через запятую, или дефолтный список)
+_SSL_CHECK_DOMAINS = [d.strip() for d in os.environ.get("SSL_CHECK_DOMAINS", "").split(",") if d.strip()]
 
 FAMILY_USERS_FILE  = Path("/opt/ha-bot/family_users.json")
 PHOTOS_DIR         = Path("/opt/ha-bot/photos")
@@ -154,7 +168,7 @@ VOICES_DIR.mkdir(exist_ok=True)
 VAPID_PRIVATE_PEM_FILE = Path("/opt/ha-bot/vapid_private.pem")
 VAPID_PUBLIC_FILE      = Path("/opt/ha-bot/vapid_public.txt")
 VAPID_PUBLIC_KEY: str  = VAPID_PUBLIC_FILE.read_text().strip() if VAPID_PUBLIC_FILE.exists() else ""
-VAPID_CLAIMS = {"sub": "https://hub.office.mooo.com"}
+VAPID_CLAIMS = {"sub": WEBAPP_URL.rstrip("/") or "https://your-domain.example.com"}
 
 # ── Пути к файлам данных ───────────────────────────────────────────────────────
 DB_FILE            = Path("/opt/ha-bot/ha_bot.db")      # SQLite (основное хранилище)
@@ -436,6 +450,17 @@ def _db_migrate():
         except Exception as e:
             log.error(f"DB migrate night_mode: {e}")
 
+# ── НАСТРОЙ ПОД СЕБЯ: Пороги алертов и entity_id сенсоров ────────────────────
+# Эти значения — дефолты при первом запуске. После запуска хранятся в SQLite.
+# Менять можно через Mini App (Настройки → Алерты) или через API /api/alerts.
+#
+#   power_threshold   — порог мощности в Вт (алерт если превышен)
+#   temp_min/max      — мин/макс температура в °C (алерт за границами)
+#   quiet_hours_*     — "тихие часы": алерты не отправляются (МСК, 23:00–07:00)
+#   entity_power      — entity_id сенсора мощности из HA
+#   entity_temp/hum   — entity_id сенсоров температуры и влажности из HA
+#   entity_inet       — entity_id binary_sensor состояния интернета из HA
+# entity_id найти: HA → Developer Tools → States → ищи нужный сенсор
 _ALERTS_DEFAULTS = {
     "power_threshold":   3000,
     "temp_min":          18,
@@ -1067,6 +1092,10 @@ async def get_family() -> dict:
                 return members
     except Exception as e:
         log.error(f"get_family: {e}")
+    # ── НАСТРОЙ ПОД СЕБЯ: entity_id членов семьи из Home Assistant ──────────────
+    # Это запасной список — используется только если HA недоступен и кеш пуст.
+    # В норме бот берёт person.* автоматически из HA Developer Tools → States.
+    # Найти entity_id: HA → Developer Tools → States → фильтр "person."
     # fallback to last good cache or hardcoded defaults
     return _family_cache or {
         "Хамзат": "person.khamzat",
@@ -1706,6 +1735,13 @@ async def status_refresh(cb: CallbackQuery):
     await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
 # ── 💡 Свет + 🛠 Управление устройствами ─────────────────────────────────────
+# ── НАСТРОЙ ПОД СЕБЯ: Соответствие entity_id → название в боте ───────────────
+# Это дефолтный список устройств — используется при первом запуске или если
+# устройство ещё не добавлено в SQLite БД (ha_bot.db таблица devices).
+# После первого запуска устройства управляются через бота (раздел Устройства).
+# entity_id можно найти: HA → Developer Tools → States
+# Ключ — entity_id из HA, значение — отображаемое имя, иконка, секция, порядок.
+# section: "lights" — свет/розетки, "cameras" — камеры Frigate
 # Defaults — первый запуск или если devices.json не содержит эти entity
 _DEVICES_DEFAULTS: dict = {
     "light.svet_krovat":           {"name": "Кровать",        "icon": "🛏️", "section": "lights",   "enabled": True,  "order": 1},
@@ -7125,12 +7161,10 @@ async def ssl_check_loop():
 
 async def check_ssl_certs():
     """Check SSL certificate expiry for all project domains."""
-    domains = [
-        'panelwin.mooo.com',
-        'subwin.mooo.com',
-        'hub.office.mooo.com',
-        'nodawin.mooo.com',
-    ]
+    # Домены берутся из SSL_CHECK_DOMAINS в .env (через запятую)
+    # Если переменная пуста — проверяется только домен из WEBAPP_URL
+    webapp_host = WEBAPP_URL.rstrip("/").replace("https://", "").replace("http://", "").split("/")[0]
+    domains = _SSL_CHECK_DOMAINS or ([webapp_host] if webapp_host else [])
     alerts = []
     ok = []
     loop = asyncio.get_event_loop()
@@ -7480,8 +7514,8 @@ def _timeline_fmt(action: str, detail: str, username: str) -> tuple[str, str]:
 
 
 # ── WebRTC TURN credentials ───────────────────────────────────────────────────
-_TURN_SECRET = "ha_turn_secret_2026_kh"
-_TURN_HOST   = "144.31.89.167"
+_TURN_SECRET = os.environ.get("TURN_SECRET", "change_me_turn_secret")
+_TURN_HOST   = os.environ.get("SERVER_IP", "")
 
 async def _web_turn_creds(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/api/turn-creds — short-lived TURN credentials (RFC 5389 HMAC)."""
@@ -8039,6 +8073,10 @@ async def main():
       7. _ha_state_watch_loop() — фон: WebSocket для SSE real-time
       8. dp.start_polling()  — основной цикл Telegram bot polling
     """
+    # ── Последовательность инициализации (важен порядок!) ────────────────────────
+    # 1. Сначала БД и устройства — они нужны всем фоновым задачам
+    # 2. Потом фоновые задачи (asyncio.create_task — не блокируют)
+    # 3. Последним — dp.start_polling() (блокирует, пока бот работает)
     log.info(f"HA Bot v{_BOT_VERSION} starting...")
     _db_init()             # создать таблицы SQLite + однократная миграция из JSON
     _dev_init()            # загрузить devices из DB → заполнить LIGHTS/LIGHTS_ICON

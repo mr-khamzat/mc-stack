@@ -3208,11 +3208,82 @@ body.fab-open .fab-backdrop { display: block; }
 <script>
 'use strict';
 
+// ════════════════════════════════════════════════════════════════════════════
+// СТРУКТУРА MINI APP (JavaScript)
+//
+// 1. КОНСТАНТЫ И НАСТРОЙКИ (строки ~3213-3240)
+//    - API_BASE — базовый URL для запросов к боту (/ha-app/api)
+//    - LIGHTS_MAP — соответствие entity_id → название кнопки для ламп
+//    - LIGHTS_DOMAIN — соответствие entity_id → домен (light / switch)
+//    - TV_ENTITY, FLOOR_ENTITY, VACUUM_ENTITY — ключевые entity_id
+//    - Токен авторизации читается из localStorage ('ha_bot_token')
+//
+// 2. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (строки ~3243-3402)
+//    - window.onerror — глобальный обработчик ошибок (не чёрный экран)
+//    - tryTgInit() — инициализация Telegram WebApp SDK
+//    - toggleSection() — сворачивание / разворачивание секций с анимацией
+//    - api() / apiPost() — базовые HTTP-запросы к боту с авторизацией
+//    - showToast() — всплывающее уведомление
+//    - flashEl() / animateCounter() — визуальные анимации
+//    - startStatusClock() — живые часы в шапке статуса
+//
+// 3. ПРИМЕНЕНИЕ ДАННЫХ (строки ~3404-3717)
+//    - applyStatus(d) — разбирает JSON /api/status и обновляет весь UI:
+//        d.power — мощность (кольцо, карточка)
+//        d.lights — кнопки ламп
+//        d.climate — температура, влажность, тёплый пол
+//        d.energy — потребление (кВт·ч)
+//        d.weather — погода, прогноз
+//        d.family — присутствие членов семьи
+//        d.namaz — время молитв
+//        d.server — сервер (CPU, RAM, диск)
+//
+// 4. ЗАГРУЗКА ДАННЫХ (строки ~3719-3737)
+//    - loadStatus() — запрашивает /api/status и вызывает applyStatus()
+//
+// 5. SSE — ОБНОВЛЕНИЯ В РЕАЛЬНОМ ВРЕМЕНИ (строки ~3739-3795)
+//    - startSSE() — подключение к /api/events (EventSource)
+//    - handleSSEUpdate() — обработка push-событий от HA (свет, мощность, чат, звонки)
+//
+// 6. АВТОРИЗАЦИЯ И ПРАВА (строки ~3797-4030)
+//    - ensureAuth() — проверка токена, форма входа
+//    - applyRolePermissions() — показ/скрытие секций по роли пользователя
+//
+// 7. ИНИЦИАЛИЗАЦИЯ (строки ~4031-4074)
+//    - init() — точка входа, вызывается при DOMContentLoaded
+//
+// 8. ДЕЙСТВИЯ (строки ~4076-4134)
+//    - callService() / callAction() — отправить команду в HA через /api/action
+//    - toggleLight() — переключить лампу (turn_on / turn_off)
+//    - climateAction() / climateSetpoint() — управление тёплым полом
+//
+// 9. СЦЕНЫ (строки ~5173-5554)
+//    - loadScenes() — загрузить список сцен
+//    - runScene() — запустить сцену через /api/scenes/:id/run
+//    - openSceneEditor() / saveSceneEdit() — редактор сцен
+//
+// 10. ЖИВОЙ ФОН И UI (строки ~9220-9356)
+//    - updateAmbientBg() — меняет фон по времени суток
+//    - initCompactBar() — компактная плашка вверху при прокрутке
+//    - updateCompactBar() — синхронизирует темп./мощность в плашке
+//
+// 11. PWA / SERVICE WORKER (строки ~9280-9318)
+//    - navigator.serviceWorker.register() — регистрация SW для PWA-режима
+//    - beforeinstallprompt — баннер "Установить приложение"
+// ════════════════════════════════════════════════════════════════════════════
+
 // ── Constants ──────────────────────────────────────────────────────────────
 let API_TOKEN = localStorage.getItem('ha_bot_token') || '';
-const API_BASE  = (window.location.origin || 'https://hub.office.mooo.com') + '/ha-app/api';
+const API_BASE  = window.location.origin + '/ha-app/api';
 let _statusIntervalId = null; // prevent duplicate intervals
 
+// ── НАСТРОЙ ПОД СЕБЯ: Лампы и выключатели ────────────────────────────────
+// Это соответствие entity_id из Home Assistant → название кнопки в Mini App.
+// Найти entity_id: HA → Developer Tools → States → фильтр "light." или "switch."
+// Ключ: entity_id из HA | Значение: как будет называться кнопка в интерфейсе
+//
+// Чтобы добавить новое устройство: добавь строку 'entity.id': 'Название',
+// Чтобы убрать устройство: удали его строку или не добавляй в устройства через /devices
 const LIGHTS_MAP = {
   'light.svet_krovat':            '🛏️ Кровать',
   'switch.vykliuchatel_kukhnia':  '🍳 Кухня',
@@ -3716,6 +3787,18 @@ function applyStatus(d) {
     'обновлено ' + now2.getHours().toString().padStart(2,'0') + ':' + now2.getMinutes().toString().padStart(2,'0');
 }
 
+// ── Главный запрос данных ─────────────────────────────────────────────────
+// loadStatus() запрашивает /api/status, который возвращает JSON со всеми
+// состояниями из Home Assistant. Результат передаётся в applyStatus(d).
+// Структура поля d (ответ /api/status):
+//   d.power     — текущая мощность в ваттах (число)
+//   d.lights    — состояние всех ламп {entity_id: {state, domain, attrs}}
+//   d.climate   — климат {temp, humidity, floor_temp, floor_state, setpoint}
+//   d.energy    — энергия {power_w, today_kwh, month_kwh, tariff}
+//   d.weather   — погода {temp, condition, forecast: [...]}
+//   d.family    — члены семьи {person.name: "home"/"not_home"}
+//   d.namaz     — намаз {fajr, dhuhr, asr, maghrib, isha, next_name, next_time}
+//   d.server    — сервер {cpu, ram, disk, uptime}
 // ── Load status ────────────────────────────────────────────────────────────
 async function loadStatus() {
   try {
@@ -3736,6 +3819,16 @@ async function loadStatus() {
   }
 }
 
+// ── SSE — обновления в реальном времени ──────────────────────────────────
+// Server-Sent Events: бот слушает WebSocket Home Assistant и транслирует
+// изменения устройств через /api/events в браузер.
+// При каждом изменении состояния в HA — страница обновляется без перезагрузки.
+// EventSource автоматически переподключается при обрыве (через 8 сек).
+// Типы событий в handleSSEUpdate(d):
+//   d.type === 'chat'                  — входящее сообщение чата
+//   d.type === 'call_signal'           — сигнализация WebRTC-звонка
+//   d.type === 'family_members_changed'— изменение состава семьи в HA
+//   d.entity_id (остальные)           — изменение состояния устройства HA
 // ── SSE real-time updates ──────────────────────────────────────────────────
 let _sseSource = null;
 let _sseReconnectTimer = null;
@@ -4028,6 +4121,19 @@ async function ensureAuth() {
   return false;
 }
 
+// ── Инициализация приложения ──────────────────────────────────────────────
+// init() — точка входа, вызывается при DOMContentLoaded (см. конец файла).
+// Порядок выполнения:
+//   1. Показать скелетоны (заглушки секций) пока данные не загружены
+//   2. Запустить живой фон updateAmbientBg() и таймер часов
+//   3. Применить сохранённые права из localStorage (до API — мгновенно)
+//   4. ensureAuth() — проверить токен, при необходимости показать форму входа
+//   5. loadStatus() — загрузить все данные из HA и отрисовать секции
+//   6. applySavedSections() — восстановить порядок и названия секций
+//   7. Загрузить права пользователя с сервера (applyRolePermissions)
+//   8. startSSE() — запустить SSE для live-обновлений
+//   9. Fallback-интервал опроса каждые 30 сек (если SSE недоступен)
+//  10. _checkPendingCall() — проверить пропущенный входящий звонок
 async function init() {
   const timer = setTimeout(hideLoading, 3000);
   showSkeletons();
@@ -4073,6 +4179,16 @@ async function init() {
   setTimeout(_checkPendingCall, 1200);
 }
 
+// ── Отправка команд в Home Assistant ─────────────────────────────────────
+// Все команды идут через бота на /api/action (POST).
+// Бот получает запрос и вызывает нужный сервис HA (light.turn_on,
+// switch.toggle, climate.set_temperature и т.д.).
+// Структура тела запроса: { service, entity_id, extra: {...} }
+//   service   — строка вида "domain.service" (например "light.turn_off")
+//   entity_id — entity_id устройства в HA
+//   extra     — дополнительные параметры (например { temperature: 38 })
+// callAction() показывает spinner на кнопке, затем вызывает loadStatus()
+// через 1 секунду чтобы подтянуть обновлённое состояние.
 // ── Actions ────────────────────────────────────────────────────────────────
 async function callService(service, entity_id) {
   try {
@@ -5537,6 +5653,10 @@ async function saveSceneEdit(id) {
   }
 }
 
+// ── Запуск сцены ──────────────────────────────────────────────────────────
+// runScene() вызывает POST /api/scenes/:id/run через бота.
+// Бот выполняет все действия сцены в HA и возвращает { scene, actions }.
+// Во время выполнения кнопка заблокирована (opacity 0.5, pointerEvents none).
 async function runScene(id, btn) {
   const origHTML = btn.innerHTML;
   btn.style.opacity = '0.5';
@@ -9237,6 +9357,11 @@ const _AMBIENT = [
   [20, 21, 'radial-gradient(ellipse 120% 60% at 40% -10%, rgba(24,10,45,0.95) 0%, rgba(9,6,22,1) 70%)'],
   [22, 23, 'radial-gradient(ellipse 120% 60% at 50% -10%, rgba(12,14,48,0.96) 0%, rgba(6,6,18,1) 70%)'],
 ];
+// ── Живой фон по времени суток ────────────────────────────────────────────
+// updateAmbientBg() выбирает CSS-градиент из массива _AMBIENT по текущему часу.
+// Вызывается при init() и каждый час (setInterval 3 600 000 мс).
+// Чтобы изменить цвет — редактируй массив _AMBIENT выше:
+//   формат: [час_от, час_до, 'css-background-значение']
 function updateAmbientBg() {
   const h = new Date().getHours();
   const slot = _AMBIENT.find(([a,b]) => h >= a && h <= b);
@@ -9277,6 +9402,15 @@ function _renderClimSpark() {
 }
 _renderClimSpark(); // render from localStorage on load
 
+// ── PWA / Service Worker ──────────────────────────────────────────────────
+// Регистрирует Service Worker (/ha-app/sw.js) для работы в PWA-режиме.
+// SW кешируется браузером и позволяет:
+//   - открывать приложение без интернета (оффлайн-страница)
+//   - получать Web Push уведомления (если поддерживается браузером)
+// После успешной регистрации вызывается _restorePushIfNeeded() —
+// восстанавливает подписку на push-уведомления, если она была активна.
+// beforeinstallprompt — перехватывает предложение браузера "Установить"
+// и откладывает его: баннер показывается через 5 сек (если не отклонён).
 // ── Service Worker (PWA) ─────────────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/ha-app/sw.js', { scope: '/ha-app/' })

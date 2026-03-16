@@ -1,0 +1,37 @@
+# Systemd unit для HA Home Bot
+# Установка:
+#   cp ha-bot.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now ha-bot
+
+[Unit]
+Description=HA Home Bot + Mini App (Telegram bot + web server)
+Documentation=https://github.com/mr-khamzat/mc-stack
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/ha-bot
+
+# Путь к Python (если используешь venv)
+ExecStart=/opt/ha-bot/venv/bin/python3 /opt/ha-bot/ha_bot.py
+
+# Если НЕ используешь venv (системный Python):
+# ExecStart=/usr/bin/python3 /opt/ha-bot/ha_bot.py
+
+# Автоматический рестарт при краше
+Restart=always
+RestartSec=10
+
+# Логи: journalctl -u ha-bot -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ha-bot
+
+# Переменные окружения (альтернатива — хранить в .env)
+# EnvironmentFile=/opt/ha-bot/.env
+
+[Install]
+WantedBy=multi-user.target

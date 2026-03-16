@@ -2,34 +2,28 @@
 .env
 *.env
 bot/.env
-rackviz/.env
-admin.json
+
+# Runtime данные (создаются при работе бота)
+ha_bot.db
+ha_bot.db-shm
+ha_bot.db-wal
 wifi_clients.json
 keenetic_probes.json
+devices.json
 alerts_sent.json
 mute.json
-snapshots.json
-uptime.json
-history.json
-scripts.json
-printers.json
+family_users.json
 
-# Данные и кеш
-rackviz/data/
-bot/public/netmap.html
-bot/__pycache__/
-bot/venv/
+# Ключи и сессии
+vapid_private.pem
+vapid_public.txt
+
+# Кеш и временные файлы
+__pycache__/
 **/__pycache__/
 *.pyc
-
-# Node / npm
-node_modules/
-frontend/node_modules/
-
-# Build artifacts
-frontend/dist/
-*.tar.gz
-*.zip
+*.pyo
+*.pyd
 
 # IDE
 .vscode/

@@ -1,15 +1,27 @@
+# Systemd unit для HA News Trigger Daemon
+# Опциональный демон — отправляет новости в Telegram при изменении сенсоров HA.
+# Нужен только если используешь ha_news_trigger_daemon.py
+#
+# Установка:
+#   cp ha-news-trigger.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now ha-news-trigger
+
 [Unit]
-Description=HA News Refresh Trigger Daemon
-After=network-online.target
+Description=HA News Trigger Daemon
+After=network-online.target ha-bot.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /opt/meshcentral-bot/ha_news_trigger_daemon.py
+User=root
+WorkingDirectory=/opt/ha-bot
+ExecStart=/opt/ha-bot/venv/bin/python3 /opt/ha-bot/ha_news_trigger_daemon.py
 Restart=always
-RestartSec=15
+RestartSec=30
 StandardOutput=journal
 StandardError=journal
+SyslogIdentifier=ha-news-trigger
 
 [Install]
 WantedBy=multi-user.target
