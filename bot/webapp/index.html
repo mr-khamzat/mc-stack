@@ -6137,14 +6137,23 @@ async function openFamilyMemberConfig(username, displayName) {
   if (cached) { famType = cached.family_type || 'other'; customPings = cached.family_pings || []; }
 
   function _renderPingRows(pings) {
-    if (!pings.length) return '<div style="color:#64748b;font-size:12px;text-align:center;padding:8px">Нет кастомных кнопок — используются кнопки по умолчанию</div>';
+    if (!pings.length) {
+      // Show preview of defaults for current role
+      const defs = (_FAMILY_DEFAULT_PINGS[famType] || _FAMILY_DEFAULT_PINGS.other).slice(0, 6);
+      const preview = defs.map(p => `<span style="display:inline-block;padding:4px 10px;border-radius:20px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.04);color:#64748b;font-size:11px;margin:2px">${escapeHtml(p.t)}</span>`).join('');
+      return `<div style="margin-bottom:10px">
+        <div style="font-size:11px;color:#64748b;margin-bottom:6px">Сейчас используются стандартные кнопки:</div>
+        <div style="margin-bottom:10px">${preview}</div>
+        <button onclick="_famLoadDefaults()" style="width:100%;padding:9px;border-radius:10px;border:1px dashed rgba(99,102,241,0.35);background:rgba(99,102,241,0.08);color:#a5b4fc;font-size:12px;cursor:pointer;font-family:inherit">✏️ Редактировать стандартные кнопки</button>
+      </div>`;
+    }
     return pings.map((p, i) => `
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
         <input value="${escapeAttr(p.t)}" maxlength="20" placeholder="Кнопка" oninput="_famPingEdit(${i},'t',this.value)"
           style="width:90px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#e2e8f0;font-size:12px;padding:6px 8px;font-family:inherit;flex-shrink:0">
         <input value="${escapeAttr(p.msg)}" maxlength="80" placeholder="Сообщение" oninput="_famPingEdit(${i},'msg',this.value)"
           style="flex:1;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#e2e8f0;font-size:12px;padding:6px 8px;font-family:inherit">
-        <button onclick="_famPingDel(${i})" style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.25);border-radius:8px;color:#f87171;font-size:13px;padding:5px 8px;cursor:pointer">✕</button>
+        <button onclick="_famPingDel(${i})" style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.25);border-radius:8px;color:#f87171;font-size:13px;padding:5px 8px;cursor:pointer;flex-shrink:0">✕</button>
       </div>`).join('');
   }
 
@@ -6175,11 +6184,11 @@ async function openFamilyMemberConfig(username, displayName) {
       </div>
 
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-        <div style="font-size:13px;font-weight:600;color:#94a3b8">Кастомные кнопки <span style="color:#64748b;font-weight:400">(необязательно)</span></div>
-        ${customPings.length < 8 ? `<button onclick="_famPingAdd()" style="background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);border-radius:8px;color:#a5b4fc;font-size:12px;padding:5px 10px;cursor:pointer">+ Добавить</button>` : ''}
+        <div style="font-size:13px;font-weight:600;color:#94a3b8">Быстрые кнопки <span style="color:#64748b;font-weight:400">(необязательно)</span></div>
+        <button onclick="_famPingAdd()" style="background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);border-radius:8px;color:#a5b4fc;font-size:12px;padding:5px 10px;cursor:pointer">+ Добавить</button>
       </div>
       <div id="fam-pings-list">${_renderPingRows(customPings)}</div>
-      ${customPings.length > 0 ? `<button onclick="_famPingsClear()" style="margin-top:6px;background:none;border:none;color:#f87171;font-size:12px;cursor:pointer;padding:4px 0">Сбросить (вернуть кнопки по умолчанию)</button>` : ''}
+      <button onclick="_famPingsClear()" style="margin-top:6px;background:none;border:none;color:#f87171;font-size:12px;cursor:pointer;padding:4px 0;${customPings.length === 0 ? 'display:none' : ''}">Сбросить (вернуть кнопки по умолчанию)</button>
 
       <div style="margin-top:20px;display:flex;gap:10px">
         <button onclick="_famConfigSave()" style="flex:1;padding:13px;border-radius:12px;border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit">Сохранить</button>
@@ -6188,6 +6197,10 @@ async function openFamilyMemberConfig(username, displayName) {
   }
   sheet.innerHTML = _html();
 
+  function _refreshPingsList() {
+    var el = document.getElementById('fam-pings-list');
+    if (el) el.innerHTML = _renderPingRows(customPings);
+  }
   window._famTypeSet = function(t) {
     famType = t;
     ['parent','child','other'].forEach(v => {
@@ -6197,23 +6210,33 @@ async function openFamilyMemberConfig(username, displayName) {
       b.style.background  = v===t ? 'rgba(99,102,241,0.18)' : 'rgba(255,255,255,0.04)';
       b.style.color       = v===t ? '#c4b5fd' : '#94a3b8';
     });
+    // Refresh ping preview if showing defaults (so preview matches new role)
+    if (customPings.length === 0) _refreshPingsList();
+  };
+  window._famLoadDefaults = function() {
+    customPings = (_FAMILY_DEFAULT_PINGS[famType] || _FAMILY_DEFAULT_PINGS.other).map(p => ({t: p.t, msg: p.msg}));
+    _refreshPingsList();
   };
   window._famPingEdit = function(i, field, val) { customPings[i] = {...customPings[i], [field]: val}; };
+  function _updateClearBtn() {
+    var cb = document.querySelector('#fam-config-sheet button[onclick="_famPingsClear()"]');
+    if (cb) cb.style.display = customPings.length === 0 ? 'none' : '';
+  }
   window._famPingDel  = function(i) {
     customPings.splice(i, 1);
-    sheet.innerHTML = _html();
-    window._famTypeSet(famType);
+    _refreshPingsList();
+    _updateClearBtn();
   };
   window._famPingAdd  = function() {
     if (customPings.length >= 8) return;
     customPings.push({t:'', msg:''});
-    sheet.innerHTML = _html();
-    window._famTypeSet(famType);
+    _refreshPingsList();
+    _updateClearBtn();
   };
   window._famPingsClear = function() {
     customPings = [];
-    sheet.innerHTML = _html();
-    window._famTypeSet(famType);
+    _refreshPingsList();
+    _updateClearBtn();
   };
   window._famConfigSave = async function() {
     try {
