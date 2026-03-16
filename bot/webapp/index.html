@@ -951,12 +951,6 @@ body::before {
 }
 .chat-voice-btn.recording { background:rgba(239,68,68,0.25); border-color:rgba(239,68,68,0.5); color:#fca5a5; animation:callPulse 1s infinite; }
 /* Timeline */
-.timeline-entry { display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.05); }
-.timeline-entry:last-child { border-bottom:none; }
-.timeline-entry-icon { font-size:18px; flex-shrink:0; width:26px; text-align:center; }
-.timeline-entry-body { flex:1; min-width:0; }
-.timeline-entry-title { font-size:13px; color:#e2e8f0; }
-.timeline-entry-time { font-size:11px; color:#475569; margin-top:2px; }
 /* Call history */
 .call-hist-item { display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); }
 .call-hist-icon { font-size:20px; flex-shrink:0; }
@@ -2400,21 +2394,6 @@ body.fab-open .fab-backdrop { display: block; }
         <!-- Tab: Calls -->
         <div id="ftab-calls" class="family-tab-pane" style="display:none">
           <div id="call-history-list" style="display:flex;flex-direction:column;gap:6px;padding:4px 0"></div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- TIMELINE -->
-  <div class="section" id="sec-timeline">
-    <div class="section-header" onclick="toggleSection('sec-timeline-body');if(!_timelineLoaded)loadTimeline()">
-      <span>⏱ Лента активности</span>
-      <span class="chevron">▾</span>
-    </div>
-    <div class="section-body" id="sec-timeline-body" style="display:none">
-      <div class="section-content">
-        <div id="timeline-content">
-          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Откройте для загрузки</div>
         </div>
       </div>
     </div>
@@ -4123,61 +4102,6 @@ async function loadCallHistory() {
       </div>`;
     }).join('');
   } catch(e) { el.innerHTML = '<div style="color:#ef4444;text-align:center;padding:12px">Ошибка</div>'; }
-}
-
-// ── Activity Timeline ─────────────────────────────────────────────────────────
-let _timelineLoaded = false, _timelineItems = [], _timelinePage = 0;
-const _TIMELINE_PAGE = 3;
-
-async function loadTimeline() {
-  _timelineLoaded = true;
-  _timelinePage = 0;
-  const el = document.getElementById('timeline-content');
-  if (!el) return;
-  el.innerHTML = '<div style="color:#60608a;text-align:center;padding:12px">Загрузка...</div>';
-  try {
-    _timelineItems = await api('/timeline');
-    _renderTimelinePage(el);
-  } catch(e) { el.innerHTML = '<div style="color:#ef4444;text-align:center;padding:12px">Ошибка</div>'; }
-}
-
-function _renderTimelinePage(el) {
-  const items = _timelineItems;
-  if (!items.length) {
-    el.innerHTML = '<div style="color:#60608a;text-align:center;padding:16px">Нет событий</div>';
-    return;
-  }
-  const total = items.length;
-  const start = _timelinePage * _TIMELINE_PAGE;
-  const slice = items.slice(start, start + _TIMELINE_PAGE);
-  const hasPrev = start > 0;
-  const hasNext = start + _TIMELINE_PAGE < total;
-
-  const rows = slice.map(e => {
-    const dt = e.ts ? e.ts.slice(5,16) : '';
-    return `<div class="timeline-entry">
-      <div class="timeline-entry-icon">${escapeHtml(e.icon)}</div>
-      <div class="timeline-entry-body">
-        <div class="timeline-entry-title">${escapeHtml(e.title)}</div>
-        <div class="timeline-entry-time">${dt}</div>
-      </div>
-    </div>`;
-  }).join('');
-
-  const nav = `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;margin-top:4px">
-    <button onclick="_timelinePrev()" style="background:none;border:none;color:${hasPrev?'#8b8bc0':'#3a3a5a'};cursor:${hasPrev?'pointer':'default'};font-size:12px;padding:4px 8px">◀ Назад</button>
-    <span style="font-size:11px;color:#50508a">${start+1}–${Math.min(start+_TIMELINE_PAGE,total)} из ${total}</span>
-    <button onclick="_timelineNext()" style="background:none;border:none;color:${hasNext?'#8b8bc0':'#3a3a5a'};cursor:${hasNext?'pointer':'default'};font-size:12px;padding:4px 8px">Далее ▶</button>
-  </div>`;
-
-  el.innerHTML = rows + (total > _TIMELINE_PAGE ? nav : '');
-}
-
-function _timelinePrev() {
-  if (_timelinePage > 0) { _timelinePage--; _renderTimelinePage(document.getElementById('timeline-content')); }
-}
-function _timelineNext() {
-  if ((_timelinePage + 1) * _TIMELINE_PAGE < _timelineItems.length) { _timelinePage++; _renderTimelinePage(document.getElementById('timeline-content')); }
 }
 
 // ── Photo Album ─────────────────────────────────────────────────────────────
