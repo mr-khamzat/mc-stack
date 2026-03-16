@@ -6131,6 +6131,16 @@ async function openFamilyMemberConfig(username, displayName) {
   const existing = document.getElementById('fam-config-sheet');
   if (existing) { existing.remove(); document.getElementById('fam-config-bd')?.remove(); return; }
 
+  // Убеждаемся, что кэш загружен (может быть null при быстром клике до загрузки)
+  if (!window._shopFamilyCache || !window._shopFamilyCache.length) {
+    await _shopGetFamily();
+  }
+  // Ищем правильный DB-username по display_name или username
+  const cacheEntry = (window._shopFamilyCache || []).find(u =>
+    u.username === username || u.display_name === displayName
+  );
+  if (cacheEntry) username = cacheEntry.username;
+
   // Получаем текущие данные
   let famType = 'other', customPings = [];
   const cached = (window._shopFamilyCache || []).find(u => u.username === username);
