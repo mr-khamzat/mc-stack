@@ -4370,6 +4370,100 @@ async def _web_push_status(request: aiohttp_web.Request) -> aiohttp_web.Response
         content_type="application/json", headers=_CORS_HEADERS)
 
 
+_VERSION_FILE = os.path.join(os.path.dirname(__file__), "..", "bot", "webapp", "version.txt")
+_GH_REPO      = "mr-khamzat/mc-stack"
+
+def _read_local_sha() -> str:
+    try:
+        with open(_VERSION_FILE) as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+async def _web_check_update(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/check-update — проверить наличие обновлений (admin only)."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    if request.headers.get("X-HA-User-Role", "") != "admin":
+        return aiohttp_web.Response(status=403, text="Admin only", headers=_CORS_HEADERS)
+    local_sha = _read_local_sha()
+    try:
+        url = f"https://api.github.com/repos/{_GH_REPO}/commits?per_page=10&sha=main"
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, timeout=aiohttp.ClientTimeout(total=10),
+                             headers={"User-Agent": "ha-bot-update-checker"}) as r:
+                if r.status != 200:
+                    raise Exception(f"GitHub API {r.status}")
+                commits = await r.json()
+        latest_sha  = commits[0]["sha"] if commits else local_sha
+        has_update  = bool(local_sha) and latest_sha != local_sha
+        changelog   = []
+        for c in commits:
+            sha = c["sha"]
+            msg = c["commit"]["message"].split("\n")[0][:120]
+            date = c["commit"]["committer"]["date"][:10]
+            changelog.append({"sha": sha[:7], "msg": msg, "date": date})
+            if sha == local_sha:
+                break
+        return aiohttp_web.Response(
+            text=json.dumps({
+                "has_update": has_update,
+                "local_sha":  local_sha[:7] if local_sha else "?",
+                "latest_sha": latest_sha[:7],
+                "changelog":  changelog if has_update else [],
+            }, ensure_ascii=False),
+            content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(
+            text=json.dumps({"has_update": False, "error": str(e)}),
+            content_type="application/json", headers=_CORS_HEADERS)
+
+
+async def _web_do_update(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/do-update — скачать и применить обновления (admin only)."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    if request.headers.get("X-HA-User-Role", "") != "admin":
+        return aiohttp_web.Response(status=403, text="Admin only", headers=_CORS_HEADERS)
+    import subprocess, shutil
+    git_dir    = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    bot_dir    = os.path.dirname(os.path.abspath(__file__))
+    webapp_src = os.path.join(git_dir, "bot", "webapp")
+    webapp_dst = os.path.join(bot_dir, "webapp")
+    try:
+        res = subprocess.run(
+            ["git", "-C", git_dir, "pull", "--ff-only"],
+            capture_output=True, text=True, timeout=60
+        )
+        if res.returncode != 0:
+            raise Exception(f"git pull failed: {res.stderr.strip()[:200]}")
+        git_output = res.stdout.strip()
+        copied = []
+        for fname in ("index.html", "sw.js"):
+            src = os.path.join(webapp_src, fname)
+            dst = os.path.join(webapp_dst, fname)
+            if os.path.exists(src):
+                shutil.copy2(src, dst)
+                copied.append(fname)
+        new_sha_res = subprocess.run(
+            ["git", "-C", git_dir, "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=10
+        )
+        new_sha = new_sha_res.stdout.strip()
+        version_file = os.path.join(webapp_dst, "version.txt")
+        with open(version_file, "w") as vf:
+            vf.write(new_sha)
+        log.info(f"do-update: {git_output}, copied: {copied}, sha: {new_sha[:7]}")
+        return aiohttp_web.Response(
+            text=json.dumps({"ok": True, "git": git_output, "copied": copied, "sha": new_sha[:7]}, ensure_ascii=False),
+            content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        log.error(f"do-update error: {e}")
+        return aiohttp_web.Response(
+            text=json.dumps({"ok": False, "error": str(e)}),
+            content_type="application/json", headers=_CORS_HEADERS)
+
+
 async def _web_shopping_items(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/api/shopping-items — fetch todo items from HA.
        POST /ha-app/api/shopping-items — add new item to HA todo list.
@@ -7864,6 +7958,10 @@ async def _start_web():
     # Web Push
     app.router.add_get("/ha-app/api/vapid-key",           _web_vapid_key)
     app.router.add_get("/ha-app/api/push-status",         _web_push_status)
+    app.router.add_get("/ha-app/api/check-update",        _web_check_update)
+    app.router.add_post("/ha-app/api/do-update",          _web_do_update)
+    app.router.add_route("OPTIONS", "/ha-app/api/check-update", _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/do-update",    _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/push-status", _web_options)
     app.router.add_post("/ha-app/api/push-subscribe",     _web_push_subscribe)
     app.router.add_delete("/ha-app/api/push-subscribe",   _web_push_unsubscribe)
