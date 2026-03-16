@@ -6991,6 +6991,183 @@ async def db_backup_loop():
             await asyncio.sleep(3600)  # retry in 1h on error
 
 
+# ── Утренний брифинг 08:00 МСК ────────────────────────────────────────────────
+async def morning_briefing_loop():
+    """Send morning briefing at 08:00 MSK daily."""
+    while True:
+        try:
+            now = datetime.now(MSK)
+            target = now.replace(hour=8, minute=0, second=0, microsecond=0)
+            if target <= now:
+                target += timedelta(days=1)
+            await asyncio.sleep((target - now).total_seconds())
+            await send_morning_briefing()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            log.error(f'morning_briefing_loop error: {e}')
+            await asyncio.sleep(3600)
+
+
+async def send_morning_briefing():
+    """Compose and send morning briefing to admin at 08:00 MSK."""
+    try:
+        now = datetime.now(MSK)
+        day_names = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье']
+        month_names = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+                       'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
+        date_str = f"{day_names[now.weekday()]}, {now.day} {month_names[now.month - 1]}"
+
+        lines = [f'☀️ <b>Доброе утро!</b>\n📅 {date_str}\n']
+
+        # Погода (Open-Meteo кеш)
+        try:
+            weather_data = await get_weather()
+            if weather_data:
+                c = weather_data.get('current', {})
+                daily = weather_data.get('daily', {})
+                code = c.get('weather_code', 0)
+                cond = WMO_CODES.get(code, '')
+                icon = cond.split()[0] if cond else '🌤️'
+                cond_text = ' '.join(cond.split()[1:]) if len(cond.split()) > 1 else cond
+                temp = c.get('temperature_2m', '?')
+                feels = c.get('apparent_temperature', temp)
+                t_max_list = daily.get('temperature_2m_max', [])
+                t_min_list = daily.get('temperature_2m_min', [])
+                range_str = ''
+                if t_max_list and t_min_list:
+                    range_str = f', днём {t_min_list[0]:.0f}…{t_max_list[0]:.0f}°C'
+                lines.append(f'🌤 <b>Погода:</b> {icon} <b>{temp}°C</b> (ощущается {feels:.0f}°C){range_str}\n   {cond_text}\n')
+        except Exception as e:
+            log.debug(f'briefing weather: {e}')
+
+        # Потребление энергии
+        try:
+            acfg = _alerts_load()
+            power_entity = acfg.get('entity_power', '')
+            if power_entity:
+                state = await ha_state(power_entity)
+                if state not in ('?', 'unavailable', 'unknown'):
+                    lines.append(f'⚡️ <b>Потребление сейчас:</b> {round(float(state), 1)} Вт\n')
+        except Exception as e:
+            log.debug(f'briefing power: {e}')
+
+        # Присутствие членов семьи
+        try:
+            family = await get_family()
+            if family:
+                person_results = await asyncio.gather(*[ha_get(f'states/{eid}') for eid in family.values()])
+                home_list, away_list = [], []
+                for name, d in zip(family.keys(), person_results):
+                    if d and d.get('state') == 'home':
+                        home_list.append(name)
+                    elif d:
+                        away_list.append(name)
+                parts = []
+                if home_list:
+                    parts.append('дома: ' + ', '.join(home_list))
+                if away_list:
+                    parts.append('нет дома: ' + ', '.join(away_list))
+                if parts:
+                    lines.append('👨\u200d👩\u200d👦 <b>Семья:</b> ' + '; '.join(parts) + '\n')
+        except Exception as e:
+            log.debug(f'briefing persons: {e}')
+
+        # Следующий намаз
+        try:
+            timings = await get_prayer_times()
+            if timings:
+                next_name = None
+                next_time = None
+                for p in PRAYERS_ORDER:
+                    t_str = timings.get(p, '')
+                    if not t_str:
+                        continue
+                    try:
+                        p_dt = datetime.strptime(t_str, '%H:%M').replace(
+                            year=now.year, month=now.month, day=now.day, tzinfo=MSK)
+                        if p_dt > now:
+                            next_name = PRAYERS_RU[p][1]
+                            next_time = t_str
+                            break
+                    except Exception:
+                        continue
+                if next_name and next_time:
+                    lines.append(f'🕌 <b>Следующий намаз:</b> {next_name} в {next_time}\n')
+        except Exception as e:
+            log.debug(f'briefing namaz: {e}')
+
+        lines.append('🏠 Хорошего дня!')
+
+        await bot.send_message(ADMIN_ID, '\n'.join(lines), parse_mode='HTML')
+        _activity_log('morning_briefing_08', datetime.now(MSK).strftime('%Y-%m-%d'))
+    except Exception as e:
+        log.error(f'send_morning_briefing error: {e}')
+
+
+# ── SSL cert check 10:00 МСК ──────────────────────────────────────────────────
+async def ssl_check_loop():
+    """Check SSL cert expiry daily at 10:00 MSK, alert if < 35 days."""
+    while True:
+        try:
+            now = datetime.now(MSK)
+            target = now.replace(hour=10, minute=0, second=0, microsecond=0)
+            if target <= now:
+                target += timedelta(days=1)
+            await asyncio.sleep((target - now).total_seconds())
+            await check_ssl_certs()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            log.error(f'ssl_check_loop error: {e}')
+            await asyncio.sleep(3600)
+
+
+async def check_ssl_certs():
+    """Check SSL certificate expiry for all project domains."""
+    domains = [
+        'panelwin.mooo.com',
+        'subwin.mooo.com',
+        'hub.office.mooo.com',
+        'nodawin.mooo.com',
+    ]
+    alerts = []
+    ok = []
+    loop = asyncio.get_event_loop()
+
+    def _check(domain):
+        ctx = _ssl.create_default_context()
+        try:
+            with socket.create_connection((domain, 443), timeout=8) as sock:
+                with ctx.wrap_socket(sock, server_hostname=domain) as ssock:
+                    cert = ssock.getpeercert()
+                    expires = datetime.strptime(cert['notAfter'], '%b %d %H:%M:%S %Y %Z')
+                    expires = expires.replace(tzinfo=timezone.utc)
+                    days = (expires - datetime.now(timezone.utc)).days
+                    return domain, days, None
+        except Exception as e:
+            return domain, None, str(e)
+
+    for domain in domains:
+        try:
+            d, days, err = await loop.run_in_executor(None, _check, domain)
+            if err:
+                alerts.append(f'❌ <code>{d}</code>: {err}')
+            elif days <= 35:
+                alerts.append(f'⚠️ <code>{d}</code>: осталось {days} дней!')
+            else:
+                ok.append(f'✅ <code>{d}</code>: {days} дней')
+        except Exception as e:
+            alerts.append(f'❌ <code>{domain}</code>: {e}')
+
+    if alerts:
+        msg = '🔐 <b>SSL сертификаты — требуют внимания!</b>\n\n' + '\n'.join(alerts)
+        if ok:
+            msg += '\n\n<b>OK:</b>\n' + '\n'.join(ok)
+        await bot.send_message(ADMIN_ID, msg, parse_mode='HTML')
+    # Если все OK — тихо, без сообщения
+
+
 # ── Photo Album ───────────────────────────────────────────────────────────────
 async def _web_photos_upload(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """POST /ha-app/api/photos/upload — multipart file upload."""
@@ -7621,6 +7798,15 @@ async def _start_web():
     await site.start()
     log.info("WebApp server started on 127.0.0.1:8766")
 
+# ── /sslcheck — ручная проверка SSL сертификатов ──────────────────────────────
+@dp.message(Command("sslcheck"))
+async def cmd_ssl_check(msg: Message):
+    if msg.from_user.id != ADMIN_ID:
+        return
+    await msg.answer('🔍 Проверяю SSL сертификаты...')
+    await check_ssl_certs()
+
+
 # ── /backup и /restore ────────────────────────────────────────────────────────
 @dp.message(Command("backup"))
 async def cmd_backup(msg: Message):
@@ -7864,6 +8050,8 @@ async def main():
     asyncio.create_task(_reminders_check_loop()) # проверка напоминаний каждые 60с
     asyncio.create_task(_chat_cleanup_loop())    # авто-удаление чата старше 3 дней
     asyncio.create_task(db_backup_loop())        # ежедневный бэкап БД в 03:00 МСК
+    asyncio.create_task(morning_briefing_loop()) # утренний брифинг в 08:00 МСК
+    asyncio.create_task(ssl_check_loop())        # проверка SSL сертификатов в 10:00 МСК
     _activity_log("bot_start", f"v{_BOT_VERSION}")
     await bot.send_message(
         ADMIN_ID,
