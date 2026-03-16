@@ -5972,20 +5972,70 @@ def _user_perms_save(username: str, perms: dict):
         c.commit()
 
 async def _web_family_users(request: aiohttp_web.Request) -> aiohttp_web.Response:
-    """GET /ha-app/api/family-users — список пользователей для назначения покупок (любой авторизованный)."""
+    """GET /ha-app/api/family-users — список пользователей с family_type и кастомными пингами."""
     if not _check_token(request):
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
     try:
         c = _db()
         rows = c.execute(
-            "SELECT username, display_name FROM webapp_users ORDER BY display_name"
+            "SELECT username, display_name, permissions FROM webapp_users ORDER BY display_name"
         ).fetchall()
-        result = [{"username": r[0], "display_name": r[1] or r[0]} for r in rows]
+        result = []
+        for r in rows:
+            perms = json.loads(r[2]) if r[2] else {}
+            result.append({
+                "username":     r[0],
+                "display_name": r[1] or r[0],
+                "family_type":  perms.get("family_type", "other"),
+                "family_pings": perms.get("family_pings", []),
+            })
     except Exception:
         result = []
     return aiohttp_web.Response(
         text=json.dumps(result, ensure_ascii=False),
         content_type="application/json", headers=_CORS_HEADERS)
+
+
+async def _web_family_type(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """PATCH /ha-app/api/family-type — установить family_type и family_pings для пользователя (admin only).
+    Body: {"username": "sulim", "family_type": "child", "family_pings": [...]}
+    """
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    if request.headers.get("X-HA-User-Role", "") != "admin":
+        return aiohttp_web.Response(status=403, text="Admin only", headers=_CORS_HEADERS)
+    try:
+        body      = await request.json()
+        username  = body.get("username", "")
+        fam_type  = body.get("family_type", "other")   # parent / child / other
+        fam_pings = body.get("family_pings", None)      # list of {t,msg} or null (use defaults)
+        if not username:
+            return aiohttp_web.Response(status=400, text='{"error":"no username"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        if fam_type not in ("parent", "child", "other"):
+            fam_type = "other"
+        with _DB_LOCK:
+            c = _db()
+            row = c.execute("SELECT permissions FROM webapp_users WHERE username=?", (username,)).fetchone()
+            if not row:
+                return aiohttp_web.Response(status=404, text='{"error":"user not found"}',
+                                            content_type="application/json", headers=_CORS_HEADERS)
+            perms = json.loads(row[0]) if row[0] else {}
+            perms["family_type"] = fam_type
+            if fam_pings is not None:
+                # Валидируем: каждый элемент должен быть {t: str, msg: str}, max 8 кнопок
+                validated = []
+                for p in (fam_pings or [])[:8]:
+                    if isinstance(p, dict) and p.get("t") and p.get("msg"):
+                        validated.append({"t": str(p["t"])[:20], "msg": str(p["msg"])[:80]})
+                perms["family_pings"] = validated
+            c.execute("UPDATE webapp_users SET permissions=? WHERE username=?",
+                      (json.dumps(perms, ensure_ascii=False), username))
+            c.commit()
+        log.info(f"family_type: {username} → {fam_type}, pings={len(perms.get('family_pings',[]))}")
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
 
 async def _web_webapp_users(request: aiohttp_web.Request) -> aiohttp_web.Response:
@@ -7779,6 +7829,8 @@ async def _start_web():
     app.router.add_get("/ha-app/api/user-avatar/{username}", _web_user_avatar)
     app.router.add_get("/ha-app/api/family-users",  _web_family_users)
     app.router.add_route("OPTIONS", "/ha-app/api/family-users", _web_options)
+    app.router.add_route("PATCH",   "/ha-app/api/family-type",  _web_family_type)
+    app.router.add_route("OPTIONS", "/ha-app/api/family-type",  _web_options)
     app.router.add_get("/ha-app/api/family-extra",     _web_family_extra)
     app.router.add_post("/ha-app/api/family-status",   _web_family_status_post)
     app.router.add_post("/ha-app/api/family-reaction",  _web_family_reaction)
