@@ -1097,12 +1097,7 @@ async def get_family() -> dict:
     # В норме бот берёт person.* автоматически из HA Developer Tools → States.
     # Найти entity_id: HA → Developer Tools → States → фильтр "person."
     # fallback to last good cache or hardcoded defaults
-    return _family_cache or {
-        "Хамзат": "person.khamzat",
-        "Айза":   "person.aiza",
-        "Сулим":  "person.sulim",
-        "Камила": "person.kamila",
-    }
+    return _family_cache or {}
 
 # ── Погода Open-Meteo ─────────────────────────────────────────────────────────
 WMO_CODES = {
@@ -3322,7 +3317,7 @@ async def _check_alerts():
       - frigate: любое событие детекции Frigate
     """
     family = await get_family()  # {name: entity_id}
-    person_eids = list(family.values()) or ["person.khamzat"]
+    person_eids = list(family.values())
     acfg = _alerts_load()
     gather_items = [
         ha_get(f"states/{acfg['entity_power']}"),
@@ -6104,12 +6099,7 @@ async def _web_presence_stats(request: aiohttp_web.Request) -> aiohttp_web.Respo
     """GET /ha-app/api/presence-stats — время дома за 7 дней."""
     if not _check_token(request):
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
-    family = {
-        "Хамзат": "person.khamzat",
-        "Айза":   "person.aiza",
-        "Сулим":  "person.sulim",
-        "Камила": "person.kamila",
-    }
+    family = await get_family()
     now   = datetime.now(timezone.utc)
     start = (now - timedelta(days=7)).isoformat()
     eids  = ",".join(family.values())
@@ -6616,7 +6606,7 @@ async def _web_night_mode_post(request: aiohttp_web.Request) -> aiohttp_web.Resp
             trigger = [{"platform": "time", "at": nm_time}]
             conditions = []
             if cfg.get("check_presence"):
-                conditions = [{"condition": "state", "entity_id": "person.khamzat", "state": "home"}]
+                conditions = []
             ha_actions = []
             for a in scene.get("actions", []):
                 eid = a.get("entity_id", "")

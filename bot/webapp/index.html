@@ -5095,7 +5095,8 @@ function renderPresenceStats(stats) {
     el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Нет данных</div>';
     return;
   }
-  const _PERSON_ICONS = {'Хамзат':'👨','Айза':'👩','Сулим':'👦','Камила':'👧'};
+  // Иконки для членов семьи — заполняются динамически из данных HA
+  const _PERSON_ICONS = {};
   el.innerHTML = stats.map(p => {
     const icon = _PERSON_ICONS[p.name] || '👤';
     const pct  = Math.min(p.home_pct, 100);
@@ -5135,8 +5136,11 @@ let _facesLoaded = false;
 let _facesAllEntries = [];
 let _facesPage = 0; // страница: 0 = новейшие
 const _FACES_PER_PAGE = 4;
-const _CAM_NAMES    = {'cam_a6810678':'Подъезд'};
-const _PERSON_ICONS = {'Хамзат':'👨','Айза':'👩','Сулим':'👦','Камила':'👧'};
+// Псевдонимы камер — ключ: entity_id камеры в HA, значение: отображаемое имя
+// Пример: {'cam_abc123': 'Подъезд', 'cam_def456': 'Двор'}
+const _CAM_NAMES    = {};
+// Иконки для членов семьи — заполняются динамически из данных HA
+const _PERSON_ICONS = {};
 
 function openPhotoLightbox(url) {
   let lb = document.getElementById('photo-lightbox');
