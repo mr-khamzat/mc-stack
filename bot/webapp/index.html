@@ -778,11 +778,23 @@ body::before {
   align-items: center;
   justify-content: space-between;
   padding: 12px 14px;
-  background: linear-gradient(135deg, rgba(255,255,255,0.055) 0%, rgba(255,255,255,0.022) 100%);
+  background: linear-gradient(170deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.005) 50%, rgba(255,255,255,0.001) 100%);
   border-radius: var(--r-md);
-  border: 0.5px solid rgba(255,255,255,0.1);
-  border-top-color: rgba(255,255,255,0.16);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.22), 0 1px 0 rgba(255,255,255,0.05) inset;
+  border: 0.5px solid rgba(255,255,255,0.07);
+  border-top-color: rgba(255,255,255,0.13);
+  box-shadow: 0 0.5px 0 rgba(255,255,255,0.10) inset, 0 -0.5px 0 rgba(0,0,0,0.10) inset,
+              0 4px 9px rgba(0,0,0,0.18), 0 14px 34px rgba(0,0,0,0.32), 0 26px 48px rgba(0,0,0,0.10);
+  backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
+  position: relative; overflow: hidden;
+}
+.family-item::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0) 50%);
+  pointer-events: none;
 }
 .family-name { font-size: 14px; font-weight: 600; color: rgba(210,210,248,0.95); }
 .badge {
@@ -821,6 +833,16 @@ body::before {
   background: none;
   font-family: inherit;
   letter-spacing: 0.2px;
+  position: relative;
+  overflow: hidden;
+}
+.light-btn.off::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0) 50%);
+  pointer-events: none;
 }
 .light-btn .light-icon { font-size: 20px; }
 .light-btn.on {
@@ -831,10 +853,14 @@ body::before {
   box-shadow: 0 0 22px rgba(251,191,36,0.22), 0 4px 16px rgba(0,0,0,0.3), 0 1px 0 rgba(255,220,80,0.18) inset;
 }
 .light-btn.off {
-  background: linear-gradient(145deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.018) 100%);
-  border-color: rgba(255,255,255,0.09);
+  background: linear-gradient(170deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.005) 50%, rgba(255,255,255,0.001) 100%);
+  border-color: rgba(255,255,255,0.07);
+  border-top-color: rgba(255,255,255,0.13);
   color: rgba(100,100,140,0.7);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.22);
+  box-shadow: 0 0.5px 0 rgba(255,255,255,0.10) inset, 0 -0.5px 0 rgba(0,0,0,0.10) inset,
+              0 4px 9px rgba(0,0,0,0.18), 0 14px 34px rgba(0,0,0,0.32), 0 26px 48px rgba(0,0,0,0.10);
+  backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
 }
 .light-btn:active { transform: scale(0.92); }
 .light-btn.pending { opacity: 0.45; pointer-events: none; }
@@ -1998,10 +2024,24 @@ body.fab-open .fab-backdrop { display: block; }
 /* ── Family cards redesign ─────────────────────────────────────────────────── */
 .family-cards { display:flex; flex-direction:column; gap:12px; }
 .family-card {
-  background: linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%);
-  border: 1px solid rgba(255,255,255,0.08);
+  background: linear-gradient(170deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.005) 50%, rgba(255,255,255,0.001) 100%);
+  border: 0.5px solid rgba(255,255,255,0.07);
+  border-top-color: rgba(255,255,255,0.13);
   border-radius: 18px; padding: 14px; position: relative; overflow: hidden;
   transition: transform 0.2s, box-shadow 0.2s;
+  box-shadow: 0 0.5px 0 rgba(255,255,255,0.10) inset, 0 -0.5px 0 rgba(0,0,0,0.10) inset,
+              0 4px 9px rgba(0,0,0,0.18), 0 14px 34px rgba(0,0,0,0.32), 0 26px 48px rgba(0,0,0,0.10);
+  backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
+}
+.family-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0) 50%);
+  pointer-events: none;
+  z-index: 0;
 }
 .family-card.home { border-color: rgba(52,211,153,0.3); background: linear-gradient(135deg, rgba(52,211,153,0.06) 0%, rgba(99,102,241,0.03) 100%); }
 .family-card-top { display:flex; align-items:center; gap:12px; margin-bottom:10px; }
