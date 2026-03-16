@@ -1546,6 +1546,57 @@ body::before {
 .forecast-min { font-size: 12px; font-weight: 600; color: #93c5fd; margin-top: 2px; letter-spacing: -0.2px; }
 .weather-updated { font-size: 10px; color: rgba(100,100,150,0.4); text-align: right; margin-top: 10px; }
 
+/* ── Weather particle animations ───────────────────────────────────────────── */
+.wx-anim-layer {
+  position:absolute; inset:0; pointer-events:none; z-index:0;
+  border-radius:inherit; overflow:hidden;
+}
+/* Sun */
+@keyframes wxSunPulse { 0%,100%{transform:translateY(-50%) scale(1);opacity:0.7;} 50%{transform:translateY(-50%) scale(1.28);opacity:1;} }
+@keyframes wxSunRotate { from{transform:translateY(-50%) rotate(0deg);} to{transform:translateY(-50%) rotate(360deg);} }
+.wx-sun-core {
+  position:absolute; right:18px; top:50%; transform:translateY(-50%);
+  width:90px; height:90px; border-radius:50%;
+  background:radial-gradient(circle,rgba(255,215,60,0.55) 0%,rgba(255,170,0,0.25) 50%,transparent 70%);
+  box-shadow:0 0 60px 30px rgba(255,200,0,0.13);
+  animation:wxSunPulse 3.5s ease-in-out infinite;
+}
+.wx-sun-rays {
+  position:absolute; right:18px; top:50%;
+  width:150px; height:150px; margin:-30px;
+  background:conic-gradient(rgba(255,215,60,0.11) 0deg,transparent 18deg,rgba(255,215,60,0.11) 36deg,transparent 54deg,rgba(255,215,60,0.11) 72deg,transparent 90deg,rgba(255,215,60,0.11) 108deg,transparent 126deg,rgba(255,215,60,0.11) 144deg,transparent 162deg,rgba(255,215,60,0.11) 180deg,transparent 198deg,rgba(255,215,60,0.11) 216deg,transparent 234deg,rgba(255,215,60,0.11) 252deg,transparent 270deg,rgba(255,215,60,0.11) 288deg,transparent 306deg,rgba(255,215,60,0.11) 324deg,transparent 342deg,rgba(255,215,60,0.11) 360deg);
+  border-radius:50%;
+  animation:wxSunRotate 22s linear infinite;
+}
+/* Fog */
+@keyframes wxFogDrift { 0%,100%{transform:translateX(-35px);opacity:0.55;} 50%{transform:translateX(35px);opacity:0.95;} }
+.wx-fog-1,.wx-fog-2,.wx-fog-3 {
+  position:absolute; left:-35%; right:-35%; height:20px;
+  background:linear-gradient(90deg,transparent 0%,rgba(190,210,230,0.2) 30%,rgba(200,220,240,0.3) 50%,rgba(190,210,230,0.2) 70%,transparent 100%);
+  border-radius:50%;
+}
+.wx-fog-1 { top:26%; animation:wxFogDrift 9s ease-in-out infinite; }
+.wx-fog-2 { top:48%; height:16px; animation:wxFogDrift 13s ease-in-out infinite reverse; opacity:0.75; }
+.wx-fog-3 { top:68%; height:13px; animation:wxFogDrift 18s ease-in-out infinite; opacity:0.5; }
+/* Clouds */
+@keyframes wxCloud1 { 0%,100%{transform:translateX(0);} 50%{transform:translateX(22px);} }
+@keyframes wxCloud2 { 0%,100%{transform:translateX(0);} 50%{transform:translateX(-18px);} }
+@keyframes wxCloud3 { 0%,33%{transform:translateX(0);} 66%{transform:translateX(13px);} }
+.wx-cloud { position:absolute; border-radius:50px; background:rgba(215,232,248,0.11); }
+.wx-cloud.dark { background:rgba(130,155,180,0.18); }
+.wx-cloud::before,.wx-cloud::after { content:''; position:absolute; background:inherit; border-radius:50%; }
+.wx-cloud-1 { width:90px; height:26px; top:20%; left:8px; animation:wxCloud1 18s ease-in-out infinite; }
+.wx-cloud-1::before { width:50px; height:38px; top:-17px; left:10px; }
+.wx-cloud-1::after  { width:34px; height:28px; top:-11px; left:44px; }
+.wx-cloud-2 { width:70px; height:22px; top:57%; right:14px; animation:wxCloud2 25s ease-in-out infinite; opacity:0.72; }
+.wx-cloud-2::before { width:38px; height:30px; top:-13px; left:7px; }
+.wx-cloud-2::after  { width:26px; height:22px; top:-9px; left:34px; }
+.wx-cloud-3 { width:108px; height:28px; top:39%; left:20%; animation:wxCloud3 34s ease-in-out infinite; opacity:0.45; }
+.wx-cloud-3::before { width:58px; height:44px; top:-22px; left:12px; }
+.wx-cloud-3::after  { width:42px; height:32px; top:-14px; left:52px; }
+/* Canvas particle layer */
+.wx-canvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; border-radius:inherit; }
+
 /* ── Devices ── */
 .dev-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; transition: opacity 0.2s; }
 .dev-icon-btn { font-size: 22px; background: none; border: none; cursor: pointer; width: 34px; flex-shrink: 0; text-align: center; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -3762,6 +3813,11 @@ function applyStatus(d) {
     if (_wcEl) _wcEl.dataset.loaded = '1';
     const wmEl = document.getElementById('status-wm-icon');
     if (wmEl) wmEl.textContent = wicon;
+    // Start weather particle animation
+    setTimeout(function() {
+      var _wHero = document.querySelector('#weather-content .w-hero');
+      if (_wHero) _startWeatherAnim(_wHero, wicon);
+    }, 60);
   }
 
   // --- Namaz widget ---
@@ -4194,7 +4250,8 @@ function _showLoginForm(errorMsg) {
         '<span class="login-icon">🏠</span>' +
       '</div>' +
       '<div class="login-title">Умный Дом</div>' +
-      '<div class="login-sub">Войдите с логином и паролем<br>от Home Assistant</div>' +
+      '<div class="login-sub">Введите данные входа в Home Assistant</div>' +
+      '<div style="font-size:11px;color:rgba(120,140,180,0.55);text-align:center;margin:-6px 0 6px;padding:0 8px;">тот же логин и пароль, что используете в HA</div>' +
       '<input id="ha-user" type="text" placeholder="Логин" autocomplete="username" class="login-input">' +
       '<input id="ha-pass" type="password" placeholder="Пароль" autocomplete="current-password" class="login-input">' +
       '<div id="ha-err" class="login-err">' + (errorMsg || '') + '</div>' +
@@ -9033,6 +9090,114 @@ function updateStatusBar(d) {
     chips.push('<span class="sb-chip red">🔥 Пол греет</span>');
   }
   bar.innerHTML = chips.join('');
+}
+
+// ── Weather particle animation engine ──────────────────────────────────────
+var _wxAnimRAF = null;
+var _wxAnimEl  = null;
+function _stopWeatherAnim() {
+  if (_wxAnimRAF) { cancelAnimationFrame(_wxAnimRAF); _wxAnimRAF = null; }
+  if (_wxAnimEl && _wxAnimEl.parentNode) { _wxAnimEl.parentNode.removeChild(_wxAnimEl); }
+  _wxAnimEl = null;
+}
+function _startWeatherAnim(heroEl, icon) {
+  _stopWeatherAnim();
+  if (!heroEl) return;
+  var ic = icon.replace(/\uFE0F|\uFE0E/g,'');
+  var type = null;
+  if      (ic==='☀')  type = 'sun';
+  else if (ic==='🌤') type = 'partlycloudy';
+  else if (ic==='⛅') type = 'partlycloudy';
+  else if (ic==='☁')  type = 'cloudy';
+  else if (ic==='🌫') type = 'fog';
+  else if (ic==='🌦') type = 'lightrain';
+  else if (ic==='🌧') type = 'rain';
+  else if (ic==='🌨') type = 'snow';
+  else if (ic==='❄')  type = 'snow';
+  else if (ic==='⛈') type = 'storm';
+  if (!type) return;
+  var layer = document.createElement('div');
+  layer.className = 'wx-anim-layer';
+  if (type === 'sun') {
+    layer.innerHTML = '<div class="wx-sun-core"></div><div class="wx-sun-rays"></div>';
+    heroEl.insertBefore(layer, heroEl.firstChild);
+    _wxAnimEl = layer; return;
+  }
+  if (type === 'fog') {
+    layer.innerHTML = '<div class="wx-fog-1"></div><div class="wx-fog-2"></div><div class="wx-fog-3"></div>';
+    heroEl.insertBefore(layer, heroEl.firstChild);
+    _wxAnimEl = layer; return;
+  }
+  if (type === 'partlycloudy' || type === 'cloudy') {
+    var dark = type === 'cloudy' ? ' dark' : '';
+    var n = type === 'cloudy' ? 3 : 2;
+    var h = '';
+    for (var i = 1; i <= n; i++) h += '<div class="wx-cloud wx-cloud-'+i+dark+'"></div>';
+    layer.innerHTML = h;
+    heroEl.insertBefore(layer, heroEl.firstChild);
+    _wxAnimEl = layer; return;
+  }
+  var canvas = document.createElement('canvas');
+  canvas.className = 'wx-canvas';
+  layer.appendChild(canvas);
+  heroEl.insertBefore(layer, heroEl.firstChild);
+  _wxAnimEl = layer;
+  var W = heroEl.offsetWidth || 320;
+  var H = heroEl.offsetHeight || 200;
+  canvas.width = W; canvas.height = H;
+  var ctx = canvas.getContext('2d');
+  var parts = [];
+  var showLight = false;
+  var lightT = 180 + Math.floor(Math.random()*240);
+  function mkRain() {
+    return {x:Math.random()*(W+60)-30, y:Math.random()*H-H,
+            spd:5+Math.random()*7, len:9+Math.random()*11,
+            op:0.17+Math.random()*0.28};
+  }
+  function mkSnow() {
+    return {x:Math.random()*W, y:Math.random()*H-H,
+            spd:0.45+Math.random()*0.95, r:1.1+Math.random()*2.2,
+            op:0.28+Math.random()*0.42, sw:Math.random()*Math.PI*2,
+            swSpd:0.007+Math.random()*0.016, drift:(Math.random()-0.5)*0.65};
+  }
+  var cnt = type==='storm'?72 : type==='rain'?52 : type==='lightrain'?28 : 40;
+  for (var i=0;i<cnt;i++) parts.push(type==='snow' ? mkSnow() : mkRain());
+  function frame() {
+    ctx.clearRect(0,0,W,H);
+    if (type==='snow') {
+      ctx.save();
+      for (var i=0;i<parts.length;i++) {
+        var p=parts[i]; p.sw+=p.swSpd; p.x+=Math.sin(p.sw)*p.drift; p.y+=p.spd;
+        if (p.y>H+8){p.y=-p.r;p.x=Math.random()*W;}
+        ctx.globalAlpha=p.op; ctx.fillStyle='rgba(225,242,255,1)';
+        ctx.shadowColor='rgba(200,230,255,0.9)'; ctx.shadowBlur=4;
+        ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
+      }
+      ctx.restore();
+    } else {
+      var ang=0.22;
+      ctx.save(); ctx.strokeStyle='rgba(170,210,240,1)'; ctx.lineCap='round';
+      for (var i=0;i<parts.length;i++) {
+        var p=parts[i];
+        ctx.globalAlpha=p.op; ctx.lineWidth=type==='storm'?1.1:0.85;
+        ctx.beginPath(); ctx.moveTo(p.x,p.y);
+        ctx.lineTo(p.x-Math.sin(ang)*p.len, p.y-Math.cos(ang)*p.len); ctx.stroke();
+        p.y+=p.spd; p.x+=Math.sin(ang)*p.spd*0.32;
+        if (p.y>H+18){p.y=-p.len;p.x=Math.random()*(W+60)-30;}
+      }
+      ctx.restore();
+      if (type==='storm') {
+        if (!showLight && --lightT<=0) {
+          lightT=140+Math.floor(Math.random()*260);
+          showLight=true;
+          setTimeout(function(){showLight=false;},70+Math.floor(Math.random()*90));
+        }
+        if (showLight){ctx.fillStyle='rgba(255,255,200,0.13)';ctx.fillRect(0,0,W,H);}
+      }
+    }
+    _wxAnimRAF = requestAnimationFrame(frame);
+  }
+  _wxAnimRAF = requestAnimationFrame(frame);
 }
 
 // ── Weather mini card ──────────────────────────────────────────────────────
