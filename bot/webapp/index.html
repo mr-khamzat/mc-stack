@@ -1444,108 +1444,107 @@ body::before {
   from { opacity: 0; transform: translateY(12px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-.weather-hero {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  padding: 18px 16px;
-  background: linear-gradient(170deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.005) 50%, rgba(255,255,255,0.001) 100%);
-  border: 0.5px solid rgba(255,255,255,0.07);
-  border-top-color: rgba(255,255,255,0.13);
-  border-radius: 20px;
-  box-shadow: 0 0.5px 0 rgba(255,255,255,0.10) inset, 0 -0.5px 0 rgba(0,0,0,0.10) inset,
-              0 4px 9px rgba(0,0,0,0.18), 0 14px 34px rgba(0,0,0,0.32), 0 26px 48px rgba(0,0,0,0.10);
-  backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
-  margin-bottom: 10px;
+/* ── Weather redesign v2 ─────────────────────────────────────────────────── */
+.w-hero {
+  border-radius: 24px;
+  padding: 20px 18px 18px;
   position: relative; overflow: hidden;
-  animation: wCardIn 0.4s ease both;
-}
-.weather-hero::before {
-  content: '';
-  position: absolute; inset: 0; border-radius: inherit;
-  background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0) 50%);
-  pointer-events: none;
-}
-.weather-icon-big {
-  font-size: 64px;
-  line-height: 1;
-  flex-shrink: 0;
-  animation: weatherFloat 3.4s ease-in-out infinite;
-  filter: drop-shadow(0 6px 18px rgba(0,0,0,0.4));
-}
-.weather-hero-info { flex: 1; min-width: 0; }
-.weather-temp-big { font-size: 54px; font-weight: 800; color: #eaeaf8; letter-spacing: -2px; line-height: 1; }
-.weather-cond-big { font-size: 14px; color: rgba(160,160,210,0.85); font-weight: 500; margin-top: 5px; }
-.weather-feel { font-size: 12px; color: rgba(120,120,168,0.65); margin-top: 2px; }
-.weather-metrics {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
+  background: linear-gradient(160deg, rgba(255,255,255,0.055) 0%, rgba(255,255,255,0.008) 60%, rgba(255,255,255,0.002) 100%);
+  border: 0.5px solid rgba(255,255,255,0.1);
+  border-top-color: rgba(255,255,255,0.18);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.14) inset, 0 -1px 0 rgba(0,0,0,0.12) inset,
+              0 8px 24px rgba(0,0,0,0.22), 0 24px 56px rgba(0,0,0,0.28), 0 48px 80px rgba(0,0,0,0.10);
+  backdrop-filter: blur(28px) saturate(1.6) brightness(1.06);
+  -webkit-backdrop-filter: blur(28px) saturate(1.6) brightness(1.06);
   margin-bottom: 10px;
+  animation: wCardIn 0.45s ease both;
 }
-.weather-metric {
-  background: linear-gradient(170deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.004) 50%, rgba(255,255,255,0.001) 100%);
-  border: 0.5px solid rgba(255,255,255,0.07);
-  border-top-color: rgba(255,255,255,0.13);
-  border-radius: 14px;
-  padding: 12px 8px;
-  text-align: center;
-  box-shadow: 0 0.5px 0 rgba(255,255,255,0.10) inset, 0 -0.5px 0 rgba(0,0,0,0.10) inset,
-              0 4px 9px rgba(0,0,0,0.18), 0 12px 28px rgba(0,0,0,0.28);
-  backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
-  position: relative; overflow: hidden;
-  animation: wCardIn 0.4s ease both;
+/* top gloss highlight */
+.w-hero::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,0.07) 0%, rgba(255,255,255,0) 45%);
+  pointer-events: none; z-index: 0;
 }
-.weather-metric:nth-child(1) { animation-delay: 0.05s; }
-.weather-metric:nth-child(2) { animation-delay: 0.10s; }
-.weather-metric:nth-child(3) { animation-delay: 0.15s; }
-.weather-metric::before {
-  content: '';
-  position: absolute; inset: 0; border-radius: inherit;
-  background: linear-gradient(180deg, rgba(255,255,255,0.055) 0%, rgba(255,255,255,0) 50%);
-  pointer-events: none;
+/* condition tint layer — set via JS */
+.w-hero::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  background: var(--w-tint, transparent);
+  pointer-events: none; z-index: 0;
+  transition: background 1.2s ease;
 }
-.weather-metric-icon {
-  font-size: 22px;
-  margin-bottom: 6px;
-  display: block;
+.w-bg-emoji {
+  position: absolute; right: -4px; top: 50%; transform: translateY(-50%);
+  font-size: 148px; line-height: 1;
+  opacity: 0.08; filter: blur(2px);
+  animation: weatherFloat 4.5s ease-in-out infinite;
+  pointer-events: none; user-select: none; z-index: 0;
 }
-.weather-metric:nth-child(1) .weather-metric-icon { animation: metricBob 3.0s ease-in-out infinite; }
-.weather-metric:nth-child(2) .weather-metric-icon { animation: metricBob 3.0s ease-in-out infinite 0.6s; }
-.weather-metric:nth-child(3) .weather-metric-icon { animation: metricBob 3.0s ease-in-out infinite 1.2s; }
-.weather-metric-val { font-size: 16px; font-weight: 700; color: rgba(215,215,252,0.95); letter-spacing: -0.3px; }
-.weather-metric-label { font-size: 10px; color: rgba(110,110,158,0.7); margin-top: 3px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
-.weather-forecast-title { font-size: 11px; color: rgba(130,130,180,0.55); font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin: 12px 0 8px 2px; }
+/* all direct children above pseudo layers */
+.w-hero > * { position: relative; z-index: 1; }
+.w-hero-top {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 14px;
+}
+.w-greeting {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
+  color: rgba(180,180,240,0.65);
+}
+.w-updated-top { font-size: 10px; color: rgba(120,120,170,0.45); }
+.w-hero-main {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 12px;
+  margin-bottom: 18px;
+}
+.w-temp-huge {
+  font-size: 76px; font-weight: 900; letter-spacing: -4px; line-height: 0.9;
+  color: #fff; text-shadow: 0 2px 24px rgba(0,0,0,0.25);
+  font-variant-numeric: tabular-nums;
+}
+.w-hero-right { text-align: right; padding-bottom: 4px; }
+.w-icon-large {
+  font-size: 52px; display: block; line-height: 1;
+  filter: drop-shadow(0 4px 14px rgba(0,0,0,0.35));
+  animation: weatherFloat 3.8s ease-in-out infinite;
+  margin-bottom: 4px;
+}
+.w-cond-text { font-size: 14px; font-weight: 600; color: rgba(210,210,252,0.9); }
+.w-feel-text { font-size: 12px; color: rgba(150,150,200,0.6); margin-top: 3px; }
+.w-divider {
+  height: 0.5px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.12) 30%, rgba(255,255,255,0.12) 70%, transparent);
+  margin-bottom: 16px;
+}
+/* horizontal detail strip */
+.w-strip { display: flex; align-items: center; justify-content: space-around; }
+.w-strip-item { display: flex; flex-direction: column; align-items: center; gap: 3px; flex: 1; }
+.w-strip-sep { width: 0.5px; height: 32px; background: rgba(255,255,255,0.1); flex-shrink: 0; }
+.w-strip-icon { font-size: 18px; }
+.w-strip-val { font-size: 14px; font-weight: 700; color: rgba(210,210,252,0.95); letter-spacing: -0.2px; }
+.w-strip-lbl { font-size: 9px; color: rgba(120,120,168,0.6); font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
+/* forecast */
+.w-forecast-hdr { font-size: 10px; color: rgba(130,130,180,0.5); font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin: 12px 0 8px 2px; }
 .weather-forecast { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .forecast-day {
-  background: linear-gradient(170deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.004) 50%, rgba(255,255,255,0.001) 100%);
-  border: 0.5px solid rgba(255,255,255,0.07);
-  border-top-color: rgba(255,255,255,0.13);
-  border-radius: 14px;
-  padding: 13px 6px;
-  text-align: center;
-  box-shadow: 0 0.5px 0 rgba(255,255,255,0.10) inset, 0 -0.5px 0 rgba(0,0,0,0.10) inset,
-              0 4px 9px rgba(0,0,0,0.18), 0 12px 28px rgba(0,0,0,0.28);
+  background: linear-gradient(170deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.005) 60%, rgba(255,255,255,0.001) 100%);
+  border: 0.5px solid rgba(255,255,255,0.08); border-top-color: rgba(255,255,255,0.14);
+  border-radius: 18px; padding: 14px 8px; text-align: center;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.10) inset, 0 4px 12px rgba(0,0,0,0.18), 0 12px 28px rgba(0,0,0,0.22);
   backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
   -webkit-backdrop-filter: blur(20px) saturate(1.4) brightness(1.04);
-  position: relative; overflow: hidden;
-  animation: wCardIn 0.4s ease both;
+  position: relative; overflow: hidden; animation: wCardIn 0.4s ease both;
 }
-.forecast-day:nth-child(1) { animation-delay: 0.18s; }
-.forecast-day:nth-child(2) { animation-delay: 0.24s; }
-.forecast-day:nth-child(3) { animation-delay: 0.30s; }
+.forecast-day:nth-child(1) { animation-delay: 0.15s; }
+.forecast-day:nth-child(2) { animation-delay: 0.22s; }
+.forecast-day:nth-child(3) { animation-delay: 0.29s; }
 .forecast-day::before {
-  content: '';
-  position: absolute; inset: 0; border-radius: inherit;
-  background: linear-gradient(180deg, rgba(255,255,255,0.055) 0%, rgba(255,255,255,0) 50%);
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0) 50%);
   pointer-events: none;
 }
-.forecast-label { font-size: 11px; color: rgba(110,110,158,0.75); margin-bottom: 5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
-.forecast-icon  { font-size: 26px; margin: 4px 0; display: block; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.35)); }
-.forecast-range { font-size: 13px; font-weight: 700; color: rgba(205,205,250,0.9); letter-spacing: -0.3px; }
-.weather-updated { font-size: 10px; color: rgba(100,100,150,0.45); text-align: right; margin-top: 8px; }
+.forecast-label { font-size: 11px; color: rgba(140,140,190,0.8); margin-bottom: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
+.forecast-icon  { font-size: 30px; margin: 0 0 8px; display: block; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.3)); }
+.forecast-max { font-size: 15px; font-weight: 800; color: #fbbf24; letter-spacing: -0.3px; }
+.forecast-min { font-size: 12px; font-weight: 600; color: #93c5fd; margin-top: 2px; letter-spacing: -0.2px; }
+.weather-updated { font-size: 10px; color: rgba(100,100,150,0.4); text-align: right; margin-top: 10px; }
 
 /* ── Devices ── */
 .dev-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; transition: opacity 0.2s; }
@@ -3614,45 +3613,80 @@ function applyStatus(d) {
     const wtemp = w.temp != null ? Math.round(w.temp) : '?';
     const wfeel = w.feels_like != null ? Math.round(w.feels_like) : '?';
 
+    // Greeting by time
+    const _wh = new Date().getHours();
+    const _wgreet = _wh >= 5 && _wh < 12 ? 'Доброе утро' :
+                    _wh >= 12 && _wh < 17 ? 'Добрый день' :
+                    _wh >= 17 && _wh < 22 ? 'Добрый вечер' : 'Доброй ночи';
+
+    // Condition tint
+    const _TINTS = {
+      '☀️':'rgba(251,146,60,0.18),rgba(234,179,8,0.07)',
+      '🌤️':'rgba(99,102,241,0.14),rgba(148,163,184,0.05)',
+      '⛅':'rgba(99,102,241,0.12),rgba(148,163,184,0.06)',
+      '🌥️':'rgba(100,116,139,0.18),rgba(71,85,105,0.08)',
+      '☁️':'rgba(100,116,139,0.22),rgba(71,85,105,0.10)',
+      '🌦️':'rgba(14,165,233,0.15),rgba(6,182,212,0.07)',
+      '🌧️':'rgba(14,165,233,0.20),rgba(6,182,212,0.10)',
+      '⛈️':'rgba(168,85,247,0.20),rgba(99,102,241,0.10)',
+      '🌩️':'rgba(168,85,247,0.18),rgba(99,102,241,0.09)',
+      '❄️':'rgba(186,230,253,0.16),rgba(147,197,253,0.08)',
+      '🌨️':'rgba(186,230,253,0.14),rgba(147,197,253,0.07)',
+      '🌙':'rgba(30,41,59,0.35),rgba(15,23,42,0.15)',
+      '🌫️':'rgba(148,163,184,0.18),rgba(100,116,139,0.09)',
+    };
+    const tintPair = _TINTS[wicon] || 'rgba(99,102,241,0.10),rgba(139,92,246,0.05)';
+
+    // Forecast cards
     const forecastHtml = (w.forecast && w.forecast.length)
-      ? `<div class="weather-forecast-title">Прогноз на 3 дня</div>
+      ? `<div class="w-forecast-hdr">Прогноз</div>
          <div class="weather-forecast">
           ${w.forecast.map(f => `
             <div class="forecast-day">
               <div class="forecast-label">${escapeHtml(f.label)}</div>
               <div class="forecast-icon">${f.icon}</div>
-              <div class="forecast-range">${Math.round(f.min)}…${Math.round(f.max)}°</div>
+              <div class="forecast-max">${Math.round(f.max)}°</div>
+              <div class="forecast-min">${Math.round(f.min)}°</div>
             </div>`).join('')}
         </div>` : '';
 
     document.getElementById('weather-content').innerHTML =
-      `<div class="weather-hero">
-        <div class="weather-icon-big">${wicon}</div>
-        <div class="weather-hero-info">
-          <div class="weather-temp-big">${wtemp}°</div>
-          <div class="weather-cond-big">${escapeHtml(wcond)}</div>
-          <div class="weather-feel">Ощущается ${wfeel}°</div>
+      `<div class="w-hero" style="--w-tint:linear-gradient(135deg,${tintPair})">
+        <div class="w-bg-emoji">${wicon}</div>
+        <div class="w-hero-top">
+          <span class="w-greeting">${_wgreet}</span>
+          <span class="w-updated-top">${escapeHtml(w.updated ?? '')}</span>
+        </div>
+        <div class="w-hero-main">
+          <div class="w-temp-huge">${wtemp}°</div>
+          <div class="w-hero-right">
+            <span class="w-icon-large">${wicon}</span>
+            <div class="w-cond-text">${escapeHtml(wcond)}</div>
+            <div class="w-feel-text">Ощущается ${wfeel}°</div>
+          </div>
+        </div>
+        <div class="w-divider"></div>
+        <div class="w-strip">
+          <div class="w-strip-item">
+            <span class="w-strip-icon">💧</span>
+            <span class="w-strip-val">${w.humidity ?? '?'}%</span>
+            <span class="w-strip-lbl">Влажн.</span>
+          </div>
+          <div class="w-strip-sep"></div>
+          <div class="w-strip-item">
+            <span class="w-strip-icon">💨</span>
+            <span class="w-strip-val">${w.wind ?? '?'} км/ч</span>
+            <span class="w-strip-lbl">Ветер</span>
+          </div>
+          <div class="w-strip-sep"></div>
+          <div class="w-strip-item">
+            <span class="w-strip-icon">🌧</span>
+            <span class="w-strip-val">${w.precip ?? 0} мм</span>
+            <span class="w-strip-lbl">Осадки</span>
+          </div>
         </div>
       </div>
-      <div class="weather-metrics">
-        <div class="weather-metric">
-          <span class="weather-metric-icon">💧</span>
-          <div class="weather-metric-val">${w.humidity ?? '?'}%</div>
-          <div class="weather-metric-label">Влажность</div>
-        </div>
-        <div class="weather-metric">
-          <span class="weather-metric-icon">💨</span>
-          <div class="weather-metric-val">${w.wind ?? '?'} км/ч</div>
-          <div class="weather-metric-label">Ветер</div>
-        </div>
-        <div class="weather-metric">
-          <span class="weather-metric-icon">🌧</span>
-          <div class="weather-metric-val">${w.precip ?? 0} мм</div>
-          <div class="weather-metric-label">Осадки</div>
-        </div>
-      </div>
-      ${forecastHtml}
-      <div class="weather-updated">🕒 ${escapeHtml(w.updated ?? '')}</div>`;
+      ${forecastHtml}`;
     const _wcEl = document.getElementById('weather-content');
     if (_wcEl) _wcEl.dataset.loaded = '1';
     const wmEl = document.getElementById('status-wm-icon');
