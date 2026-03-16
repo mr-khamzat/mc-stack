@@ -603,38 +603,112 @@ body::before {
 .section-body.open { max-height: 9999px; }
 .section-content { padding: 4px 16px 18px; }
 
-/* ── Status grid ── */
-.status-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 9px;
+/* ── Status Section (redesigned) ── */
+.status-live-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #34d399;
+  box-shadow: 0 0 0 0 rgba(52,211,153,0.6);
+  animation: statusLivePulse 2s infinite;
+  flex-shrink: 0; display: inline-block;
 }
-.stat-card {
-  background: linear-gradient(145deg, rgba(255,255,255,0.07) 0%, rgba(255,255,255,0.025) 100%);
-  border: 0.5px solid rgba(255,255,255,0.11);
-  border-top-color: rgba(255,255,255,0.18);
-  border-radius: var(--r-lg);
-  min-width: 0;
-  padding: 14px 15px;
-  box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset, 0 4px 16px rgba(0,0,0,0.28);
+@keyframes statusLivePulse {
+  0%   { box-shadow: 0 0 0 0   rgba(52,211,153,0.6); }
+  60%  { box-shadow: 0 0 0 7px rgba(52,211,153,0); }
+  100% { box-shadow: 0 0 0 0   rgba(52,211,153,0); }
 }
-.stat-label {
-  font-size: 11px;
-  color: rgba(130,130,185,0.7);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  margin-bottom: 7px;
+.status-time { font-size:11px; color:rgba(130,130,185,0.55); font-variant-numeric:tabular-nums; font-weight:500; }
+
+/* Hero row */
+.status-hero-row { display:grid; grid-template-columns:120px 1fr; gap:9px; margin-bottom:9px; }
+.power-ring-card {
+  display:flex; flex-direction:column; align-items:center; gap:5px;
+  background:linear-gradient(145deg,rgba(255,255,255,0.07) 0%,rgba(255,255,255,0.025) 100%);
+  border:0.5px solid rgba(255,255,255,0.11); border-top-color:rgba(255,255,255,0.18);
+  border-radius:var(--r-lg); padding:12px 8px 10px;
+  box-shadow:0 4px 16px rgba(0,0,0,0.28);
 }
-.stat-value {
-  font-size: 24px;
-  font-weight: 700;
-  color: #eaeaf8;
-  line-height: 1.1;
-  letter-spacing: -0.5px;
+.power-ring-wrap { position:relative; width:82px; height:82px; }
+.power-ring-svg  { width:82px; height:82px; transform:rotate(-90deg); }
+.power-ring-bg   { fill:none; stroke:rgba(255,255,255,0.07); stroke-width:9; }
+.power-ring-fg   {
+  fill:none; stroke:#34d399; stroke-width:9; stroke-linecap:round;
+  stroke-dasharray:283; stroke-dashoffset:283;
+  transition:stroke-dashoffset 0.9s cubic-bezier(0.4,0,0.2,1), stroke 0.5s ease;
+  filter:drop-shadow(0 0 5px currentColor);
 }
-.stat-unit { font-size: 12px; color: rgba(130,130,185,0.6); font-weight: 500; }
-.stat-sub  { font-size: 11px; color: rgba(100,100,155,0.7); margin-top: 4px; }
+.power-ring-center {
+  position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  text-align:center; pointer-events:none;
+}
+.power-ring-value { font-size:17px; font-weight:800; color:#eaeaf8; letter-spacing:-0.5px; line-height:1; font-variant-numeric:tabular-nums; }
+.power-ring-unit  { font-size:9px;  color:rgba(130,130,185,0.55); font-weight:700; margin-top:2px; }
+.power-ring-label { font-size:9px;  color:rgba(130,130,185,0.55); font-weight:700; text-transform:uppercase; letter-spacing:0.5px; }
+
+/* Temp + Humid right column */
+.status-right-col { display:flex; flex-direction:column; gap:8px; }
+.status-metric-card {
+  flex:1; display:flex; align-items:center; gap:10px;
+  background:linear-gradient(145deg,rgba(255,255,255,0.07) 0%,rgba(255,255,255,0.025) 100%);
+  border:0.5px solid rgba(255,255,255,0.11); border-top-color:rgba(255,255,255,0.18);
+  border-radius:var(--r-md); padding:10px 12px;
+  box-shadow:0 4px 16px rgba(0,0,0,0.28);
+}
+.status-metric-icon { font-size:17px; flex-shrink:0; }
+.status-metric-val  { font-size:19px; font-weight:800; color:#eaeaf8; letter-spacing:-0.5px; line-height:1; font-variant-numeric:tabular-nums; transition:color 0.5s ease; }
+.status-metric-lbl  { font-size:9px; color:rgba(130,130,185,0.6); font-weight:700; text-transform:uppercase; letter-spacing:0.4px; margin-top:2px; }
+.status-metric-bar  { flex:1; }
+.status-val-bar-bg  { height:4px; background:rgba(255,255,255,0.07); border-radius:2px; overflow:hidden; margin-top:5px; }
+.status-val-bar-fill{ height:100%; border-radius:2px; width:0%; transition:width 0.9s cubic-bezier(0.4,0,0.2,1), background 0.6s ease; }
+
+/* Quick stats row */
+.status-quick-row { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:9px; }
+.quick-stat-card {
+  background:linear-gradient(145deg,rgba(255,255,255,0.065) 0%,rgba(255,255,255,0.022) 100%);
+  border:0.5px solid rgba(255,255,255,0.1); border-top-color:rgba(255,255,255,0.16);
+  border-radius:var(--r-md); padding:10px 6px 9px;
+  text-align:center; box-shadow:0 2px 10px rgba(0,0,0,0.24);
+  display:flex; flex-direction:column; align-items:center; gap:2px;
+}
+.quick-stat-top { font-size:15px; font-weight:800; color:#eaeaf8; font-variant-numeric:tabular-nums; line-height:1.2; }
+.quick-stat-sub { font-size:10px; color:rgba(130,130,185,0.65); font-weight:600; }
+.quick-stat-lbl { font-size:9px; color:rgba(100,100,150,0.5); text-transform:uppercase; letter-spacing:0.4px; font-weight:700; }
+.inet-dot-row   { display:flex; align-items:center; justify-content:center; gap:5px; margin-bottom:1px; }
+.inet-pulse     { width:10px; height:10px; border-radius:50%; background:#34d399; flex-shrink:0; animation:statusLivePulse 1.5s infinite; }
+.inet-pulse.down{ background:#f87171; animation:none; box-shadow:none; }
+
+/* Cost block */
+.status-cost-block {
+  background:linear-gradient(145deg,rgba(255,255,255,0.065) 0%,rgba(255,255,255,0.022) 100%);
+  border:0.5px solid rgba(255,255,255,0.1); border-top-color:rgba(255,255,255,0.16);
+  border-radius:var(--r-lg); padding:12px 14px; margin-bottom:9px;
+  box-shadow:0 4px 16px rgba(0,0,0,0.22);
+}
+.cost-header { font-size:10px; color:rgba(130,130,185,0.6); font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:9px; }
+.cost-row    { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
+.cost-item   { text-align:center; }
+.cost-val    { font-size:16px; font-weight:800; color:#eaeaf8; font-variant-numeric:tabular-nums; letter-spacing:-0.3px; }
+.cost-unit   { font-size:9px; color:rgba(130,130,185,0.5); font-weight:700; text-transform:uppercase; letter-spacing:0.3px; margin-top:2px; }
+
+/* Phases block */
+.phases-block {
+  background:linear-gradient(145deg,rgba(255,255,255,0.065) 0%,rgba(255,255,255,0.022) 100%);
+  border:0.5px solid rgba(255,255,255,0.1); border-top-color:rgba(255,255,255,0.16);
+  border-radius:var(--r-lg); padding:12px 14px; margin-bottom:9px;
+  box-shadow:0 4px 16px rgba(0,0,0,0.22);
+}
+.phases-header    { font-size:10px; color:rgba(130,130,185,0.6); font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; }
+.phase-row        { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.phase-row:last-child { margin-bottom:0; }
+.phase-label      { font-size:11px; color:rgba(160,160,210,0.8); font-weight:700; width:32px; flex-shrink:0; }
+.phase-bar-bg     { flex:1; height:7px; background:rgba(255,255,255,0.06); border-radius:4px; overflow:hidden; }
+.phase-bar-fill   { height:100%; border-radius:4px; width:0%; transition:width 1s cubic-bezier(0.4,0,0.2,1); }
+.phase-watts      { font-size:11px; color:rgba(150,150,200,0.7); font-variant-numeric:tabular-nums; width:56px; text-align:right; flex-shrink:0; }
+
+/* Compat stubs */
+.stat-card  { display:none; }
+.stat-value { font-size:24px; font-weight:700; color:#eaeaf8; }
+.stat-unit  { font-size:12px; color:rgba(130,130,185,0.6); font-weight:500; }
+.stat-sub   { font-size:11px; color:rgba(100,100,155,0.7); margin-top:4px; }
 
 /* ── Family list ── */
 .family-list { display: flex; flex-direction: column; gap: 8px; }
@@ -2110,43 +2184,115 @@ body.fab-open .fab-backdrop { display: block; }
   <!-- 1. STATUS -->
   <div class="section" data-section-perm="status">
     <div class="section-header" onclick="toggleSection('sec-status-body')">
-      <span>📊 Статус</span>
-      <span class="chevron">▴</span>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="status-live-dot" id="status-live-dot"></span>
+        <span>📊 Статус</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="status-time" id="status-time"></span>
+        <span class="chevron">▴</span>
+      </div>
     </div>
     <div class="section-body open" id="sec-status-body">
       <div class="section-content">
-        <div class="status-grid">
-          <div class="stat-card">
-            <div class="stat-label">⚡ Мощность</div>
-            <div class="stat-value" id="stat-power">—<span class="stat-unit"> Вт</span></div>
+
+        <!-- Hero: Power ring + Temp/Humid -->
+        <div class="status-hero-row">
+          <div class="power-ring-card">
+            <div class="power-ring-wrap">
+              <svg class="power-ring-svg" viewBox="0 0 120 120">
+                <circle class="power-ring-bg" cx="60" cy="60" r="45"/>
+                <circle class="power-ring-fg" id="power-ring-arc" cx="60" cy="60" r="45"/>
+              </svg>
+              <div class="power-ring-center">
+                <div class="power-ring-value" id="power-ring-val">—</div>
+                <div class="power-ring-unit">Вт</div>
+              </div>
+            </div>
+            <div class="power-ring-label">⚡ Мощность</div>
           </div>
-          <div class="stat-card">
-            <div class="stat-label">🌡 Температура</div>
-            <div class="stat-value" id="stat-temp">—<span class="stat-unit"> °C</span></div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">🌐 Интернет</div>
-            <div class="stat-value" id="stat-internet" style="font-size:26px">—</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">🔥 Тёплый пол</div>
-            <div class="stat-value" id="stat-floor" style="font-size:18px">—</div>
-            <div class="stat-sub" id="stat-floor-sub">—</div>
-          </div>
-          <div class="stat-card" style="grid-column: span 2">
-            <div class="stat-label">💰 Расход электроэнергии</div>
-            <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap">
-              <span><span class="stat-value" id="stat-cost-day" style="font-size:20px">—</span><span class="stat-unit"> ₽/день</span></span>
-              <span id="stat-cost-week" style="font-size:13px;color:rgba(140,140,190,0.7)">нед: — ₽</span>
-              <span id="stat-cost-month" style="font-size:13px;color:rgba(140,140,190,0.7)">мес: — ₽</span>
-              <span id="stat-cost-forecast" style="font-size:13px;color:rgba(140,140,190,0.7)">прогноз: — ₽</span>
+          <div class="status-right-col">
+            <div class="status-metric-card">
+              <div class="status-metric-icon">🌡️</div>
+              <div style="flex:0 0 auto">
+                <div class="status-metric-val" id="stat-temp">—°</div>
+                <div class="status-metric-lbl">Детская</div>
+              </div>
+              <div class="status-metric-bar">
+                <div class="status-val-bar-bg">
+                  <div class="status-val-bar-fill" id="temp-bar-fill"></div>
+                </div>
+              </div>
+            </div>
+            <div class="status-metric-card">
+              <div class="status-metric-icon">💧</div>
+              <div style="flex:0 0 auto">
+                <div class="status-metric-val" id="stat-humid-disp">—%</div>
+                <div class="status-metric-lbl">Влажность</div>
+              </div>
+              <div class="status-metric-bar">
+                <div class="status-val-bar-bg">
+                  <div class="status-val-bar-fill" id="humid-bar-fill"></div>
+                </div>
+              </div>
             </div>
           </div>
-          <div class="stat-card" style="grid-column: span 2" id="phases-card">
-            <div class="stat-label">⚡ Нагрузка по фазам</div>
-            <div id="phases-bars" style="margin-top:6px"></div>
+        </div>
+
+        <!-- Quick stats: Internet / Floor / Today cost / Forecast -->
+        <div class="status-quick-row">
+          <div class="quick-stat-card">
+            <div class="inet-dot-row"><div class="inet-pulse" id="inet-pulse"></div></div>
+            <div class="quick-stat-top" id="inet-label" style="font-size:12px">—</div>
+            <div class="quick-stat-lbl">Интернет</div>
+            <div id="stat-internet" style="display:none"></div>
+          </div>
+          <div class="quick-stat-card">
+            <div class="quick-stat-top" id="stat-floor" style="font-size:13px">—</div>
+            <div class="quick-stat-sub" id="stat-floor-sub">—</div>
+            <div class="quick-stat-lbl">Пол</div>
+          </div>
+          <div class="quick-stat-card">
+            <div class="quick-stat-top"><span id="stat-cost-day">—</span><span style="font-size:10px;color:rgba(130,130,185,0.6)"> ₽</span></div>
+            <div class="quick-stat-sub">сегодня</div>
+            <div class="quick-stat-lbl">Расход</div>
+          </div>
+          <div class="quick-stat-card">
+            <div class="quick-stat-top"><span id="stat-cost-forecast">—</span><span style="font-size:10px;color:rgba(130,130,185,0.6)"> ₽</span></div>
+            <div class="quick-stat-sub">прогноз</div>
+            <div class="quick-stat-lbl">Месяц</div>
           </div>
         </div>
+
+        <!-- Cost block -->
+        <div class="status-cost-block">
+          <div class="cost-header">💰 Расход электроэнергии</div>
+          <div class="cost-row">
+            <div class="cost-item">
+              <div class="cost-val" id="stat-cost-day-b">—</div>
+              <div class="cost-unit">₽ / день</div>
+            </div>
+            <div class="cost-item">
+              <div class="cost-val" id="stat-cost-week">—</div>
+              <div class="cost-unit">₽ / неделя</div>
+            </div>
+            <div class="cost-item">
+              <div class="cost-val" id="stat-cost-month">—</div>
+              <div class="cost-unit">₽ / месяц</div>
+            </div>
+            <div class="cost-item">
+              <div class="cost-val" id="stat-cost-forecast-b">—</div>
+              <div class="cost-unit">₽ прогноз</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Phase bars -->
+        <div class="phases-block" id="phases-card">
+          <div class="phases-header">⚡ Нагрузка по фазам</div>
+          <div id="phases-bars"></div>
+        </div>
+
         <!-- Namaz Widget -->
         <div class="namaz-widget" id="namaz-widget" style="display:none">
           <div class="namaz-widget-label">🕌 Следующий намаз</div>
@@ -2154,6 +2300,7 @@ body.fab-open .fab-backdrop { display: block; }
           <div style="font-size:11px;color:rgba(160,140,220,0.65);margin-top:3px" id="namaz-prayer-name"></div>
           <div class="namaz-progress-bg"><div class="namaz-progress-fill" id="namaz-progress" style="width:0%"></div></div>
         </div>
+
       </div>
     </div>
   </div>
@@ -2837,43 +2984,96 @@ function hideLoading() {
 function flashEl(el) {
   if (!el) return;
   el.classList.remove('stat-flash');
-  void el.offsetWidth; // reflow to restart animation
+  void el.offsetWidth;
   el.classList.add('stat-flash');
   el.addEventListener('animationend', () => el.classList.remove('stat-flash'), { once: true });
+}
+
+// Animate numeric counter with ease-in-out
+function animateCounter(el, toVal, decimals, suffix) {
+  if (!el || toVal == null || isNaN(toVal)) return;
+  suffix = suffix || '';
+  const from = parseFloat(el.dataset.rawVal) || 0;
+  el.dataset.rawVal = toVal;
+  if (Math.abs(from - toVal) < 0.05) {
+    el.textContent = toVal.toFixed(decimals) + suffix; return;
+  }
+  const dur = 550, start = performance.now(), diff = toVal - from;
+  function step(now) {
+    const t = Math.min((now - start) / dur, 1);
+    const e = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
+    el.textContent = (from + diff * e).toFixed(decimals) + suffix;
+    if (t < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+// Live clock in status header
+function startStatusClock() {
+  function tick() {
+    const el = document.getElementById('status-time');
+    if (!el) return;
+    const n = new Date();
+    el.textContent = n.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  }
+  tick();
+  setInterval(tick, 1000);
 }
 
 // ── Apply status ───────────────────────────────────────────────────────────
 function applyStatus(d) {
   lastStatus = d;
 
-  // --- Status section ---
-  const powerEl = document.getElementById('stat-power');
+  // --- Status section: Power ring ---
   if (d.power != null) {
     const w = parseFloat(d.power);
-    powerEl.innerHTML = '<span>' + Math.round(w) + '</span><span class="stat-unit"> Вт</span>';
-    flashEl(powerEl);
+    const pct = Math.min(w / 6000, 1);
+    const circ = 283; // 2*π*45
+    const arc = document.getElementById('power-ring-arc');
+    if (arc) {
+      arc.style.strokeDashoffset = (circ * (1 - pct)).toFixed(1);
+      arc.style.stroke = w < 1500 ? '#34d399' : w < 4000 ? '#fbbf24' : '#f87171';
+    }
+    animateCounter(document.getElementById('power-ring-val'), w, 0);
   }
 
-  const tempEl = document.getElementById('stat-temp');
+  // --- Temp ---
   if (d.temp_detskaia != null) {
-    tempEl.innerHTML = '<span>' + parseFloat(d.temp_detskaia).toFixed(1) + '</span><span class="stat-unit"> °C</span>';
-    flashEl(tempEl);
+    const t = parseFloat(d.temp_detskaia);
+    animateCounter(document.getElementById('stat-temp'), t, 1, '°');
+    const pct = Math.min(Math.max((t - 10) / 25 * 100, 0), 100);
+    const col = t < 18 ? '#60a5fa' : t < 22 ? '#34d399' : t < 26 ? '#a3e635' : t < 29 ? '#f59e0b' : '#f87171';
+    const bar = document.getElementById('temp-bar-fill');
+    if (bar) { bar.style.width = pct.toFixed(1) + '%'; bar.style.background = col; }
   }
 
-  const inetEl = document.getElementById('stat-internet');
+  // --- Humidity ---
+  if (d.humidity != null) {
+    const h = parseFloat(d.humidity);
+    animateCounter(document.getElementById('stat-humid-disp'), h, 0, '%');
+    const col = h < 30 ? '#f59e0b' : h <= 60 ? '#34d399' : '#60a5fa';
+    const bar = document.getElementById('humid-bar-fill');
+    if (bar) { bar.style.width = Math.min(h, 100).toFixed(1) + '%'; bar.style.background = col; }
+  }
+
+  // --- Internet ---
   if (d.internet != null) {
-    inetEl.textContent = d.internet === 'on' ? '🟢' : '🔴';
+    const isUp = d.internet === 'on';
+    const dot = document.getElementById('inet-pulse');
+    const lbl = document.getElementById('inet-label');
+    if (dot) dot.className = 'inet-pulse' + (isUp ? '' : ' down');
+    if (lbl) { lbl.textContent = isUp ? 'Онлайн' : 'Оффлайн'; lbl.style.color = isUp ? '#34d399' : '#f87171'; }
   }
 
-  const floorEl = document.getElementById('stat-floor');
-  const floorSubEl = document.getElementById('stat-floor-sub');
+  // --- Floor ---
   if (d.floor_heating != null) {
-    const isHeating = d.floor_heating === 'heat';
-    floorEl.textContent = isHeating ? '🔥 Греет' : '❄️ Выкл';
-    floorEl.style.color = isHeating ? '#ef4444' : '#3b82f6';
+    const isHeat = d.floor_heating === 'heat';
+    const el = document.getElementById('stat-floor');
+    if (el) { el.textContent = isHeat ? '🔥 Греет' : '❄️ Выкл'; el.style.color = isHeat ? '#ef4444' : '#3b82f6'; }
   }
   if (d.floor_temp != null && d.floor_setpoint != null) {
-    floorSubEl.textContent = parseFloat(d.floor_temp).toFixed(1) + '° / ' + parseFloat(d.floor_setpoint).toFixed(0) + '° уст';
+    const sub = document.getElementById('stat-floor-sub');
+    if (sub) sub.textContent = parseFloat(d.floor_temp).toFixed(1) + '° / ' + parseFloat(d.floor_setpoint).toFixed(0) + '°';
   }
 
   // --- Family section ---
@@ -2904,29 +3104,21 @@ function applyStatus(d) {
     lightsEl.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:8px;grid-column:span 4">Нет данных</div>';
   }
 
-  // --- Energy cost in status ---
+  // --- Energy cost ---
   if (d.cost_day != null) {
-    const cd = parseFloat(d.cost_day);
-    const el = document.getElementById('stat-cost-day');
-    if (el) { el.textContent = isNaN(cd) ? d.cost_day : cd.toFixed(0); flashEl(el); }
+    const v = parseFloat(d.cost_day);
+    animateCounter(document.getElementById('stat-cost-day'), v, 0);
+    animateCounter(document.getElementById('stat-cost-day-b'), v, 0);
   }
-  if (d.cost_week != null) {
-    const cw = parseFloat(d.cost_week);
-    const el = document.getElementById('stat-cost-week');
-    if (el) el.textContent = 'нед: ' + (isNaN(cw) ? d.cost_week : cw.toFixed(0)) + ' ₽';
-  }
-  if (d.cost_month != null) {
-    const cm = parseFloat(d.cost_month);
-    const el = document.getElementById('stat-cost-month');
-    if (el) el.textContent = 'мес: ' + (isNaN(cm) ? d.cost_month : cm.toFixed(0)) + ' ₽';
-  }
+  if (d.cost_week != null)     animateCounter(document.getElementById('stat-cost-week'), parseFloat(d.cost_week), 0);
+  if (d.cost_month != null)    animateCounter(document.getElementById('stat-cost-month'), parseFloat(d.cost_month), 0);
   if (d.cost_forecast != null) {
-    const cf = parseFloat(d.cost_forecast);
-    const el = document.getElementById('stat-cost-forecast');
-    if (el) el.textContent = 'прогноз: ' + (isNaN(cf) ? d.cost_forecast : cf.toFixed(0)) + ' ₽';
+    const v = parseFloat(d.cost_forecast);
+    animateCounter(document.getElementById('stat-cost-forecast'), v, 0);
+    animateCounter(document.getElementById('stat-cost-forecast-b'), v, 0);
   }
 
-  // --- Energy phases ---
+  // --- Energy phases (animated bars) ---
   if (d.phases && d.phases.length) {
     const totalPower = d.phases.reduce((s, p) => s + (parseFloat(p.power) || 0), 0);
     const colors = ['#f59e0b', '#60a5fa', '#34d399'];
@@ -2934,13 +3126,19 @@ function applyStatus(d) {
     if (barsEl) {
       barsEl.innerHTML = d.phases.map((ph, i) => {
         const w = parseFloat(ph.power) || 0;
-        const pct = totalPower > 0 ? Math.round(w / totalPower * 100) : 0;
-        const barW = totalPower > 0 ? Math.round(w / Math.max(totalPower, 1) * 100) : 0;
+        const barW = totalPower > 0 ? (w / totalPower * 100).toFixed(1) : 0;
         return `<div class="phase-row">
-          <div class="phase-label"><span>${ph.name}</span><span>${w.toFixed(0)} Вт (${pct}%)</span></div>
-          <div class="phase-bar-bg"><div class="phase-bar-fill" style="width:${barW}%;background:${colors[i]}"></div></div>
+          <div class="phase-label">${ph.name}</div>
+          <div class="phase-bar-bg"><div class="phase-bar-fill" data-w="${barW}" style="width:0%;background:${colors[i]}"></div></div>
+          <div class="phase-watts">${w.toFixed(0)} Вт</div>
         </div>`;
       }).join('');
+      // Trigger animation after render
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        barsEl.querySelectorAll('.phase-bar-fill[data-w]').forEach(el => {
+          el.style.width = el.dataset.w + '%';
+        });
+      }));
     }
   }
 
@@ -3391,6 +3589,7 @@ async function init() {
   const timer = setTimeout(hideLoading, 3000);
   applyAutoTheme();
   renderFab();
+  startStatusClock();
   // Init quick actions from localStorage immediately
   qaRender();
   // Apply cached permissions immediately before any API calls
