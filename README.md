@@ -190,31 +190,126 @@ apt update && apt upgrade -y
 
 ### 2.4 Настроить доступ снаружи
 
-Mini App требует HTTPS. Без публичного IP — используй **Cloudflare Tunnel** (бесплатно).
+Telegram Mini App **обязательно требует HTTPS**. Есть три варианта:
 
+---
+
+#### Вариант A: Cloudflare Tunnel (рекомендуется — бесплатно, не нужен публичный IP)
+
+**Что нужно:** аккаунт на cloudflare.com и любой домен (можно бесплатный).
+
+**Шаг 1 — Получить бесплатный домен** (если нет своего):
+- [DuckDNS](https://www.duckdns.org) — бесплатно, домен вида `yourname.duckdns.org`
+- Зарегистрируйся → создай домен → **добавь его в Cloudflare** (Free план)
+
+**Шаг 2 — Установить cloudflared на сервер/LXC:**
 ```bash
-# Установить cloudflared
 curl -L --output /usr/local/bin/cloudflared \
   https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
 chmod +x /usr/local/bin/cloudflared
-
-# Войти (откроет ссылку — перейди в браузере)
-cloudflared tunnel login
-
-# Создать туннель
-cloudflared tunnel create ha-bot
-
-# Настроить DNS (замени yourdomain.com на свой домен в Cloudflare)
-cloudflared tunnel route dns ha-bot app.yourdomain.com
-
-# Запустить туннель как systemd сервис
-cloudflared service install
 ```
 
-После этого Mini App будет доступен по `https://app.yourdomain.com/ha-app/`.
+**Шаг 3 — Авторизация (откроет ссылку в браузере):**
+```bash
+cloudflared tunnel login
+# Откроется https://dash.cloudflare.com/... — войди и выбери свой домен
+```
 
-> **Нет домена?** Зарегистрируй бесплатный на freedns.afraid.org или duckdns.org,
-> затем добавь в Cloudflare.
+**Шаг 4 — Создать туннель:**
+```bash
+cloudflared tunnel create ha-bot
+# Запомни UUID туннеля из вывода, например: a1b2c3d4-...
+```
+
+**Шаг 5 — Настроить конфиг туннеля:**
+```bash
+mkdir -p ~/.cloudflared
+cat > ~/.cloudflared/config.yml << 'EOF'
+tunnel: ha-bot
+credentials-file: /root/.cloudflared/ТВОЙ_UUID.json
+
+ingress:
+  - hostname: app.yourdomain.com
+    service: http://localhost:8766
+  - service: http_status:404
+EOF
+```
+
+**Шаг 6 — Настроить DNS запись:**
+```bash
+cloudflared tunnel route dns ha-bot app.yourdomain.com
+```
+
+**Шаг 7 — Запустить как systemd сервис:**
+```bash
+cloudflared service install
+systemctl enable --now cloudflared
+```
+
+**Шаг 8 — Прописать URL в .env:**
+```env
+WEBAPP_URL=https://app.yourdomain.com/ha-app/
+```
+
+Готово! Mini App доступен по `https://app.yourdomain.com/ha-app/`
+
+---
+
+#### Вариант B: VPS с публичным IP + Let's Encrypt
+
+Если у тебя VPS с публичным IP:
+
+```bash
+# Установить nginx и certbot
+apt install -y nginx certbot python3-certbot-nginx
+
+# Получить SSL сертификат
+certbot --nginx -d yourdomain.com
+
+# Скопировать nginx конфиг из репозитория
+sed 's/YOUR_DOMAIN/yourdomain.com/g' nginx/ha-app.conf \
+  > /etc/nginx/sites-available/ha-app
+ln -sf /etc/nginx/sites-available/ha-app /etc/nginx/sites-enabled/
+nginx -t && nginx -s reload
+```
+
+---
+
+#### Вариант C: Только локальная сеть (без Telegram Mini App)
+
+Если нужен **только Telegram бот** (без веб-интерфейса) — HTTPS не нужен.
+Бот прекрасно работает через Long Polling без домена и SSL.
+
+Для веб-интерфейса в **локальном браузере** (не через Telegram):
+```bash
+# nginx с HTTP на порту 8080 (без SSL)
+apt install -y nginx
+cat > /etc/nginx/sites-available/ha-app-local << 'EOF'
+server {
+    listen 8080;
+    server_name _;
+    location ^~ /ha-app/api/events {
+        proxy_pass http://127.0.0.1:8766;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_read_timeout 3600s;
+        proxy_buffering off;
+        add_header Cache-Control "no-cache" always;
+    }
+    location ^~ /ha-app {
+        proxy_pass http://127.0.0.1:8766;
+        proxy_set_header Host $host;
+        proxy_buffering off;
+    }
+}
+EOF
+ln -sf /etc/nginx/sites-available/ha-app-local /etc/nginx/sites-enabled/
+nginx -t && nginx -s reload
+```
+
+Доступ: `http://192.168.1.X:8080/ha-app/` (в браузере локальной сети)
+
+> ⚠️ Telegram Mini App через `t.me` без HTTPS не откроется. Это ограничение Telegram.
 
 ---
 
