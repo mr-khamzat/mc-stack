@@ -4347,6 +4347,29 @@ async def _web_vapid_key(request: aiohttp_web.Request) -> aiohttp_web.Response:
         content_type="application/json", headers=_CORS_HEADERS)
 
 
+async def _web_push_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/push-status — проверить есть ли push-подписка для текущего пользователя.
+    Возвращает {"subscribed": bool, "count": N}.
+    Фронтенд использует это при входе, чтобы автоматически инициировать повторную подписку."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    username = request.headers.get("X-HA-User", "")
+    if not username:
+        return aiohttp_web.Response(
+            text=json.dumps({"subscribed": False, "count": 0}),
+            content_type="application/json", headers=_CORS_HEADERS)
+    try:
+        rows = _db().execute(
+            "SELECT COUNT(*) FROM push_subscriptions WHERE username=?", (username,)
+        ).fetchone()
+        count = rows[0] if rows else 0
+    except Exception:
+        count = 0
+    return aiohttp_web.Response(
+        text=json.dumps({"subscribed": count > 0, "count": count}),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+
 async def _web_shopping_items(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/api/shopping-items — fetch todo items from HA.
        POST /ha-app/api/shopping-items — add new item to HA todo list.
@@ -7788,6 +7811,8 @@ async def _start_web():
     app.router.add_route("OPTIONS", "/ha-app/api/activity-all", _web_options)
     # Web Push
     app.router.add_get("/ha-app/api/vapid-key",           _web_vapid_key)
+    app.router.add_get("/ha-app/api/push-status",         _web_push_status)
+    app.router.add_route("OPTIONS", "/ha-app/api/push-status", _web_options)
     app.router.add_post("/ha-app/api/push-subscribe",     _web_push_subscribe)
     app.router.add_delete("/ha-app/api/push-subscribe",   _web_push_unsubscribe)
     app.router.add_route("OPTIONS", "/ha-app/api/push-subscribe", _web_options)
