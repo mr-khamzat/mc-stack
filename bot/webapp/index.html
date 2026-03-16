@@ -4177,6 +4177,19 @@ async function init() {
   startSSE();
   // Check for missed incoming call (e.g. opened app from push notification)
   setTimeout(_checkPendingCall, 1200);
+
+  // Слушаем сообщения от Service Worker (входящий звонок при клике на push-уведомление)
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', function(e) {
+      if (e.data && e.data.type === 'incoming-call') {
+        setTimeout(_checkPendingCall, 300);
+      }
+    });
+  }
+  // Если приложение открыто по ссылке с incoming_call=1 — сразу проверить звонок
+  if (new URLSearchParams(location.search).get('incoming_call')) {
+    setTimeout(_checkPendingCall, 800);
+  }
 }
 
 // ── Отправка команд в Home Assistant ─────────────────────────────────────
@@ -5837,8 +5850,12 @@ async function familySendReaction(haName, reaction) {
   const toUser = webUsers[haName] || webUsers[haName.toLowerCase()] || haName.toLowerCase();
   if (!toUser || toUser === HA_USERNAME) return;
   try {
-    await api('/family-reaction', 'POST', {to_user: toUser, reaction});
-    showToast(reaction + ' отправлено!');
+    const res = await api('/family-reaction', 'POST', {to_user: toUser, reaction});
+    if (res && res.sent === 0) {
+      showToast('📵 ' + reaction + ' — устройство не подключено');
+    } else {
+      showToast(reaction + ' отправлено!');
+    }
     // add to local timeline optimistically
     if (!_familyExtra.reactions) _familyExtra.reactions = [];
     _familyExtra.reactions.unshift({from_user: HA_USERNAME, to_user: toUser, reaction, created_at: new Date().toISOString().replace('T',' ').slice(0,19)});

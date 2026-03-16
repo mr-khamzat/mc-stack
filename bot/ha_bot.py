@@ -3379,11 +3379,26 @@ async def _check_alerts():
         try:
             now_utc = datetime.now(timezone.utc)
             family_names = {v: k for k, v in family.items()}  # {entity_id: name}
-            PERSON_NOTIF_COOLDOWN = 600  # 10 минут между уведомлениями об одном человеке
+            # 30 мин между уведомлениями об одном человеке (защита от GPS флаппинга)
+            PERSON_NOTIF_COOLDOWN = 1800
+            # Состояние должно быть стабильным не менее 2 минут (фильтр GPS дрейфа)
+            PERSON_STATE_STABLE_SEC = 120
             for eid, d in zip(person_eids, all_persons):
                 state = d.get("state", "?") if d else "?"
                 prev  = _alert_state["persons"].get(eid)
                 if prev is not None and prev != state:
+                    # Проверяем стабильность: сколько времени прошло с момента последнего изменения в HA
+                    last_changed_str = d.get("last_changed", "") if d else ""
+                    state_stable = True
+                    if last_changed_str:
+                        try:
+                            last_changed_dt = datetime.fromisoformat(last_changed_str.replace("Z", "+00:00"))
+                            state_stable = (now_utc - last_changed_dt).total_seconds() >= PERSON_STATE_STABLE_SEC
+                        except Exception:
+                            pass
+                    if not state_stable:
+                        # Состояние изменилось недавно — пропускаем (вероятно GPS флаппинг)
+                        continue
                     name = family_names.get(eid, eid.split(".")[-1].capitalize())
                     last_ts = _alert_state["persons_notif_ts"].get(eid)
                     cooldown_ok = (last_ts is None or
@@ -4618,7 +4633,9 @@ async def _web_family_reaction(request: aiohttp_web.Request) -> aiohttp_web.Resp
         log.info(f"family_reaction: {from_user} → {to_user} ({reaction}), sending push")
         sent = await push_notify(to_user, f"{from_name}: {reaction}", reaction, "/ha-app/")
         log.info(f"family_reaction: push sent={sent} for to_user={to_user!r}")
-        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json", headers=_CORS_HEADERS)
+        return aiohttp_web.Response(
+            text=json.dumps({"ok": True, "sent": sent}, ensure_ascii=False),
+            content_type="application/json", headers=_CORS_HEADERS)
     except Exception as e:
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 

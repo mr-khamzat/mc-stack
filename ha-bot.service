@@ -12,8 +12,21 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+
+# Рекомендуется создать отдельного пользователя:
+#   useradd -r -s /sbin/nologin -d /opt/ha-bot habot
+#   chown -R habot:habot /opt/ha-bot
+# Затем раскомментировать строку ниже и удалить User=root
+# User=habot
+
+# ⚠️ Если не создал пользователя habot — временно можно оставить root,
+# но это не рекомендуется в продакшене
 User=root
+
 WorkingDirectory=/opt/ha-bot
+
+# Переменные окружения из .env файла
+EnvironmentFile=/opt/ha-bot/.env
 
 # Путь к Python (если используешь venv)
 ExecStart=/opt/ha-bot/venv/bin/python3 /opt/ha-bot/ha_bot.py
@@ -29,9 +42,6 @@ RestartSec=10
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=ha-bot
-
-# Переменные окружения (альтернатива — хранить в .env)
-# EnvironmentFile=/opt/ha-bot/.env
 
 [Install]
 WantedBy=multi-user.target
