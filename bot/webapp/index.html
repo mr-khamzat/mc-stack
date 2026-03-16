@@ -15,6 +15,43 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"></noscript>
 <style>
+/* ── Skeleton loaders ───────────────────────────────────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: -600px 0; }
+  100% { background-position: 600px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg,
+    rgba(255,255,255,0.03) 0%,
+    rgba(255,255,255,0.08) 40%,
+    rgba(255,255,255,0.12) 50%,
+    rgba(255,255,255,0.08) 60%,
+    rgba(255,255,255,0.03) 100%);
+  background-size: 1200px 100%;
+  animation: shimmer 1.8s infinite linear;
+  border-radius: 10px;
+}
+.skel-card  { height: 58px; border-radius: 16px; margin-bottom: 8px; }
+.skel-line  { height: 13px; width: 65%; margin-bottom: 7px; }
+.skel-line.w90 { width: 90%; }
+.skel-line.w40 { width: 40%; }
+.skel-grid  { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; }
+.skel-grid .skel-card { height: 72px; margin: 0; }
+
+/* ── Ripple effect ─────────────────────────────────────────────────────── */
+@keyframes ripple-expand {
+  to { transform: scale(5); opacity: 0; }
+}
+.ripple-wave {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.20);
+  transform: scale(0);
+  animation: ripple-expand 0.55s ease-out forwards;
+  pointer-events: none;
+  z-index: 10;
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
@@ -471,6 +508,7 @@ body {
   padding-bottom: 100px; /* space for FAB button */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  transition: background 4s ease;
 }
 
 body::before {
@@ -598,9 +636,15 @@ body::before {
 .section-body {
   max-height: 0;
   overflow: hidden;
-  transition: max-height 0.4s cubic-bezier(0.4,0,0.2,1);
+  transition: max-height 0.44s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.32s ease;
+  opacity: 0;
+  pointer-events: none;
 }
-.section-body.open { max-height: 9999px; }
+.section-body.open {
+  max-height: 2800px;
+  opacity: 1;
+  pointer-events: auto;
+}
 .section-content { padding: 4px 16px 18px; }
 
 /* ── Status Section (redesigned) ── */
@@ -1450,7 +1494,7 @@ body::before {
   background: linear-gradient(135deg, #818cf8, #6366f1);
   box-shadow: 0 1px 6px rgba(99,102,241,0.55);
 }
-#sec-settings-body.open { max-height: 4000px; }
+
 
 /* ── Phase bars ── */
 .phase-row { margin-bottom: 9px; }
@@ -2391,12 +2435,13 @@ body.fab-open .fab-backdrop { display: block; }
         <span class="chevron">▴</span>
       </div>
     </div>
-    <div class="section-body open" id="sec-status-body">
+    <div class="section-body" id="sec-status-body">
       <div class="section-content">
 
         <!-- Hero: Power ring + Temp/Humid -->
         <div class="status-hero-row">
           <div class="power-ring-card">
+            <span id="status-wm-icon" aria-hidden="true" style="position:absolute;right:-8px;top:50%;transform:translateY(-50%);font-size:96px;opacity:0.05;pointer-events:none;filter:blur(1.5px);animation:weatherFloat 5s ease-in-out infinite;user-select:none;z-index:0;">🌤️</span>
             <div class="power-ring-wrap">
               <svg class="power-ring-svg" viewBox="0 0 120 120">
                 <circle class="power-ring-bg" cx="60" cy="60" r="45"/>
@@ -2620,7 +2665,7 @@ body.fab-open .fab-backdrop { display: block; }
       <span>💡 Свет</span>
       <span class="chevron">▴</span>
     </div>
-    <div class="section-body open" id="sec-lights-body">
+    <div class="section-body" id="sec-lights-body">
       <div class="section-content">
         <div class="lights-grid" id="lights-grid">
           <div style="color:#60608a; font-size:13px; text-align:center; padding:10px; grid-column:span 4">Загрузка...</div>
@@ -2658,6 +2703,10 @@ body.fab-open .fab-backdrop { display: block; }
             <div class="clim-val" id="clim-floor">—</div>
             <div class="clim-label">Пол °C</div>
           </div>
+        </div>
+        <div id="clim-spark-wrap" style="margin:8px 0 2px;padding:4px 2px;opacity:0.75;display:none">
+          <div style="font-size:9px;color:rgba(130,130,180,0.5);font-weight:700;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:4px">История температуры</div>
+          <div id="clim-spark"></div>
         </div>
         <div class="clim-slider-row">
           <span style="font-size:13px;color:#60608a">🔥 Уставка</span>
@@ -3094,13 +3143,15 @@ window.onunhandledrejection = function(e) {
 
 // ── Collapsible sections ───────────────────────────────────────────────────
 function toggleSection(id) {
-  const body = document.getElementById(id);
-  if (!body) return;
-  const header = body.previousElementSibling;
-  const icon = header ? header.querySelector('.chevron') : null;
-  const isOpen = body.classList.contains('open');
-  body.classList.toggle('open');
-  if (icon) icon.textContent = isOpen ? '▾' : '▴';
+  const el = document.getElementById(id);
+  if (!el) return;
+  const opening = !el.classList.contains('open');
+  el.classList.toggle('open');
+  const hdr = el.previousElementSibling;
+  if (hdr) {
+    const chev = hdr.querySelector('.chevron, .sec-chev');
+    if (chev) chev.textContent = opening ? '▴' : '▾';
+  }
 }
 
 // ── API ────────────────────────────────────────────────────────────────────
@@ -3332,6 +3383,7 @@ function applyStatus(d) {
   // --- Climate section ---
   if (d.temp_detskaia != null) {
     document.getElementById('clim-temp').textContent = parseFloat(d.temp_detskaia).toFixed(1);
+    pushClimTemp(parseFloat(d.temp_detskaia));
   }
   if (d.outdoor_temp != null) {
     document.getElementById('clim-outdoor').textContent = Math.round(d.outdoor_temp);
@@ -3457,6 +3509,10 @@ function applyStatus(d) {
       </div>
       ${forecastHtml}
       <div class="weather-updated">🕒 ${escapeHtml(w.updated ?? '')}</div>`;
+    const _wcEl = document.getElementById('weather-content');
+    if (_wcEl) _wcEl.dataset.loaded = '1';
+    const wmEl = document.getElementById('status-wm-icon');
+    if (wmEl) wmEl.textContent = wicon;
   }
 
   // --- Namaz widget ---
@@ -3788,6 +3844,9 @@ async function ensureAuth() {
 
 async function init() {
   const timer = setTimeout(hideLoading, 3000);
+  showSkeletons();
+  updateAmbientBg();
+  setInterval(updateAmbientBg, 3_600_000);
   applyAutoTheme();
   renderFab();
   startStatusClock();
@@ -4710,8 +4769,8 @@ function toggleSettings() {
   const body = document.getElementById('sec-settings-body');
   const chevron = document.getElementById('settings-chevron');
   const isOpen = body.classList.contains('open');
-  body.classList.toggle('open');
-  chevron.textContent = isOpen ? '▾' : '▴';
+  toggleSection('sec-settings-body');
+  if (chevron) chevron.textContent = isOpen ? '▾' : '▴';
   if (!isOpen && !settingsLoaded) loadSettings();
 }
 
@@ -8939,6 +8998,98 @@ async function _restorePushIfNeeded() {
     pushSubscribe(); // re-subscribe silently
   } catch(e) {}
 }
+
+// ── Skeleton loaders ──────────────────────────────────────────────────────
+function showSkeletons() {
+  // Weather skeleton (weather-content is dynamically populated — show shimmer while loading)
+  const wc = document.getElementById('weather-content');
+  if (wc && !wc.dataset.loaded) {
+    wc.innerHTML = `
+      <div class="skel-card skeleton"></div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px">
+        <div class="skel-card skeleton"></div><div class="skel-card skeleton"></div><div class="skel-card skeleton"></div>
+      </div>
+      <div class="skel-line skeleton w40"></div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+        <div class="skel-card skeleton"></div><div class="skel-card skeleton"></div><div class="skel-card skeleton"></div>
+      </div>`;
+  }
+  // Climate stats — static cards are already in HTML; mark loaded so re-calls don't overwrite
+  const cs = document.querySelector('.climate-stats');
+  if (cs) cs.dataset.loaded = '1';
+}
+
+// ── Ripple effect ──────────────────────────────────────────────────────────
+document.addEventListener('pointerdown', function rippleHandler(e) {
+  const btn = e.target.closest(
+    '.btn, .light-btn, .qa-btn, .clim-btn, .dpad-btn, .dpad-ok, ' +
+    '.family-ping-btn, .family-react-btn, .family-call-btn, ' +
+    '.home-away-btn, .timer-pre, .forecast-day, .nav-tab'
+  );
+  if (!btn) return;
+  const cs = getComputedStyle(btn);
+  if (cs.position === 'static') btn.style.position = 'relative';
+  if (cs.overflow === 'visible') btn.style.overflow = 'hidden';
+  const old = btn.querySelector('.ripple-wave');
+  if (old) old.remove();
+  const sz = Math.max(btn.offsetWidth, btn.offsetHeight) * 1.5;
+  const rect = btn.getBoundingClientRect();
+  const r = document.createElement('span');
+  r.className = 'ripple-wave';
+  r.style.cssText = `width:${sz}px;height:${sz}px;left:${e.clientX - rect.left - sz/2}px;top:${e.clientY - rect.top - sz/2}px`;
+  btn.appendChild(r);
+  r.addEventListener('animationend', () => r.remove(), { once: true });
+}, { passive: true });
+
+// ── Ambient background by time of day ─────────────────────────────────────
+const _AMBIENT = [
+  [0,  5,  'radial-gradient(ellipse 120% 60% at 50% -10%, rgba(15,18,55,0.95) 0%, rgba(7,7,18,1) 70%)'],
+  [6,  8,  'radial-gradient(ellipse 120% 60% at 30% -10%, rgba(42,22,18,0.9) 0%, rgba(12,9,28,1) 70%)'],
+  [9,  11, 'radial-gradient(ellipse 120% 60% at 60% -10%, rgba(14,22,55,0.85) 0%, rgba(8,9,24,1) 70%)'],
+  [12, 16, 'radial-gradient(ellipse 120% 60% at 50% -10%, rgba(11,14,36,0.8) 0%, rgba(8,8,20,1) 70%)'],
+  [17, 19, 'radial-gradient(ellipse 120% 60% at 35% -10%, rgba(32,12,55,0.92) 0%, rgba(10,6,24,1) 70%)'],
+  [20, 21, 'radial-gradient(ellipse 120% 60% at 40% -10%, rgba(24,10,45,0.95) 0%, rgba(9,6,22,1) 70%)'],
+  [22, 23, 'radial-gradient(ellipse 120% 60% at 50% -10%, rgba(12,14,48,0.96) 0%, rgba(6,6,18,1) 70%)'],
+];
+function updateAmbientBg() {
+  const h = new Date().getHours();
+  const slot = _AMBIENT.find(([a,b]) => h >= a && h <= b);
+  if (slot) document.body.style.background = slot[2];
+}
+
+// ── Climate sparkline ──────────────────────────────────────────────────────
+window._climHist = JSON.parse(localStorage.getItem('_climHist') || '[]');
+function pushClimTemp(val) {
+  if (val == null || isNaN(parseFloat(val))) return;
+  _climHist.push({ t: Date.now(), v: parseFloat(val) });
+  if (_climHist.length > 72) _climHist = _climHist.slice(-72);
+  try { localStorage.setItem('_climHist', JSON.stringify(_climHist.slice(-72))); } catch(_) {}
+  _renderClimSpark();
+}
+function _renderClimSpark() {
+  const el = document.getElementById('clim-spark');
+  const wrap = document.getElementById('clim-spark-wrap');
+  if (!el || _climHist.length < 3) return;
+  if (wrap) wrap.style.display = '';
+  const vals = _climHist.map(x => x.v);
+  const mn = Math.min(...vals), mx = Math.max(...vals);
+  const rng = mx - mn || 0.1;
+  const W = 280, H = 32;
+  const pts = vals.map((v, i) => {
+    const x = (i / (vals.length - 1)) * W;
+    const y = H - ((v - mn) / rng) * (H - 4) - 2;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  const last = vals[vals.length - 1];
+  const lx = W, ly = +(H - ((last - mn) / rng) * (H - 4) - 2).toFixed(1);
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:${H}px;display:block">
+    <defs><linearGradient id="sg" x1="0" x2="1" y1="0" y2="0"><stop offset="0%" stop-color="#6366f1" stop-opacity="0.3"/><stop offset="100%" stop-color="#818cf8" stop-opacity="0.8"/></linearGradient></defs>
+    <polyline points="${pts}" fill="none" stroke="url(#sg)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="${lx}" cy="${ly}" r="3" fill="#818cf8" opacity="0.9"/>
+    <text x="${lx - 4}" y="${ly - 6}" text-anchor="end" font-size="9" fill="rgba(180,180,240,0.7)" font-weight="700">${last.toFixed(1)}°</text>
+  </svg>`;
+}
+_renderClimSpark(); // render from localStorage on load
 
 // ── Service Worker (PWA) ─────────────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
