@@ -158,6 +158,8 @@ VAPID_CLAIMS = {"sub": "https://hub.office.mooo.com"}
 
 # ── Пути к файлам данных ───────────────────────────────────────────────────────
 DB_FILE            = Path("/opt/ha-bot/ha_bot.db")      # SQLite (основное хранилище)
+DB_BACKUP_DIR      = Path('/opt/ha-bot/backups')
+DB_BACKUP_DIR.mkdir(exist_ok=True)
 # Legacy JSON пути — используются только для первичной миграции в SQLite
 DEVICES_FILE       = Path("/opt/ha-bot/devices.json")
 SECTIONS_FILE      = Path("/opt/ha-bot/sections.json")
@@ -6942,6 +6944,53 @@ async def _chat_cleanup_loop():
             log.warning(f"chat_cleanup_loop: {e}")
 
 
+# ── Авто-бэкап БД ─────────────────────────────────────────────────────────────
+async def do_db_backup() -> str:
+    """Backup ha_bot.db, send to admin, rotate old backups (keep 7)."""
+    ts = datetime.now(MSK).strftime('%Y%m%d_%H%M%S')
+    backup_path = DB_BACKUP_DIR / f'ha_bot_{ts}.db'
+    # Atomic SQLite backup
+    src = sqlite3.connect(str(DB_FILE))
+    dst = sqlite3.connect(str(backup_path))
+    src.backup(dst)
+    dst.close()
+    src.close()
+    # Send to admin
+    from aiogram.types import FSInputFile
+    sz = backup_path.stat().st_size
+    doc = FSInputFile(str(backup_path), filename=backup_path.name)
+    await bot.send_document(
+        ADMIN_ID, doc,
+        caption=f'📦 <b>Бэкап ha_bot.db</b>\n'
+                f'📅 {ts}\n'
+                f'📏 {sz // 1024} КБ',
+        parse_mode='HTML'
+    )
+    # Rotate: keep last 7
+    all_baks = sorted(DB_BACKUP_DIR.glob('ha_bot_*.db'))
+    for old in all_baks[:-7]:
+        old.unlink(missing_ok=True)
+    return str(backup_path)
+
+
+async def db_backup_loop():
+    """Run daily DB backup at 03:00 MSK."""
+    while True:
+        try:
+            now = datetime.now(MSK)
+            target = now.replace(hour=3, minute=0, second=0, microsecond=0)
+            if target <= now:
+                target += timedelta(days=1)
+            wait_sec = (target - now).total_seconds()
+            await asyncio.sleep(wait_sec)
+            await do_db_backup()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            log.error(f'db_backup_loop error: {e}')
+            await asyncio.sleep(3600)  # retry in 1h on error
+
+
 # ── Photo Album ───────────────────────────────────────────────────────────────
 async def _web_photos_upload(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """POST /ha-app/api/photos/upload — multipart file upload."""
@@ -7632,6 +7681,85 @@ async def handle_document(msg: Message):
     except Exception as e:
         await msg.answer(f"❌ Ошибка восстановления: {e}")
 
+# ── /status command ───────────────────────────────────────────────────────────
+@dp.message(Command("status"))
+async def cmd_server_status(msg: Message):
+    if msg.from_user.id != ADMIN_ID:
+        return
+    lines = ['🖥️ <b>Статус сервера</b>\n']
+
+    # Systemd services
+    svcs = ['nginx', 'mongod', 'meshcentral', 'meshcentral-bot',
+            'awg-bot', 'ha-news-trigger', 'server-monitor', 'udp2raw']
+    lines.append('<b>🔧 Сервисы:</b>')
+    for svc in svcs:
+        try:
+            r = subprocess.run(['systemctl', 'is-active', svc],
+                               capture_output=True, text=True, timeout=3)
+            st = r.stdout.strip()
+        except Exception:
+            st = 'error'
+        icon = '🟢' if st == 'active' else ('🟡' if st == 'activating' else '🔴')
+        lines.append(f'  {icon} <code>{svc}</code>')
+
+    # Docker containers
+    lines.append('\n<b>🐳 Docker:</b>')
+    try:
+        r = subprocess.run(
+            ['docker', 'ps', '--format', '{{.Names}}\t{{.Status}}'],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in r.stdout.strip().splitlines():
+            if not line:
+                continue
+            parts = line.split('\t', 1)
+            name = parts[0]
+            status = parts[1] if len(parts) > 1 else '?'
+            icon = '🟢' if 'Up' in status else '🔴'
+            lines.append(f'  {icon} <code>{name}</code>')
+    except Exception as e:
+        lines.append(f'  ❌ docker ps failed: {e}')
+
+    # Uptime
+    try:
+        up = subprocess.run(['uptime', '-p'], capture_output=True, text=True, timeout=3).stdout.strip()
+        lines.append(f'\n<b>⏱ Аптайм:</b> {up}')
+    except Exception:
+        pass
+
+    # Disk
+    try:
+        df = subprocess.run(['df', '-h', '/'], capture_output=True, text=True, timeout=3).stdout.splitlines()
+        if len(df) > 1:
+            p = df[1].split()
+            lines.append(f'<b>💾 Диск /:</b> {p[2]} использ. / {p[1]} total ({p[4]})')
+    except Exception:
+        pass
+
+    # RAM
+    try:
+        mem = subprocess.run(['free', '-h', '--si'], capture_output=True, text=True, timeout=3).stdout.splitlines()
+        if len(mem) > 1:
+            p = mem[1].split()
+            lines.append(f'<b>🧠 RAM:</b> {p[2]} / {p[1]}')
+    except Exception:
+        pass
+
+    # Backup info
+    try:
+        baks = sorted(DB_BACKUP_DIR.glob('ha_bot_*.db'))
+        if baks:
+            last = baks[-1]
+            sz = last.stat().st_size // 1024
+            lines.append(f'\n<b>📦 Последний бэкап:</b> {last.name} ({sz} КБ)')
+        else:
+            lines.append('\n<b>📦 Бэкапы:</b> нет')
+    except Exception:
+        pass
+
+    await msg.answer('\n'.join(lines), parse_mode='HTML')
+
+
 # ── /app command ──────────────────────────────────────────────────────────────
 @dp.message(Command("app"))
 async def cmd_app(msg: Message):
@@ -7735,6 +7863,7 @@ async def main():
     asyncio.create_task(_ha_state_watch_loop()) # SSE real-time обновления
     asyncio.create_task(_reminders_check_loop()) # проверка напоминаний каждые 60с
     asyncio.create_task(_chat_cleanup_loop())    # авто-удаление чата старше 3 дней
+    asyncio.create_task(db_backup_loop())        # ежедневный бэкап БД в 03:00 МСК
     _activity_log("bot_start", f"v{_BOT_VERSION}")
     await bot.send_message(
         ADMIN_ID,
