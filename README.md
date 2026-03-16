@@ -15,7 +15,16 @@ PWA (устанавливается на телефон), поддержкой �
 
 ## Скриншоты
 
-> *Добавь сюда скриншоты Mini App и бота*
+<p align="center">
+  <img src="screenshots/Screenshot_40.png" width="220" alt="Главный экран — статус, мощность, климат"/>
+  <img src="screenshots/Screenshot_41.png" width="220" alt="Все разделы, компактный бар"/>
+  <img src="screenshots/Screenshot_43.png" width="220" alt="Климат — температура, история, тёплый пол"/>
+</p>
+<p align="center">
+  <img src="screenshots/Screenshot_44.png" width="220" alt="Погода — виджет с прогнозом"/>
+  <img src="screenshots/Screenshot_42.png" width="220" alt="Семья — присутствие, WebRTC звонок"/>
+  <img src="screenshots/Screenshot_45.png" width="220" alt="Камеры и список покупок"/>
+</p>
 
 ---
 
