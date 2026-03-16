@@ -670,6 +670,7 @@ body::before {
   max-width: 600px;
   margin: 0 auto;
   padding: 12px 14px 0;
+  padding-top: calc(12px + env(safe-area-inset-top, 0px));
   position: relative;
   z-index: 1;
   overflow-x: hidden;
