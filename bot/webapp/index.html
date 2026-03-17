@@ -3918,7 +3918,7 @@ function handleSSEUpdate(d) {
   if (d.type === 'call_signal') { _handleCallSignal(d); return; }
   // Family members added/removed in HA
   if (d.type === 'family_members_changed') {
-    window._shopFamilyCache = null; // force reload username mapping
+    _shopFamilyCache = null; window._shopFamilyCache = null; // force reload username mapping
     return;
   }
   if (!d.entity_id) return;
@@ -6252,7 +6252,7 @@ async function openFamilyMemberConfig(username, displayName) {
     try {
       await api('/family-type', 'PATCH', {username, family_type: famType, family_pings: customPings});
       // Обновляем кеш
-      window._shopFamilyCache = null;
+      _shopFamilyCache = null; window._shopFamilyCache = null;
       await _shopGetFamily();
       renderFamilyCards();
       sheet.remove(); document.getElementById('fam-config-bd')?.remove();
@@ -6575,6 +6575,7 @@ async function _shopGetFamily() {
     const fam = (lastStatus && lastStatus.family) ? lastStatus.family : {};
     _shopFamilyCache = Object.keys(fam).map(n => ({username: n, display_name: n}));
   }
+  window._shopFamilyCache = _shopFamilyCache; // синхронизируем window-свойство (let != window.let)
   return _shopFamilyCache;
 }
 

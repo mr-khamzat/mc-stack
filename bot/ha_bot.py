@@ -87,18 +87,6 @@ HA Home Bot — Telegram-бот + Mini App для управления умны�
 
 Версия: 3.5  |  Язык: Python 3.11+  |  Лицензия: MIT
 """
-# ════════════════════════════════════════════════════════════════════════════════
-# СТРУКТУРА ФАЙЛА:
-#   Строки   90-690:  Импорты, загрузка .env, SQLite БД, FSM состояния
-#   Строки  690-900:  Подключение к Home Assistant (REST API, WebSocket)
-#   Строки  900-1400: Вспомогательные функции (погода, семья, клавиатуры)
-#   Строки 1400-1710: Команды бота (/start, /status, /lights ...)
-#   Строки 1710-3230: Управление устройствами HA (свет, климат, сцены ...)
-#   Строки 3230-3790: Mini App API эндпоинты — статика и первые роуты
-#   Строки 3790-7630: Остальные API роуты (алерты, сцены, устройства, HA прокси)
-#   Строки 7630-8028: Запуск aiohttp веб-сервера, регистрация всех роутов
-#   Строки 8028-8074: Точка входа main() — инициализация и start_polling
-# ════════════════════════════════════════════════════════════════════════════════
 import asyncio
 import hashlib
 import hmac
@@ -155,8 +143,6 @@ WEBAPP_URL   = os.environ.get("WEBAPP_URL", "").rstrip("/") + "/"  # читае�
 WEBAPP_DIR   = Path(os.environ.get("WEBAPP_DIR", "/opt/ha-bot/webapp"))
 # Логины HA-пользователей с ролью admin в мини апс (из .env, через запятую)
 _HA_WEBAPP_ADMINS = {u.strip().lower() for u in os.environ.get("HA_WEBAPP_ADMINS", "").split(",") if u.strip()}
-# SSL domains to check (из .env через запятую, или дефолтный список)
-_SSL_CHECK_DOMAINS = [d.strip() for d in os.environ.get("SSL_CHECK_DOMAINS", "").split(",") if d.strip()]
 
 FAMILY_USERS_FILE  = Path("/opt/ha-bot/family_users.json")
 PHOTOS_DIR         = Path("/opt/ha-bot/photos")
@@ -168,7 +154,7 @@ VOICES_DIR.mkdir(exist_ok=True)
 VAPID_PRIVATE_PEM_FILE = Path("/opt/ha-bot/vapid_private.pem")
 VAPID_PUBLIC_FILE      = Path("/opt/ha-bot/vapid_public.txt")
 VAPID_PUBLIC_KEY: str  = VAPID_PUBLIC_FILE.read_text().strip() if VAPID_PUBLIC_FILE.exists() else ""
-VAPID_CLAIMS = {"sub": WEBAPP_URL.rstrip("/") or "https://your-domain.example.com"}
+VAPID_CLAIMS = {"sub": "https://hub.office.mooo.com"}
 
 # ── Пути к файлам данных ───────────────────────────────────────────────────────
 DB_FILE            = Path("/opt/ha-bot/ha_bot.db")      # SQLite (основное хранилище)
@@ -450,17 +436,6 @@ def _db_migrate():
         except Exception as e:
             log.error(f"DB migrate night_mode: {e}")
 
-# ── НАСТРОЙ ПОД СЕБЯ: Пороги алертов и entity_id сенсоров ────────────────────
-# Эти значения — дефолты при первом запуске. После запуска хранятся в SQLite.
-# Менять можно через Mini App (Настройки → Алерты) или через API /api/alerts.
-#
-#   power_threshold   — порог мощности в Вт (алерт если превышен)
-#   temp_min/max      — мин/макс температура в °C (алерт за границами)
-#   quiet_hours_*     — "тихие часы": алерты не отправляются (МСК, 23:00–07:00)
-#   entity_power      — entity_id сенсора мощности из HA
-#   entity_temp/hum   — entity_id сенсоров температуры и влажности из HA
-#   entity_inet       — entity_id binary_sensor состояния интернета из HA
-# entity_id найти: HA → Developer Tools → States → ищи нужный сенсор
 _ALERTS_DEFAULTS = {
     "power_threshold":   3000,
     "temp_min":          18,
@@ -1092,12 +1067,13 @@ async def get_family() -> dict:
                 return members
     except Exception as e:
         log.error(f"get_family: {e}")
-    # ── НАСТРОЙ ПОД СЕБЯ: entity_id членов семьи из Home Assistant ──────────────
-    # Это запасной список — используется только если HA недоступен и кеш пуст.
-    # В норме бот берёт person.* автоматически из HA Developer Tools → States.
-    # Найти entity_id: HA → Developer Tools → States → фильтр "person."
     # fallback to last good cache or hardcoded defaults
-    return _family_cache or {}
+    return _family_cache or {
+        "Хамзат": "person.khamzat",
+        "Айза":   "person.aiza",
+        "Сулим":  "person.sulim",
+        "Камила": "person.kamila",
+    }
 
 # ── Погода Open-Meteo ─────────────────────────────────────────────────────────
 WMO_CODES = {
@@ -1730,13 +1706,6 @@ async def status_refresh(cb: CallbackQuery):
     await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
 # ── 💡 Свет + 🛠 Управление устройствами ─────────────────────────────────────
-# ── НАСТРОЙ ПОД СЕБЯ: Соответствие entity_id → название в боте ───────────────
-# Это дефолтный список устройств — используется при первом запуске или если
-# устройство ещё не добавлено в SQLite БД (ha_bot.db таблица devices).
-# После первого запуска устройства управляются через бота (раздел Устройства).
-# entity_id можно найти: HA → Developer Tools → States
-# Ключ — entity_id из HA, значение — отображаемое имя, иконка, секция, порядок.
-# section: "lights" — свет/розетки, "cameras" — камеры Frigate
 # Defaults — первый запуск или если devices.json не содержит эти entity
 _DEVICES_DEFAULTS: dict = {
     "light.svet_krovat":           {"name": "Кровать",        "icon": "🛏️", "section": "lights",   "enabled": True,  "order": 1},
@@ -4235,7 +4204,7 @@ async def _web_activity_clear(request: aiohttp_web.Request) -> aiohttp_web.Respo
 
 # ── Web Push (VAPID) ──────────────────────────────────────────────────────────
 
-async def push_notify(username: str | None, title: str, body: str, url: str = "/ha-app/") -> int:
+async def push_notify(username: str | None, title: str, body: str, url: str = "/ha-app/", tag: str = "ha-notify") -> int:
     """Send Web Push notification to all subscriptions for username (or all if None).
     Returns count of successful sends."""
     log.info(f"push_notify: called for username={username!r} title={title!r}")
@@ -4261,7 +4230,7 @@ async def push_notify(username: str | None, title: str, body: str, url: str = "/
         return 0
 
     sent = 0
-    data = json.dumps({"title": title, "body": body, "url": url}, ensure_ascii=False)
+    data = json.dumps({"title": title, "body": body, "url": url, "tag": tag}, ensure_ascii=False)
     dead_endpoints: list[str] = []
     for row in rows:
         try:
@@ -4370,7 +4339,7 @@ async def _web_push_status(request: aiohttp_web.Request) -> aiohttp_web.Response
         content_type="application/json", headers=_CORS_HEADERS)
 
 
-_VERSION_FILE = os.path.join(os.path.dirname(__file__), "..", "bot", "webapp", "version.txt")
+_VERSION_FILE = os.path.join(os.path.dirname(__file__), "webapp", "version.txt")
 _GH_REPO      = "mr-khamzat/mc-stack"
 
 def _read_local_sha() -> str:
@@ -4420,17 +4389,21 @@ async def _web_check_update(request: aiohttp_web.Request) -> aiohttp_web.Respons
 
 
 async def _web_do_update(request: aiohttp_web.Request) -> aiohttp_web.Response:
-    """POST /ha-app/api/do-update — скачать и применить обновления (admin only)."""
+    """POST /ha-app/api/do-update — скачать и применить обновления (admin only).
+    Обновляет: webapp/index.html, webapp/sw.js из git-репо /opt/mc-stack-git.
+    Bot.py обновляется отдельно командой /update в боте (чтобы не затереть конфиг).
+    """
     if not _check_token(request):
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
     if request.headers.get("X-HA-User-Role", "") != "admin":
         return aiohttp_web.Response(status=403, text="Admin only", headers=_CORS_HEADERS)
     import subprocess, shutil
-    git_dir    = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    bot_dir    = os.path.dirname(os.path.abspath(__file__))
+    git_dir   = "/opt/mc-stack-git"
+    bot_dir   = os.path.dirname(__file__)
     webapp_src = os.path.join(git_dir, "bot", "webapp")
     webapp_dst = os.path.join(bot_dir, "webapp")
     try:
+        # git pull
         res = subprocess.run(
             ["git", "-C", git_dir, "pull", "--ff-only"],
             capture_output=True, text=True, timeout=60
@@ -4438,6 +4411,8 @@ async def _web_do_update(request: aiohttp_web.Request) -> aiohttp_web.Response:
         if res.returncode != 0:
             raise Exception(f"git pull failed: {res.stderr.strip()[:200]}")
         git_output = res.stdout.strip()
+
+        # Copy webapp files (no personal data)
         copied = []
         for fname in ("index.html", "sw.js"):
             src = os.path.join(webapp_src, fname)
@@ -4445,17 +4420,24 @@ async def _web_do_update(request: aiohttp_web.Request) -> aiohttp_web.Response:
             if os.path.exists(src):
                 shutil.copy2(src, dst)
                 copied.append(fname)
+
+        # Get new SHA and write version
         new_sha_res = subprocess.run(
             ["git", "-C", git_dir, "rev-parse", "HEAD"],
             capture_output=True, text=True, timeout=10
         )
         new_sha = new_sha_res.stdout.strip()
-        version_file = os.path.join(webapp_dst, "version.txt")
-        with open(version_file, "w") as vf:
+        with open(_VERSION_FILE, "w") as vf:
             vf.write(new_sha)
+
         log.info(f"do-update: {git_output}, copied: {copied}, sha: {new_sha[:7]}")
         return aiohttp_web.Response(
-            text=json.dumps({"ok": True, "git": git_output, "copied": copied, "sha": new_sha[:7]}, ensure_ascii=False),
+            text=json.dumps({
+                "ok": True,
+                "git": git_output,
+                "copied": copied,
+                "sha": new_sha[:7],
+            }, ensure_ascii=False),
             content_type="application/json", headers=_CORS_HEADERS)
     except Exception as e:
         log.error(f"do-update error: {e}")
@@ -6110,8 +6092,19 @@ async def _web_family_type(request: aiohttp_web.Request) -> aiohttp_web.Response
             fam_type = "other"
         with _DB_LOCK:
             c = _db()
-            row = c.execute("SELECT permissions FROM webapp_users WHERE username=?", (username,)).fetchone()
+            # Поиск по username; если не найден — пробуем display_name (фоллбэк для кириллических имён из HA)
+            row = c.execute("SELECT permissions, username FROM webapp_users WHERE username=?", (username,)).fetchone()
             if not row:
+                # Fallback: ищем по display_name через Python (SQLite lower() не работает с кириллицей)
+                all_rows = c.execute("SELECT permissions, username, display_name FROM webapp_users").fetchall()
+                for r in all_rows:
+                    if r[2] and r[2].lower() == username.lower():
+                        log.info(f"family_type: fallback by display_name: {repr(username)} → {repr(r[1])}")
+                        username = r[1]
+                        row = r
+                        break
+            if not row:
+                log.warning(f"family_type: user not found: {repr(username)}")
                 return aiohttp_web.Response(status=404, text='{"error":"user not found"}',
                                             content_type="application/json", headers=_CORS_HEADERS)
             perms = json.loads(row[0]) if row[0] else {}
@@ -6283,7 +6276,12 @@ async def _web_presence_stats(request: aiohttp_web.Request) -> aiohttp_web.Respo
     """GET /ha-app/api/presence-stats — время дома за 7 дней."""
     if not _check_token(request):
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
-    family = await get_family()
+    family = {
+        "Хамзат": "person.khamzat",
+        "Айза":   "person.aiza",
+        "Сулим":  "person.sulim",
+        "Камила": "person.kamila",
+    }
     now   = datetime.now(timezone.utc)
     start = (now - timedelta(days=7)).isoformat()
     eids  = ",".join(family.values())
@@ -6790,7 +6788,7 @@ async def _web_night_mode_post(request: aiohttp_web.Request) -> aiohttp_web.Resp
             trigger = [{"platform": "time", "at": nm_time}]
             conditions = []
             if cfg.get("check_presence"):
-                conditions = []
+                conditions = [{"condition": "state", "entity_id": "person.khamzat", "state": "home"}]
             ha_actions = []
             for a in scene.get("actions", []):
                 eid = a.get("entity_id", "")
@@ -7335,10 +7333,12 @@ async def ssl_check_loop():
 
 async def check_ssl_certs():
     """Check SSL certificate expiry for all project domains."""
-    # Домены берутся из SSL_CHECK_DOMAINS в .env (через запятую)
-    # Если переменная пуста — проверяется только домен из WEBAPP_URL
-    webapp_host = WEBAPP_URL.rstrip("/").replace("https://", "").replace("http://", "").split("/")[0]
-    domains = _SSL_CHECK_DOMAINS or ([webapp_host] if webapp_host else [])
+    domains = [
+        'panelwin.mooo.com',
+        'subwin.mooo.com',
+        'hub.office.mooo.com',
+        'nodawin.mooo.com',
+    ]
     alerts = []
     ok = []
     loop = asyncio.get_event_loop()
@@ -7688,8 +7688,8 @@ def _timeline_fmt(action: str, detail: str, username: str) -> tuple[str, str]:
 
 
 # ── WebRTC TURN credentials ───────────────────────────────────────────────────
-_TURN_SECRET = os.environ.get("TURN_SECRET", "change_me_turn_secret")
-_TURN_HOST   = os.environ.get("SERVER_IP", "")
+_TURN_SECRET = "ha_turn_secret_2026_kh"
+_TURN_HOST   = "144.31.89.167"
 
 async def _web_turn_creds(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/api/turn-creds — short-lived TURN credentials (RFC 5389 HMAC)."""
@@ -7793,7 +7793,7 @@ async def _web_call_signal(request: aiohttp_web.Request) -> aiohttp_web.Response
                 cid = c2.execute("SELECT last_insert_rowid()").fetchone()[0]
                 c2.commit()
             _call_sessions[f"{from_user}:{to_user}"] = {"id": cid, "answered_at": None}
-            asyncio.create_task(push_notify(to_user, f"📞 {display} звонит", "Входящий звонок", "/ha-app/"))
+            asyncio.create_task(push_notify(to_user, f"📞 {display} звонит", "Нажмите чтобы ответить", "/ha-app/", tag="incoming-call"))
         elif sig_type == "answer":
             _pending_calls.pop(from_user, None)
             key = f"{to_user}:{from_user}"  # to_user is caller, from_user is callee
@@ -8255,10 +8255,6 @@ async def main():
       7. _ha_state_watch_loop() — фон: WebSocket для SSE real-time
       8. dp.start_polling()  — основной цикл Telegram bot polling
     """
-    # ── Последовательность инициализации (важен порядок!) ────────────────────────
-    # 1. Сначала БД и устройства — они нужны всем фоновым задачам
-    # 2. Потом фоновые задачи (asyncio.create_task — не блокируют)
-    # 3. Последним — dp.start_polling() (блокирует, пока бот работает)
     log.info(f"HA Bot v{_BOT_VERSION} starting...")
     _db_init()             # создать таблицы SQLite + однократная миграция из JSON
     _dev_init()            # загрузить devices из DB → заполнить LIGHTS/LIGHTS_ICON
