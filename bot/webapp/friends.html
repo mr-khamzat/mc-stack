@@ -990,7 +990,7 @@ html, body {
                 </select>
                 <div style="display:flex;gap:8px;align-items:center">
                   <div style="flex:1">
-                    <input id="invite-days" class="form-input" type="number" placeholder="Дней действия" value="7" min="1" max="365" style="font-size:13px;padding:10px 14px">
+                    <input id="invite-days" class="form-input" type="number" placeholder="Дней действия" value="365" min="1" max="3650" style="font-size:13px;padding:10px 14px">
                   </div>
                   <button class="btn btn-primary" onclick="createInvite()" style="white-space:nowrap">Создать ссылку</button>
                 </div>
@@ -1026,6 +1026,19 @@ html, body {
           </div>
         </div>
 
+        <!-- MY GROUP TAB -->
+        <div id="tab-mygroup" class="tab-pane">
+          <div class="page-header">
+            <div>
+              <div class="page-title">🏠 <span id="mygroup-title">Моя группа</span></div>
+            </div>
+            <button class="btn btn-ghost" onclick="_tabLoaded.mygroup=false;loadMyGroup()" style="padding:8px 12px;font-size:12px">🔄</button>
+          </div>
+          <div id="mygroup-content">
+            <div class="loader"><div class="loader-dot"></div><div class="loader-dot"></div><div class="loader-dot"></div></div>
+          </div>
+        </div>
+
       </div><!-- /main-content -->
 
       <!-- Bottom Nav -->
@@ -1041,6 +1054,10 @@ html, body {
         <button class="nav-item" id="nav-prayers" onclick="switchTab('prayers')">
           <span class="nav-icon">🕌</span>
           <span class="nav-label">Намаз</span>
+        </button>
+        <button class="nav-item" id="nav-mygroup" onclick="switchTab('mygroup')" style="display:none">
+          <span class="nav-icon">🏠</span>
+          <span class="nav-label">Группа</span>
         </button>
         <button class="nav-item" id="nav-admin" onclick="switchTab('admin')" style="display:none">
           <span class="nav-icon">👑</span>
@@ -1064,10 +1081,11 @@ html, body {
 
 // ── API helpers ──────────────────────────────────────────────────────────────
 const API_BASE = '/friends/api';
-let FR_TOKEN   = localStorage.getItem('fr_token')   || '';
-let FR_USERNAME = localStorage.getItem('fr_username') || '';
-let FR_DISPLAY  = localStorage.getItem('fr_display')  || '';
-let FR_ROLE     = localStorage.getItem('fr_role')     || '';
+let FR_TOKEN      = localStorage.getItem('fr_token')      || '';
+let FR_USERNAME   = localStorage.getItem('fr_username')   || '';
+let FR_DISPLAY    = localStorage.getItem('fr_display')    || '';
+let FR_ROLE       = localStorage.getItem('fr_role')       || '';
+let FR_GROUP_ROLE = localStorage.getItem('fr_group_role') || '';
 
 async function frApi(path, method, body) {
   method = method || 'GET';
@@ -1175,22 +1193,25 @@ async function doRegister() {
 }
 
 function _saveAuth(data) {
-  FR_TOKEN    = data.token   || '';
-  FR_USERNAME = data.username || '';
-  FR_DISPLAY  = data.display_name || data.username || '';
-  FR_ROLE     = data.role    || 'user';
-  localStorage.setItem('fr_token',    FR_TOKEN);
-  localStorage.setItem('fr_username', FR_USERNAME);
-  localStorage.setItem('fr_display',  FR_DISPLAY);
-  localStorage.setItem('fr_role',     FR_ROLE);
+  FR_TOKEN      = data.token          || '';
+  FR_USERNAME   = data.username       || '';
+  FR_DISPLAY    = data.display_name   || data.username || '';
+  FR_ROLE       = data.role           || 'user';
+  FR_GROUP_ROLE = data.group_role     || '';
+  localStorage.setItem('fr_token',      FR_TOKEN);
+  localStorage.setItem('fr_username',   FR_USERNAME);
+  localStorage.setItem('fr_display',    FR_DISPLAY);
+  localStorage.setItem('fr_role',       FR_ROLE);
+  localStorage.setItem('fr_group_role', FR_GROUP_ROLE);
 }
 
 function doLogout() {
-  FR_TOKEN = FR_USERNAME = FR_DISPLAY = FR_ROLE = '';
+  FR_TOKEN = FR_USERNAME = FR_DISPLAY = FR_ROLE = FR_GROUP_ROLE = '';
   localStorage.removeItem('fr_token');
   localStorage.removeItem('fr_username');
   localStorage.removeItem('fr_display');
   localStorage.removeItem('fr_role');
+  localStorage.removeItem('fr_group_role');
   _stopSSE();
   showScreen('screen-login');
 }
@@ -1216,10 +1237,12 @@ function _startPendingPoll() {
 // ── Main app init ─────────────────────────────────────────────────────────────
 function _initMain() {
   showScreen('screen-main');
-  // Show admin tab if admin
   const adminNav = document.getElementById('nav-admin');
   if (FR_ROLE === 'admin') { adminNav.style.display = ''; }
   else { adminNav.style.display = 'none'; }
+  const groupNav = document.getElementById('nav-mygroup');
+  if (FR_GROUP_ROLE === 'admin' && FR_ROLE !== 'admin') { groupNav.style.display = ''; }
+  else { groupNav.style.display = 'none'; }
   switchTab('contacts');
   _startSSE();
   setTimeout(_checkPendingCall, 1200);
@@ -1244,6 +1267,7 @@ function switchTab(name) {
     if (name === 'prayers')  loadPrayers();
     if (name === 'admin')    loadAdminUsers();
     if (name === 'profile')  loadProfile();
+    if (name === 'mygroup')  loadMyGroup();
   }
 }
 
@@ -1612,16 +1636,8 @@ async function _loadGuestWeather(lat, lon) {
 function loadPrayers() {
   const pc = document.getElementById('prayers-content');
   pc.innerHTML = '<div class="loader"><div class="loader-dot"></div><div class="loader-dot"></div><div class="loader-dot"></div></div>';
-  if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(
-      function(pos) { _loadGuestPrayers(pos.coords.latitude, pos.coords.longitude); },
-      function() {
-        pc.innerHTML = '<div style="color:var(--text3);font-size:13px;text-align:center;padding:24px">Разрешите доступ к геолокации 📍</div>';
-      }
-    );
-  } else {
-    pc.innerHTML = '<div style="color:var(--text3);font-size:13px;text-align:center;padding:24px">Геолокация не поддерживается</div>';
-  }
+  // Fixed Grozny coordinates — same as HA app (43.31, 45.69)
+  _loadGuestPrayers(43.31, 45.69);
 }
 
 async function _loadGuestPrayers(lat, lon) {
@@ -1696,6 +1712,7 @@ async function loadAdminUsers() {
         '</div>' +
         '<div class="user-row-actions">' +
           (u.status === 'pending' ? '<button class="action-btn action-approve" title="Одобрить" onclick="approveUser(' + JSON.stringify(u.username) + ')">✅</button>' : '') +
+          (u.role !== 'admin' ? '<button class="action-btn" title="' + (u.group_role === 'admin' ? 'Снять с роли админа группы' : 'Назначить админом группы') + '" onclick="toggleGroupAdmin(' + JSON.stringify(u.username) + ',' + JSON.stringify(u.group_role || '') + ')" style="' + (u.group_role === 'admin' ? 'background:rgba(250,204,21,0.25);color:#fde047' : 'background:rgba(99,102,241,0.15);color:#a5b4fc') + '">👑</button>' : '') +
           '<button class="action-btn action-delete" title="Удалить" onclick="deleteUser(' + JSON.stringify(u.username) + ')">🗑</button>' +
         '</div>' +
       '</div>';
@@ -1718,6 +1735,16 @@ async function deleteUser(username) {
   try {
     await frApi('/admin/users/' + encodeURIComponent(username), 'DELETE');
     showToast('🗑 Удалён');
+    loadAdminUsers();
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+async function toggleGroupAdmin(username, currentGroupRole) {
+  const newRole = currentGroupRole === 'admin' ? '' : 'admin';
+  try {
+    await frApi('/admin/users/' + encodeURIComponent(username), 'PATCH', { group_role: newRole });
+    showToast(newRole === 'admin' ? '👑 Назначен админом группы' : '👤 Снят с роли админа группы');
+    _tabLoaded.admin = false;
     loadAdminUsers();
   } catch(e) { showToast('❌ ' + e.message); }
 }
@@ -1783,7 +1810,7 @@ async function loadAdminInvites() {
         '<div class="invite-row-top">' +
           '<div>' +
             '<div style="font-size:13px;font-weight:600;color:var(--text)">' + escapeHtml(inv.group_name || 'Без группы') + '</div>' +
-            '<div class="invite-row-meta">Истекает: ' + exp + '</div>' +
+            '<div class="invite-row-meta">Истекает: ' + exp + ' · Использован: ' + (inv.use_count || 0) + ' раз</div>' +
           '</div>' +
           '<div style="display:flex;gap:6px">' +
             '<button class="action-btn" style="background:rgba(99,102,241,0.2);color:#a5b4fc" title="Копировать" onclick="copyInviteLink(' + JSON.stringify(link) + ')">📋</button>' +
@@ -1831,6 +1858,97 @@ async function deleteInvite(token) {
     await frApi('/admin/invites/' + encodeURIComponent(token), 'DELETE');
     showToast('🗑 Удалено');
     loadAdminInvites();
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+// ── My Group (group admin) ────────────────────────────────────────────────────
+async function loadMyGroup() {
+  const el = document.getElementById('mygroup-content');
+  if (!el) return;
+  el.innerHTML = '<div class="loader"><div class="loader-dot"></div><div class="loader-dot"></div><div class="loader-dot"></div></div>';
+  try {
+    const data = await frApi('/my-group');
+    const group = data.group || {};
+    const members = data.members || [];
+    const invites = data.invites || [];
+
+    const titleEl = document.getElementById('mygroup-title');
+    if (titleEl && group.name) titleEl.textContent = group.name;
+
+    const inviteRows = invites.map(function(inv) {
+      const link = location.origin + '/friends/?invite=' + inv.token;
+      const exp = inv.expires_at ? new Date(inv.expires_at).toLocaleDateString('ru') : '—';
+      return '<div class="invite-row">' +
+        '<div class="invite-row-top">' +
+          '<div><div class="invite-row-meta">Истекает: ' + exp + ' · Использован: ' + (inv.use_count || 0) + ' раз</div></div>' +
+          '<div style="display:flex;gap:6px">' +
+            '<button class="action-btn" style="background:rgba(99,102,241,0.2);color:#a5b4fc" onclick="copyInviteLink(' + JSON.stringify(link) + ')">📋</button>' +
+            '<button class="action-btn action-delete" onclick="deleteMyGroupInvite(' + JSON.stringify(inv.token) + ')">🗑</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="invite-row-link" onclick="copyInviteLink(' + JSON.stringify(link) + ')">' + escapeHtml(link) + '</div>' +
+      '</div>';
+    }).join('');
+
+    const memberRows = members.map(function(m) {
+      return '<div class="user-row">' +
+        '<div class="user-row-info">' +
+          '<div class="user-row-name">' + escapeHtml(m.display_name || m.username) + '</div>' +
+          '<div class="user-row-meta">@' + escapeHtml(m.username) + '</div>' +
+        '</div>' +
+        '<div class="user-row-actions">' +
+          '<button class="action-btn action-delete" title="Удалить из группы" onclick="deleteMyGroupMember(' + JSON.stringify(m.username) + ')">🗑</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+
+    el.innerHTML =
+      '<div class="card" style="margin-bottom:16px">' +
+        '<div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:10px">🔗 Ссылки для вступления</div>' +
+        (inviteRows || '<div style="color:var(--text3);font-size:13px">Нет активных ссылок</div>') +
+        '<button class="btn btn-primary" onclick="createMyGroupInvite()" style="margin-top:12px;width:100%">+ Создать ссылку</button>' +
+      '</div>' +
+      '<div class="card">' +
+        '<div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:10px">👥 Участники (' + members.length + ')</div>' +
+        (memberRows || '<div style="color:var(--text3);font-size:13px">Нет активных участников</div>') +
+      '</div>';
+  } catch(e) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">❌</div>' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+async function createMyGroupInvite() {
+  try {
+    const data = await frApi('/my-group/invite', 'POST');
+    showToast('✅ Ссылка создана');
+    copyInviteLink(location.origin + data.url);
+    _tabLoaded.mygroup = false;
+    loadMyGroup();
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+async function deleteMyGroupInvite(token) {
+  if (!confirm('Удалить ссылку?')) return;
+  try {
+    await frApi('/my-group/invite/' + encodeURIComponent(token), 'DELETE');
+    showToast('🗑 Ссылка удалена');
+    _tabLoaded.mygroup = false;
+    loadMyGroup();
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+async function deleteMyGroupMember(username) {
+  if (!confirm('Удалить @' + username + ' из группы?')) return;
+  try {
+    const method = 'DELETE';
+    const res = await fetch(API_BASE + '/my-group/members/' + encodeURIComponent(username), {
+      method: method,
+      headers: { 'Content-Type': 'application/json', 'X-FR-Token': FR_TOKEN }
+    });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'HTTP ' + res.status); }
+    showToast('🗑 Удалён из группы');
+    _tabLoaded.mygroup = false;
+    loadMyGroup();
   } catch(e) { showToast('❌ ' + e.message); }
 }
 
@@ -2373,7 +2491,7 @@ document.addEventListener('keydown', function(e) {
     sessionStorage.setItem('fr_came_from_ha', '1');
     FR_TOKEN = ssoToken;
     frApi('/me').then(function(me) {
-      _saveAuth({ token: ssoToken, username: me.username, display_name: me.display_name, role: me.role });
+      _saveAuth({ token: ssoToken, username: me.username, display_name: me.display_name, role: me.role, group_role: me.group_role || '' });
       document.getElementById('back-to-ha-btn').classList.add('visible');
       _initMain();
     }).catch(function() {
@@ -2405,7 +2523,9 @@ document.addEventListener('keydown', function(e) {
         _startPendingPoll();
       } else if (me.status === 'active') {
         FR_ROLE = me.role || FR_ROLE;
+        FR_GROUP_ROLE = me.group_role || '';
         localStorage.setItem('fr_role', FR_ROLE);
+        localStorage.setItem('fr_group_role', FR_GROUP_ROLE);
         _initMain();
       } else {
         doLogout();

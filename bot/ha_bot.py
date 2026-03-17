@@ -4036,14 +4036,24 @@ _CORS_HEADERS = {
 # In-memory кеш путей аватаров (username → entity_picture path)
 _user_avatar_cache: dict[str, str] = {}
 
+_HA_AVATARS_DIR = Path("/opt/ha-bot/avatars/ha")
+
 async def _web_user_avatar(request: aiohttp_web.Request) -> aiohttp_web.Response:
-    """GET /ha-app/api/user-avatar/{username} — прокси аватара из HA с bot-токеном."""
+    """GET /ha-app/api/user-avatar/{username} — сначала локальный аватар, потом HA."""
     if not _check_token(request):
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
     username = request.match_info.get("username", "")
+    # 1. Проверить локально загруженный аватар
+    for ext in ("jpg", "jpeg", "png", "webp"):
+        p = _HA_AVATARS_DIR / f"{username}.{ext}"
+        if p.exists():
+            ct = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
+            return aiohttp_web.Response(body=p.read_bytes(), content_type=ct,
+                                        headers={"Cache-Control": "max-age=3600",
+                                                 **_CORS_HEADERS})
+    # 2. Fallback: HA entity_picture
     ep = _user_avatar_cache.get(username)
     if not ep:
-        # Попробуем загрузить из HA напрямую
         try:
             d = await ha_get(f"states/person.{username.lower()}")
             ep = (d.get("attributes") or {}).get("entity_picture")
@@ -4065,6 +4075,39 @@ async def _web_user_avatar(request: aiohttp_web.Request) -> aiohttp_web.Response
     except Exception as e:
         log.warning(f"user_avatar proxy: {e}")
         return aiohttp_web.Response(status=502, text="Proxy error", headers=_CORS_HEADERS)
+
+
+async def _web_my_avatar_upload(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/my-avatar — загрузить свой аватар (multipart)."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    username = request.headers.get("X-HA-User", "").strip()
+    if not username:
+        return aiohttp_web.Response(status=400, text='{"error":"No username"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    _HA_AVATARS_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        reader = await request.multipart()
+        field  = await reader.next()
+        if not field or field.name != "avatar":
+            return aiohttp_web.Response(status=400, text='{"error":"Expected avatar field"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        data = await field.read(decode=True)
+        if len(data) > 5 * 1024 * 1024:
+            return aiohttp_web.Response(status=413, text='{"error":"Too large (max 5 MB)"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        ct  = field.headers.get("Content-Type", "image/jpeg")
+        ext = {"image/jpeg": "jpg", "image/png": "png",
+               "image/webp": "webp", "image/gif": "gif"}.get(ct, "jpg")
+        for old in _HA_AVATARS_DIR.glob(f"{username}.*"):
+            old.unlink(missing_ok=True)
+        p = _HA_AVATARS_DIR / f"{username}.{ext}"
+        p.write_bytes(data)
+        return aiohttp_web.Response(
+            text=json.dumps({"ok": True, "url": f"/ha-app/api/user-avatar/{username}"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
 async def _web_manifest(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/manifest.json — PWA manifest."""
@@ -8309,6 +8352,10 @@ _FR_MIGRATIONS = [
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         expires_at TEXT NOT NULL
     )""",
+    # migration: multi-use invite links
+    "ALTER TABLE fr_invites ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0",
+    # migration: group admin role
+    "ALTER TABLE fr_users ADD COLUMN group_role TEXT NOT NULL DEFAULT ''",
 ]
 
 def _fr_db_init():
@@ -8453,10 +8500,12 @@ async def _fr_login(request):
         if user["group_id"]:
             g = _db().execute("SELECT name FROM fr_groups WHERE id=?", (user["group_id"],)).fetchone()
             group = {"id": user["group_id"], "name": g["name"]} if g else None
+        try: gr = user["group_role"]
+        except Exception: gr = ""
         return aiohttp_web.Response(
             text=json.dumps({"ok": True, "token": token, "username": username,
                              "display_name": user["display_name"], "role": user["role"],
-                             "group": group}, ensure_ascii=False),
+                             "group_role": gr, "group": group}, ensure_ascii=False),
             content_type="application/json", headers=_CORS_HEADERS)
     except Exception as e:
         return aiohttp_web.Response(status=500, text=json.dumps({"error": str(e)}),
@@ -8487,9 +8536,9 @@ async def _fr_register(request):
             return aiohttp_web.Response(status=400,
                 text='{"error":"Пароль минимум 6 символов"}',
                 content_type="application/json", headers=_CORS_HEADERS)
-        # Check invite
+        # Check invite — multi-use: valid until deleted by admin or expired
         inv = _db().execute(
-            "SELECT * FROM fr_invites WHERE token=? AND used_by IS NULL AND expires_at > datetime('now')",
+            "SELECT * FROM fr_invites WHERE token=? AND expires_at > datetime('now')",
             (invite_token,)
         ).fetchone()
         if not inv:
@@ -8512,8 +8561,8 @@ async def _fr_register(request):
                 "INSERT INTO fr_users(username,password_hash,display_name,role,status,group_id) VALUES(?,?,?,?,?,?)",
                 (username, pwd_hash, display_name, "member", status, inv["group_id"])
             )
-            c.execute("UPDATE fr_invites SET used_by=?,used_at=datetime('now') WHERE token=?",
-                      (username, invite_token))
+            c.execute("UPDATE fr_invites SET use_count=use_count+1 WHERE token=?",
+                      (invite_token,))
             c.commit()
         # Notify admin via Telegram
         grp_name = ""
@@ -8558,10 +8607,12 @@ async def _fr_me(request):
     if user["group_id"]:
         g = _db().execute("SELECT id,name FROM fr_groups WHERE id=?", (user["group_id"],)).fetchone()
         group = {"id": g["id"], "name": g["name"]} if g else None
+    try: gr = user["group_role"]
+    except Exception: gr = ""
     return aiohttp_web.Response(
         text=json.dumps({"username": username, "display_name": user["display_name"],
                          "role": user["role"], "status": user["status"],
-                         "group": group}, ensure_ascii=False),
+                         "group_role": gr, "group": group}, ensure_ascii=False),
         content_type="application/json", headers=_CORS_HEADERS)
 
 # ── Contacts ──────────────────────────────────────────────────────────────────
@@ -8672,6 +8723,8 @@ async def _fr_admin_users(request):
                 c.execute("UPDATE fr_users SET group_id=? WHERE username=?", (body["group_id"], uname))
             if "display_name" in body:
                 c.execute("UPDATE fr_users SET display_name=? WHERE username=?", (body["display_name"][:60], uname))
+            if "group_role" in body:
+                c.execute("UPDATE fr_users SET group_role=? WHERE username=?", (body["group_role"], uname))
             c.commit()
         # Notify user via SSE if approved
         if body.get("status") == "active":
@@ -8689,13 +8742,17 @@ async def _fr_admin_users(request):
                                     headers=_CORS_HEADERS)
     # GET — list all users
     rows = _db().execute(
-        "SELECT u.username, u.display_name, u.role, u.status, u.group_id, u.last_login, g.name as group_name "
+        "SELECT u.username, u.display_name, u.role, u.status, u.group_id, u.last_login, u.group_role, g.name as group_name "
         "FROM fr_users u LEFT JOIN fr_groups g ON u.group_id=g.id ORDER BY u.created_at"
     ).fetchall()
+    def _safe_gr(r):
+        try: return r["group_role"]
+        except Exception: return ""
     return aiohttp_web.Response(
         text=json.dumps([{"username": r["username"], "display_name": r["display_name"],
                           "role": r["role"], "status": r["status"],
                           "group_id": r["group_id"], "group_name": r["group_name"] or "",
+                          "group_role": _safe_gr(r),
                           "last_login": r["last_login"]} for r in rows], ensure_ascii=False),
         content_type="application/json", headers=_CORS_HEADERS)
 
@@ -8748,7 +8805,7 @@ async def _fr_admin_invites(request):
                                     content_type="application/json", headers=_CORS_HEADERS)
     if request.method == "POST":
         body  = await request.json()
-        days  = int(body.get("expires_days", 7))
+        days  = int(body.get("expires_days", 365))
         gid   = body.get("group_id")
         token = _fr_new_token()
         from datetime import datetime, timedelta
@@ -8771,17 +8828,121 @@ async def _fr_admin_invites(request):
             c.commit()
         return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
                                     headers=_CORS_HEADERS)
-    # GET
+    # GET — show all active (not expired) invites regardless of use_count
     rows = _db().execute(
-        "SELECT i.id, i.token, i.group_id, i.expires_at, i.used_by, i.created_by, g.name as group_name "
+        "SELECT i.id, i.token, i.group_id, i.expires_at, i.use_count, i.created_by, g.name as group_name "
         "FROM fr_invites i LEFT JOIN fr_groups g ON i.group_id=g.id "
-        "WHERE i.used_by IS NULL AND i.expires_at > datetime('now') ORDER BY i.created_at DESC"
+        "WHERE i.expires_at > datetime('now') ORDER BY i.created_at DESC"
     ).fetchall()
     return aiohttp_web.Response(
         text=json.dumps([{"id": r["id"], "token": r["token"], "group_id": r["group_id"],
                           "group_name": r["group_name"] or "Без группы",
-                          "expires_at": r["expires_at"]} for r in rows], ensure_ascii=False),
+                          "expires_at": r["expires_at"],
+                          "use_count": r["use_count"] if "use_count" in r.keys() else 0} for r in rows], ensure_ascii=False),
         content_type="application/json", headers=_CORS_HEADERS)
+
+# ── Group admin endpoints ──────────────────────────────────────────────────────
+def _fr_group_role(user) -> str:
+    try: return user["group_role"] or ""
+    except Exception: return ""
+
+async def _fr_my_group(request):
+    """GET /friends/api/my-group — group info, members and invites for group admin."""
+    username = _fr_auth(request)
+    if not username:
+        return aiohttp_web.Response(status=401, text='{"error":"Unauthorized"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    user = _fr_user(username)
+    is_site_admin = _fr_is_admin(username)
+    if not user or not user["group_id"] or (_fr_group_role(user) != "admin" and not is_site_admin):
+        return aiohttp_web.Response(status=403, text='{"error":"Нет прав администратора группы"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    gid = user["group_id"]
+    group = _db().execute("SELECT id,name FROM fr_groups WHERE id=?", (gid,)).fetchone()
+    members = _db().execute(
+        "SELECT username, display_name, status, last_login FROM fr_users WHERE group_id=? AND status='active' ORDER BY display_name",
+        (gid,)
+    ).fetchall()
+    invites = _db().execute(
+        "SELECT id, token, expires_at, use_count FROM fr_invites WHERE group_id=? AND expires_at > datetime('now') ORDER BY created_at DESC",
+        (gid,)
+    ).fetchall()
+    def _uc(r):
+        try: return r["use_count"]
+        except Exception: return 0
+    return aiohttp_web.Response(
+        text=json.dumps({
+            "group": {"id": group["id"], "name": group["name"]} if group else None,
+            "members": [{"username": m["username"], "display_name": m["display_name"],
+                         "last_login": m["last_login"]} for m in members],
+            "invites": [{"id": i["id"], "token": i["token"],
+                         "expires_at": i["expires_at"], "use_count": _uc(i)} for i in invites],
+        }, ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+async def _fr_my_group_member(request):
+    """DELETE /friends/api/my-group/members/{username} — remove member from group."""
+    username = _fr_auth(request)
+    if not username:
+        return aiohttp_web.Response(status=401, text='{"error":"Unauthorized"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    user = _fr_user(username)
+    is_site_admin = _fr_is_admin(username)
+    if not user or not user["group_id"] or (_fr_group_role(user) != "admin" and not is_site_admin):
+        return aiohttp_web.Response(status=403, text='{"error":"Нет прав"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    gid = user["group_id"]
+    target = request.match_info.get("username", "")
+    if target == username:
+        return aiohttp_web.Response(status=400, text='{"error":"Нельзя удалить себя"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    target_user = _fr_user(target)
+    if not target_user or target_user["group_id"] != gid:
+        return aiohttp_web.Response(status=404, text='{"error":"Пользователь не в вашей группе"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    with _DB_LOCK:
+        c = _db()
+        c.execute("DELETE FROM fr_users WHERE username=?", (target,))
+        c.execute("DELETE FROM fr_sessions WHERE username=?", (target,))
+        c.commit()
+    return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                headers=_CORS_HEADERS)
+
+async def _fr_my_group_invite(request):
+    """POST/DELETE /friends/api/my-group/invite[/{token}] — manage group invites."""
+    username = _fr_auth(request)
+    if not username:
+        return aiohttp_web.Response(status=401, text='{"error":"Unauthorized"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    user = _fr_user(username)
+    is_site_admin = _fr_is_admin(username)
+    if not user or not user["group_id"] or (_fr_group_role(user) != "admin" and not is_site_admin):
+        return aiohttp_web.Response(status=403, text='{"error":"Нет прав"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    gid = user["group_id"]
+    if request.method == "POST":
+        from datetime import datetime, timedelta
+        token = _fr_new_token()
+        exp = (datetime.utcnow() + timedelta(days=365)).strftime("%Y-%m-%d %H:%M:%S")
+        with _DB_LOCK:
+            c = _db()
+            c.execute("INSERT INTO fr_invites(token,group_id,created_by,expires_at) VALUES(?,?,?,?)",
+                      (token, gid, username, exp))
+            c.commit()
+        return aiohttp_web.Response(
+            text=json.dumps({"ok": True, "token": token,
+                             "url": f"/friends/?invite={token}", "expires_at": exp}, ensure_ascii=False),
+            content_type="application/json", headers=_CORS_HEADERS)
+    if request.method == "DELETE":
+        token = request.match_info.get("token", "")
+        with _DB_LOCK:
+            c = _db()
+            c.execute("DELETE FROM fr_invites WHERE token=? AND group_id=?", (token, gid))
+            c.commit()
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    return aiohttp_web.Response(status=405, text='{"error":"Method not allowed"}',
+                                content_type="application/json", headers=_CORS_HEADERS)
 
 # ── Telegram callbacks for Friends App ────────────────────────────────────────
 @dp.callback_query(lambda c: c.data and c.data.startswith("fr:"))
@@ -8972,6 +9133,8 @@ async def _start_web():
     app.router.add_route("OPTIONS", "/ha-app/api/scenes",            _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/scenes/{scene_id}", _web_options)
     app.router.add_get("/ha-app/api/user-avatar/{username}", _web_user_avatar)
+    app.router.add_post("/ha-app/api/my-avatar",             _web_my_avatar_upload)
+    app.router.add_route("OPTIONS", "/ha-app/api/my-avatar", _web_options)
     app.router.add_get("/ha-app/api/family-users",  _web_family_users)
     app.router.add_get("/ha-app/api/family-phone",  _web_family_phone)
     app.router.add_route("OPTIONS", "/ha-app/api/family-users", _web_options)
@@ -9085,13 +9248,19 @@ async def _start_web():
     app.router.add_post("/friends/api/ha-sso",                    _fr_ha_sso)
     app.router.add_get("/friends/api/avatar/{username}",          _fr_avatar_get)
     app.router.add_post("/friends/api/avatar",                    _fr_avatar_upload)
+    app.router.add_get("/friends/api/my-group",                   _fr_my_group)
+    app.router.add_delete("/friends/api/my-group/members/{username}", _fr_my_group_member)
+    app.router.add_post("/friends/api/my-group/invite",           _fr_my_group_invite)
+    app.router.add_delete("/friends/api/my-group/invite/{token}", _fr_my_group_invite)
     for path in ["/friends/api/login", "/friends/api/register", "/friends/api/me",
                  "/friends/api/contacts", "/friends/api/call/signal",
                  "/friends/api/call/pending", "/friends/api/turn-creds",
                  "/friends/api/admin/users", "/friends/api/admin/users/{username}",
                  "/friends/api/admin/groups", "/friends/api/admin/groups/{id}",
                  "/friends/api/admin/invites", "/friends/api/admin/invites/{id}",
-                 "/friends/api/ha-sso", "/friends/api/avatar"]:
+                 "/friends/api/ha-sso", "/friends/api/avatar",
+                 "/friends/api/my-group", "/friends/api/my-group/members/{username}",
+                 "/friends/api/my-group/invite", "/friends/api/my-group/invite/{token}"]:
         app.router.add_route("OPTIONS", path, _web_options)
     runner = aiohttp_web.AppRunner(app)
     await runner.setup()
