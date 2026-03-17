@@ -4,11 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Друзья</title>
-<meta name="theme-color" content="#0a0f1e">
+<meta name="theme-color" content="#6366f1">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Друзья">
+<link rel="manifest" href="/friends/manifest.json">
+<link rel="apple-touch-icon" href="/friends/icon-192.png">
 <script src="https://telegram.org/js/telegram-web-app.js" async></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
@@ -1022,7 +1024,11 @@ html, body {
             <input type="file" accept="image/*" id="avatar-file-input" style="display:none" onchange="uploadAvatar(this)">
             <button class="btn btn-primary" style="padding:10px 24px;font-size:14px" onclick="document.getElementById('avatar-file-input').click()">📷 Загрузить аватар</button>
             <div id="avatar-upload-status" style="font-size:13px;color:var(--text2)"></div>
-            <button class="btn" style="background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.3);padding:10px 24px;margin-top:16px" onclick="doLogout()">🚪 Выйти</button>
+            <button class="btn" style="background:rgba(99,102,241,0.15);color:#a5b4fc;border:1px solid rgba(99,102,241,0.3);padding:10px 24px" onclick="frOpenPermissions()">⚙️ Разрешения</button>
+            <div id="fr-install-wrap" style="display:none;width:100%">
+              <button class="btn btn-primary" style="width:100%;padding:11px" onclick="frInstallPWA()">📲 Установить приложение</button>
+            </div>
+            <button class="btn" style="background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.3);padding:10px 24px;margin-top:8px" onclick="doLogout()">🚪 Выйти</button>
           </div>
         </div>
 
@@ -1276,6 +1282,160 @@ async function _frRegisterPush() {
   } catch(e) {
     console.warn('Push registration failed:', e);
   }
+}
+
+// ── PWA install prompt ────────────────────────────────────────────────────────
+var _frInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', function(e) {
+  e.preventDefault();
+  _frInstallPrompt = e;
+  var wrap = document.getElementById('fr-install-wrap');
+  if (wrap) wrap.style.display = '';
+});
+window.addEventListener('appinstalled', function() {
+  _frInstallPrompt = null;
+  var wrap = document.getElementById('fr-install-wrap');
+  if (wrap) wrap.style.display = 'none';
+});
+async function frInstallPWA() {
+  if (!_frInstallPrompt) return;
+  _frInstallPrompt.prompt();
+  await _frInstallPrompt.userChoice;
+  _frInstallPrompt = null;
+  var wrap = document.getElementById('fr-install-wrap');
+  if (wrap) wrap.style.display = 'none';
+}
+
+// ── Permissions sheet ─────────────────────────────────────────────────────────
+async function frOpenPermissions() {
+  var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  var isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+
+  // Push status
+  var pushPerm = ('Notification' in window) ? Notification.permission : 'unsupported';
+  var hasSub = false;
+  try {
+    if ('serviceWorker' in navigator && pushPerm === 'granted') {
+      var reg = await navigator.serviceWorker.ready;
+      var sub = await reg.pushManager.getSubscription();
+      hasSub = !!sub;
+    }
+  } catch(_) {}
+  var pushOk = pushPerm === 'granted' && hasSub;
+
+  // Camera
+  var camPerm = 'unknown';
+  try { if (navigator.permissions) { var cp = await navigator.permissions.query({name:'camera'}); camPerm = cp.state; } } catch(_) {}
+  // Mic
+  var micPerm = 'unknown';
+  try { if (navigator.permissions) { var mp = await navigator.permissions.query({name:'microphone'}); micPerm = mp.state; } } catch(_) {}
+
+  function _badge(state, okText) {
+    if (state === 'granted') return `<span style="background:rgba(52,211,153,0.15);color:#6ee7b7;border:1px solid rgba(52,211,153,0.3);border-radius:6px;padding:2px 8px;font-size:11px;font-weight:600">${okText||'✓ Разрешено'}</span>`;
+    if (state === 'denied')  return `<span style="background:rgba(239,68,68,0.12);color:#f87171;border:1px solid rgba(239,68,68,0.25);border-radius:6px;padding:2px 8px;font-size:11px;font-weight:600">✗ Запрещено</span>`;
+    if (state === 'unsupported') return `<span style="background:rgba(100,116,139,0.15);color:#94a3b8;border:1px solid rgba(100,116,139,0.25);border-radius:6px;padding:2px 8px;font-size:11px;font-weight:600">Не поддерж.</span>`;
+    return `<span style="background:rgba(251,191,36,0.12);color:#fbbf24;border:1px solid rgba(251,191,36,0.25);border-radius:6px;padding:2px 8px;font-size:11px;font-weight:600">Не задано</span>`;
+  }
+
+  var pushBadge = pushOk ? _badge('granted','✓ Активно') : pushPerm === 'denied' ? _badge('denied') : _badge('prompt');
+  var pushBtn = '';
+  if (pushPerm === 'denied') {
+    pushBtn = `<div style="font-size:11px;color:#f87171;margin-top:6px">⚠️ Заблокировано в браузере. Откройте Настройки ${isIOS?'→ Safari → Уведомления':'→ Приложения → Браузер'} и разрешите для этого сайта.</div>`;
+  } else if (!pushOk) {
+    pushBtn = `<button onclick="_frPushEnable();document.getElementById('fr-perms-sheet').remove()" style="margin-top:8px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;border-radius:10px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">🔔 Включить уведомления</button>`;
+  } else {
+    pushBtn = `<button onclick="_frPushDisable();document.getElementById('fr-perms-sheet').remove()" style="margin-top:8px;background:rgba(100,116,139,0.15);color:#94a3b8;border:1px solid rgba(100,116,139,0.25);border-radius:10px;padding:8px 16px;font-size:13px;cursor:pointer;font-family:inherit">🔕 Отключить</button>`;
+  }
+
+  var camMicOk = camPerm === 'granted' && micPerm === 'granted';
+  var camBtn = '';
+  if (camPerm !== 'granted' || micPerm !== 'granted') {
+    camBtn = `<button onclick="_frRequestMedia();document.getElementById('fr-perms-sheet').remove()" style="margin-top:8px;background:rgba(59,130,246,0.15);color:#93c5fd;border:1px solid rgba(59,130,246,0.25);border-radius:10px;padding:8px 16px;font-size:13px;cursor:pointer;font-family:inherit">🎥 Разрешить камеру и микрофон</button>`;
+  }
+  if (camPerm === 'denied' || micPerm === 'denied') {
+    camBtn = `<div style="font-size:11px;color:#f87171;margin-top:6px">⚠️ Доступ запрещён. Разрешите в настройках браузера для корректной работы звонков.</div>`;
+  }
+
+  var iosHint = '';
+  if (isIOS && !isStandalone) {
+    iosHint = `<div style="margin-bottom:12px;padding:10px 12px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.2);border-radius:10px;font-size:12px;color:#fbbf24">
+      <div style="font-weight:600;margin-bottom:4px">⚠️ iOS: добавьте на экран «Домой»</div>
+      <div style="color:rgba(251,191,36,0.75)">Push-уведомления на iPhone работают только из PWA. Нажмите <b>Поделиться</b> (□↑) → <b>На экран «Домой»</b>.</div>
+    </div>`;
+  }
+
+  document.getElementById('fr-perms-sheet')?.remove();
+  var sheet = document.createElement('div');
+  sheet.id = 'fr-perms-sheet';
+  sheet.style.cssText = 'position:fixed;bottom:0;left:0;right:0;max-width:480px;margin:0 auto;background:#0a0f1e;border-radius:24px 24px 0 0;padding:20px 20px 50px;z-index:960;border-top:1px solid rgba(255,255,255,0.08);transform:translateY(100%);transition:transform 0.3s cubic-bezier(0.32,0.72,0,1);max-height:80vh;overflow-y:auto';
+  sheet.innerHTML = `
+    <div style="width:40px;height:4px;background:rgba(255,255,255,0.14);border-radius:2px;margin:0 auto 20px"></div>
+    <div style="font-size:17px;font-weight:700;color:#e2e8f0;margin-bottom:4px">⚙️ Разрешения</div>
+    <div style="font-size:12px;color:#64748b;margin-bottom:20px">Для звонков и уведомлений</div>
+    ${iosHint}
+    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:14px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:22px">🔔</span>
+          <div>
+            <div style="font-size:14px;font-weight:600;color:#e2e8f0">Push-уведомления</div>
+            <div style="font-size:11px;color:#64748b;margin-top:2px">Входящие звонки</div>
+          </div>
+        </div>
+        ${pushBadge}
+      </div>
+      ${pushBtn}
+      ${!pushOk && pushPerm !== 'denied' ? `<div style="font-size:11px;color:#64748b;margin-top:6px">Браузер спросит подтверждение — нажмите <b style="color:#a5b4fc">Разрешить</b>.</div>` : ''}
+    </div>
+    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:14px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:22px">🎥</span>
+          <div>
+            <div style="font-size:14px;font-weight:600;color:#e2e8f0">Камера и микрофон</div>
+            <div style="font-size:11px;color:#64748b;margin-top:2px">Видео и аудиозвонки</div>
+          </div>
+        </div>
+        ${camMicOk ? _badge('granted') : (camPerm==='denied'||micPerm==='denied') ? _badge('denied') : _badge('prompt')}
+      </div>
+      ${camBtn}
+    </div>
+    <button onclick="document.getElementById('fr-perms-sheet').remove()" style="width:100%;margin-top:12px;background:rgba(255,255,255,0.05);color:#94a3b8;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px;font-size:14px;cursor:pointer;font-family:inherit">Закрыть</button>
+  `;
+  document.body.appendChild(sheet);
+  requestAnimationFrame(function() { sheet.style.transform = 'translateY(0)'; });
+  sheet.addEventListener('click', function(e) { if (e.target === sheet) sheet.remove(); });
+}
+
+async function _frPushEnable() {
+  try {
+    var reg = await navigator.serviceWorker.register('/friends/sw.js', { scope: '/friends/' });
+    var perm = await Notification.requestPermission();
+    if (perm !== 'granted') { showToast('🔕 Уведомления не разрешены'); return; }
+    var sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: _frUrlB64ToUint8(FR_VAPID_KEY)
+    });
+    await frApi('/push-subscribe', 'POST', sub.toJSON());
+    showToast('🔔 Уведомления включены');
+  } catch(e) { showToast('Ошибка: ' + e.message); }
+}
+
+async function _frPushDisable() {
+  try {
+    var reg = await navigator.serviceWorker.ready;
+    var sub = await reg.pushManager.getSubscription();
+    if (sub) await sub.unsubscribe();
+    showToast('🔕 Уведомления отключены');
+  } catch(e) {}
+}
+
+async function _frRequestMedia() {
+  try {
+    var stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    stream.getTracks().forEach(function(t) { t.stop(); });
+    showToast('✅ Камера и микрофон разрешены');
+  } catch(e) { showToast('⚠️ ' + (e.message || 'Доступ запрещён')); }
 }
 
 // ── Tab switcher ──────────────────────────────────────────────────────────────

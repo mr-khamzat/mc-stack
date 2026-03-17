@@ -1,12 +1,25 @@
 // Service Worker — Friends PWA
-const CACHE = 'friends-v1';
+const CACHE = 'friends-v2';
+const SHELL = [
+  '/friends/',
+  '/friends/manifest.json',
+  '/friends/icon-192.png',
+  '/friends/icon-512.png',
+];
 
 self.addEventListener('install', function(e) {
   self.skipWaiting();
+  e.waitUntil(
+    caches.open(CACHE).then(function(cache) { return cache.addAll(SHELL); })
+  );
 });
 
 self.addEventListener('activate', function(e) {
-  e.waitUntil(clients.claim());
+  e.waitUntil(
+    caches.keys().then(function(keys) {
+      return Promise.all(keys.filter(function(k) { return k !== CACHE; }).map(function(k) { return caches.delete(k); }));
+    }).then(function() { return clients.claim(); })
+  );
 });
 
 // ── Push notification handler ──────────────────────────────────────────────
@@ -30,8 +43,8 @@ self.addEventListener('push', function(e) {
   e.waitUntil(
     self.registration.showNotification(data.title || 'Друзья', {
       body:    data.body || '',
-      icon:    '/ha-app/icon-192.png',
-      badge:   '/ha-app/icon-192.png',
+      icon:    '/friends/icon-192.png',
+      badge:   '/friends/icon-192.png',
       data:    { url: data.url || '/friends/', tag: data.tag },
       vibrate: isCall ? [200, 100, 200, 100, 200] : [100, 50, 100],
       requireInteraction: isCall,
@@ -68,7 +81,19 @@ self.addEventListener('notificationclick', function(e) {
   );
 });
 
+// ── Fetch: network-first, fallback to cache ────────────────────────────────
 self.addEventListener('fetch', function(e) {
   if (e.request.url.includes('/friends/api/')) return;
-  e.respondWith(fetch(e.request).catch(function() { return caches.match(e.request); }));
+  e.respondWith(
+    fetch(e.request).then(function(resp) {
+      // Cache successful GET responses for the shell
+      if (e.request.method === 'GET' && resp.status === 200) {
+        var clone = resp.clone();
+        caches.open(CACHE).then(function(cache) { cache.put(e.request, clone); });
+      }
+      return resp;
+    }).catch(function() {
+      return caches.match(e.request);
+    })
+  );
 });

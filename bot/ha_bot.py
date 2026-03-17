@@ -8874,6 +8874,29 @@ async def _fr_sw(request: aiohttp_web.Request) -> aiohttp_web.Response:
         headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/friends/"},
     )
 
+async def _fr_manifest(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /friends/manifest.json — PWA manifest для Friends."""
+    path = Path("/opt/ha-bot/webapp/fr-manifest.json")
+    if not path.exists():
+        return aiohttp_web.Response(status=404, text="Not found")
+    return aiohttp_web.Response(
+        text=path.read_text(encoding="utf-8"),
+        content_type="application/manifest+json",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+async def _fr_icon(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /friends/icon-{size}.png — PWA icons."""
+    size = request.match_info.get("size", "192")
+    path = Path(f"/opt/ha-bot/webapp/fr-icon-{size}.png")
+    if not path.exists():
+        return aiohttp_web.Response(status=404, text="Not found")
+    return aiohttp_web.Response(
+        body=path.read_bytes(),
+        content_type="image/png",
+        headers={"Cache-Control": "public, max-age=604800"},
+    )
+
 async def _fr_push_subscribe(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """POST /friends/api/push-subscribe — сохранить push-подписку для пользователя Friends."""
     username = _fr_auth(request)
@@ -9329,6 +9352,8 @@ async def _start_web():
     app.router.add_post("/friends/api/my-group/invite",           _fr_my_group_invite)
     app.router.add_delete("/friends/api/my-group/invite/{token}", _fr_my_group_invite)
     app.router.add_get("/friends/sw.js",                          _fr_sw)
+    app.router.add_get("/friends/manifest.json",                  _fr_manifest)
+    app.router.add_get("/friends/icon-{size}.png",                _fr_icon)
     app.router.add_post("/friends/api/push-subscribe",            _fr_push_subscribe)
     for path in ["/friends/api/login", "/friends/api/register", "/friends/api/me",
                  "/friends/api/contacts", "/friends/api/call/signal",
