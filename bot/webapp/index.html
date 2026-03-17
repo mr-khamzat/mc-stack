@@ -156,6 +156,42 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ── Button press animation (Feature 4) ─────────────────────────────────── */
+button, .family-ping-btn, .light-btn {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+button:active, .family-ping-btn:active {
+  transform: scale(0.94);
+  transition: transform 0.08s ease;
+}
+
+/* ── Nav badge (Feature 5) ───────────────────────────────────────────────── */
+.nav-badge {
+  position: absolute; top: 2px; right: 2px;
+  background: #ef4444; color: #fff;
+  font-size: 9px; font-weight: 700;
+  min-width: 16px; height: 16px;
+  border-radius: 8px; padding: 0 4px;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+}
+
+/* ── Onboarding (Feature 10) ─────────────────────────────────────────────── */
+#onboarding-overlay {
+  position: fixed; inset: 0; z-index: 10000;
+  background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 32px 24px; text-align: center;
+}
+.onb-step { display: none; flex-direction: column; align-items: center; gap: 16px; max-width: 320px; }
+.onb-step.active { display: flex; }
+.onb-emoji { font-size: 64px; }
+.onb-title { font-size: 22px; font-weight: 700; color: #e2e8f0; }
+.onb-text { font-size: 14px; color: #94a3b8; line-height: 1.6; }
+.onb-dots { display: flex; gap: 8px; }
+.onb-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.2); }
+.onb-dot.active { background: #6366f1; }
+
 :root {
   --accent: #6366f1;
   --accent2: #8b5cf6;
@@ -993,11 +1029,14 @@ body::before {
 }
 .light-btn .light-icon { font-size: 20px; }
 .light-btn.on {
-  background: linear-gradient(145deg, rgba(251,191,36,0.22) 0%, rgba(245,158,11,0.11) 100%);
-  border-color: rgba(251,191,36,0.52);
-  border-top-color: rgba(251,191,36,0.68);
-  color: #fbbf24;
-  box-shadow: 0 0 22px rgba(251,191,36,0.22), 0 4px 16px rgba(0,0,0,0.3), 0 1px 0 rgba(255,220,80,0.18) inset;
+  background: linear-gradient(135deg, rgba(251,191,36,0.25) 0%, rgba(245,158,11,0.15) 100%) !important;
+  border-color: rgba(251,191,36,0.6) !important;
+  border-top-color: rgba(251,191,36,0.75) !important;
+  color: #fbbf24 !important;
+  box-shadow: 0 0 12px rgba(251,191,36,0.3), 0 0 22px rgba(251,191,36,0.18), 0 4px 16px rgba(0,0,0,0.3), inset 0 0 8px rgba(251,191,36,0.1) !important;
+}
+.light-btn.on .light-icon {
+  filter: drop-shadow(0 0 4px rgba(251,191,36,0.8));
 }
 .light-btn.off {
   background: linear-gradient(170deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.005) 50%, rgba(255,255,255,0.001) 100%);
@@ -2539,6 +2578,9 @@ body.fab-open .fab-backdrop { display: block; }
 
   <div class="app-header">
     <h1 style="font-size:22px;line-height:1">🏠</h1>
+    <div id="header-weather" style="display:none;align-items:center;gap:4px;font-size:12px;color:rgba(255,255,255,0.7);cursor:pointer;flex:1;justify-content:center" onclick="toggleSection('sec-weather-body')" title="Погода">
+      <span id="hw-icon">🌤</span><span id="hw-temp">--°</span>
+    </div>
     <div style="display:flex;align-items:center;gap:8px">
       <span class="last-updated" id="last-updated">—</span>
       <button id="edit-mode-btn" onclick="editModeToggle()" title="Редактировать разделы">✏️</button>
@@ -2744,7 +2786,7 @@ body.fab-open .fab-backdrop { display: block; }
         </div>
         <!-- Family tabs: Chat | Reminders | Photos | Calls -->
         <div class="family-tabs-bar">
-          <button class="family-tab-btn active" id="ftab-chat-btn" onclick="familyTab('chat')">💬 Чат</button>
+          <button class="family-tab-btn active" id="ftab-chat-btn" onclick="familyTab('chat');_updateChatBadge(0)" style="position:relative">💬 Чат<span id="nav-chat-badge" class="nav-badge" style="display:none">0</span></button>
           <button class="family-tab-btn" id="ftab-remind-btn" onclick="familyTab('remind')">🔔</button>
           <button class="family-tab-btn" id="ftab-photos-btn" onclick="familyTab('photos')">📸</button>
           <button class="family-tab-btn" id="ftab-calls-btn" onclick="familyTab('calls')">📞</button>
@@ -4390,6 +4432,8 @@ async function doHaLogin() {
       try { const sc = await api('/scenes'); homeAwayUpdateSub(sc); } catch(_){}
       if (!_statusIntervalId) _statusIntervalId = setInterval(loadStatus, 30000);
       startSSE();
+      // Feature 10: show onboarding on first login
+      setTimeout(_showOnboarding, 600);
       // Проверяем push-подписку после успешного входа (с задержкой, чтобы не мешать загрузке)
       setTimeout(_restorePushIfNeeded, 3000);
     } else {
@@ -4479,6 +4523,8 @@ async function init() {
   if (!_statusIntervalId) _statusIntervalId = setInterval(loadStatus, 30000);
   // Start SSE for real-time updates
   startSSE();
+  // Feature 10: show onboarding overlay on first visit
+  setTimeout(function() { if (typeof _showOnboarding === 'function') _showOnboarding(); }, 800);
   // Check for missed incoming call (e.g. opened app from push notification)
   setTimeout(_checkPendingCall, 1200);
   // Проверяем push-подписку после загрузки приложения
@@ -4883,6 +4929,10 @@ function onChatSSE(msgData) {
   _chatMessages.push(msgData);
   if (_chatMessages.length > 100) _chatMessages = _chatMessages.slice(-100);
   renderChat();
+  // Feature 9: play sound for incoming messages from others
+  if (msgData && msgData.username !== HA_USERNAME) {
+    if (typeof _playNotifSound === 'function') _playNotifSound('chat');
+  }
 }
 
 // ── Voice recording ──────────────────────────────────────────────────────────
@@ -9310,11 +9360,21 @@ function updateWeatherMini(w) {
   var card = document.getElementById('weather-mini');
   if (card) card.style.display = 'flex';
   var parts = (w.condition || '').split(' ');
-  var el = document.getElementById('wcm-icon'); if (el) el.textContent = parts[0] || '🌤️';
+  var wicon = parts[0] || '🌤️';
+  var el = document.getElementById('wcm-icon'); if (el) el.textContent = wicon;
   el = document.getElementById('wcm-temp');   if (el) el.textContent = (w.temp != null ? Math.round(w.temp) : '?') + '°';
   el = document.getElementById('wcm-cond');   if (el) el.textContent = parts.slice(1).join(' ') || 'Загрузка';
   el = document.getElementById('wcm-hum');    if (el) el.textContent = w.humidity ?? '?';
   el = document.getElementById('wcm-wind');   if (el) el.textContent = w.wind ?? '?';
+  // Feature 7: update header weather widget
+  var hw = document.getElementById('header-weather');
+  var hwIcon = document.getElementById('hw-icon');
+  var hwTemp = document.getElementById('hw-temp');
+  if (hw) {
+    hw.style.display = 'flex';
+    if (hwIcon) hwIcon.textContent = wicon;
+    if (hwTemp) hwTemp.textContent = (w.temp != null ? Math.round(w.temp) : '--') + '°';
+  }
 }
 
 // ── Offline mode ───────────────────────────────────────────────────────────
@@ -10114,6 +10174,148 @@ function pwaDismiss() {
   const b = document.getElementById('pwa-banner');
   if (b) b.classList.remove('show');
   localStorage.setItem('pwa_dismissed', '1');
+}
+
+// ── Feature 3: Swipe navigation (scroll to prev/next section) ───────────────
+(function() {
+  var _swipeX = 0, _swipeY = 0, _swipeMoved = false;
+  var _mc = document.getElementById('app') || document.body;
+  _mc.addEventListener('touchstart', function(e) {
+    _swipeX = e.touches[0].clientX;
+    _swipeY = e.touches[0].clientY;
+    _swipeMoved = false;
+  }, {passive: true});
+  _mc.addEventListener('touchmove', function(e) { _swipeMoved = true; }, {passive: true});
+  _mc.addEventListener('touchend', function(e) {
+    if (!_swipeMoved) return;
+    var dx = e.changedTouches[0].clientX - _swipeX;
+    var dy = e.changedTouches[0].clientY - _swipeY;
+    // Only horizontal swipes that are clearly not vertical scrolling
+    if (Math.abs(dx) < 80 || Math.abs(dy) > Math.abs(dx) * 0.5) return;
+    var allSecs = Array.from(document.querySelectorAll('#app > .section[data-section-perm]'))
+      .filter(function(s) { return getComputedStyle(s).display !== 'none'; });
+    if (allSecs.length === 0) return;
+    // Find which section is most visible in viewport
+    var viewMid = window.scrollY + window.innerHeight / 2;
+    var cur = 0;
+    var minDist = Infinity;
+    allSecs.forEach(function(sec, i) {
+      var rect = sec.getBoundingClientRect();
+      var secMid = window.scrollY + rect.top + rect.height / 2;
+      var dist = Math.abs(secMid - viewMid);
+      if (dist < minDist) { minDist = dist; cur = i; }
+    });
+    var next = dx < 0 ? Math.min(cur + 1, allSecs.length - 1) : Math.max(cur - 1, 0);
+    if (next !== cur) {
+      window._activeSection = allSecs[next].getAttribute('data-section-perm');
+      allSecs[next].scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, {passive: true});
+})();
+
+// ── Feature 5: Chat unread badge ─────────────────────────────────────────────
+var _chatUnread = 0;
+function _updateChatBadge(n) {
+  _chatUnread = n;
+  var b = document.getElementById('nav-chat-badge');
+  if (!b) return;
+  b.textContent = n > 9 ? '9+' : String(n);
+  b.style.display = n > 0 ? 'flex' : 'none';
+}
+// Wrap onChatSSE to increment badge when chat tab is not active
+var _origOnChatSSE = typeof onChatSSE === 'function' ? onChatSSE : null;
+if (_origOnChatSSE) {
+  onChatSSE = function(msgData) {
+    _origOnChatSSE(msgData);
+    // Only increment if the chat tab is not currently open/active
+    var chatTab = document.getElementById('ftab-chat');
+    var isVisible = chatTab && getComputedStyle(chatTab).display !== 'none';
+    if (!isVisible) _updateChatBadge(_chatUnread + 1);
+  };
+}
+
+// ── Feature 8: OS light/dark theme preference ────────────────────────────────
+(function() {
+  // Only apply if user hasn't manually set a theme and auto-time-theme is off
+  if (localStorage.getItem('ha_auto_theme')) return; // time-based auto takes priority
+  var saved = localStorage.getItem('ha_theme');
+  if (saved) return; // user manually chose a theme
+  // Follow OS preference
+  var mq = window.matchMedia('(prefers-color-scheme: light)');
+  function _applyOsTheme(isLight) {
+    if (localStorage.getItem('ha_auto_theme') || localStorage.getItem('ha_theme')) return;
+    if (isLight && typeof themeApply === 'function') {
+      themeApply('light');
+    }
+  }
+  if (typeof themeApply === 'function') _applyOsTheme(mq.matches);
+  else window.addEventListener('load', function() { _applyOsTheme(mq.matches); });
+  mq.addEventListener('change', function(e) { _applyOsTheme(e.matches); });
+})();
+
+// ── Feature 9: Notification sound ────────────────────────────────────────────
+var _audioCtx = null;
+function _playNotifSound(type) {
+  try {
+    if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    var ctx = _audioCtx;
+    if (ctx.state === 'suspended') ctx.resume();
+    var osc = ctx.createOscillator();
+    var gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    if (type === 'ping') {
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(660, ctx.currentTime + 0.1);
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+      osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.25);
+    } else {
+      osc.frequency.setValueAtTime(660, ctx.currentTime);
+      gain.gain.setValueAtTime(0.1, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+      osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.2);
+    }
+  } catch(e) {}
+}
+
+// ── Feature 10: Onboarding overlay ───────────────────────────────────────────
+function _showOnboarding() {
+  if (localStorage.getItem('ha_onboarded')) return;
+  var overlay = document.createElement('div');
+  overlay.id = 'onboarding-overlay';
+  overlay.innerHTML =
+    '<div class="onb-step active" id="onb-1">' +
+      '<div class="onb-emoji">\uD83C\uDFE0</div>' +
+      '<div class="onb-title">Добро пожаловать!</div>' +
+      '<div class="onb-text">Умный дом в Telegram. Управляй светом, климатом, камерами и следи за семьёй — всё в одном месте.</div>' +
+    '</div>' +
+    '<div class="onb-step" id="onb-2">' +
+      '<div class="onb-emoji">\uD83D\uDC46</div>' +
+      '<div class="onb-title">Навигация</div>' +
+      '<div class="onb-text">Разделы раскрываются нажатием. Потяни вниз для обновления. Логин и пароль — те же, что в Home Assistant.</div>' +
+    '</div>' +
+    '<div class="onb-dots">' +
+      '<div class="onb-dot active" id="onb-dot-1"></div>' +
+      '<div class="onb-dot" id="onb-dot-2"></div>' +
+    '</div>' +
+    '<button onclick="window._onbNext()" style="margin-top:16px;padding:14px 40px;border-radius:14px;border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:16px;font-weight:600;cursor:pointer;font-family:inherit">Далее \u2192</button>';
+  document.body.appendChild(overlay);
+  var step = 1;
+  window._onbNext = function() {
+    if (step === 1) {
+      step = 2;
+      document.getElementById('onb-1').classList.remove('active');
+      document.getElementById('onb-2').classList.add('active');
+      document.getElementById('onb-dot-1').classList.remove('active');
+      document.getElementById('onb-dot-2').classList.add('active');
+      overlay.querySelector('button').textContent = 'Начать \uD83D\uDE80';
+    } else {
+      localStorage.setItem('ha_onboarded', '1');
+      overlay.style.opacity = '0';
+      overlay.style.transition = 'opacity 0.4s';
+      setTimeout(function() { overlay.remove(); }, 400);
+    }
+  };
 }
 
 // ── Compact scroll bar ─────────────────────────────────────────────────────
