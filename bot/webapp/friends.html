@@ -738,10 +738,108 @@ html, body {
   -webkit-tap-highlight-color: transparent;
 }
 .logout-btn:active { transform: scale(0.95); background: rgba(239,68,68,0.2); }
+
+/* Back button */
+.back-btn {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.06);
+  color: rgba(200,210,240,0.85);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 500;
+}
+.back-btn.visible { display: flex; }
+.back-btn:active { transform: scale(0.95); }
+
+/* Crop modal */
+.crop-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0,0,0,0.92);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+.crop-modal.open { display: flex; }
+.crop-wrap {
+  position: relative;
+  width: min(340px, 90vw);
+  height: min(340px, 90vw);
+  border-radius: 50%;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  border: 3px solid rgba(99,210,140,0.7);
+  box-shadow: 0 0 0 3000px rgba(0,0,0,0.6);
+}
+.crop-wrap:active { cursor: grabbing; }
+.crop-image {
+  position: absolute;
+  transform-origin: 0 0;
+  pointer-events: none;
+  user-select: none;
+}
+.crop-hint { font-size: 13px; color: rgba(180,200,220,0.6); text-align: center; }
+.crop-btns { display: flex; gap: 12px; }
+.crop-btn-apply {
+  padding: 12px 28px;
+  border-radius: 12px;
+  border: none;
+  background: linear-gradient(135deg, #4ade80, #22c55e);
+  color: #0f1a10;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+.crop-btn-cancel {
+  padding: 12px 20px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.07);
+  color: rgba(200,210,240,0.8);
+  font-size: 15px;
+  cursor: pointer;
+  font-family: inherit;
+}
 </style>
 </head>
 <body>
 <div id="app">
+
+  <!-- Back to HA app button (shown only when opened via SSO) -->
+  <button class="back-btn" id="back-to-ha-btn" onclick="goBackToHA()">← Умный дом</button>
+
+  <!-- Avatar crop modal -->
+  <div class="crop-modal" id="crop-modal">
+    <div class="crop-hint">Перетащите и масштабируйте фото</div>
+    <div class="crop-wrap" id="crop-wrap">
+      <img class="crop-image" id="crop-image" draggable="false" alt="">
+    </div>
+    <div style="display:flex;gap:12px;align-items:center">
+      <input type="range" id="crop-zoom" min="1" max="3" step="0.01" value="1"
+             style="width:180px;accent-color:#4ade80" oninput="cropZoomChange(this.value)">
+      <span style="font-size:12px;color:rgba(180,200,220,0.6)">🔍</span>
+    </div>
+    <div class="crop-btns">
+      <button class="crop-btn-apply" onclick="cropApply()">✅ Применить</button>
+      <button class="crop-btn-cancel" onclick="cropCancel()">Отмена</button>
+    </div>
+  </div>
 
   <!-- ══════════ LOGIN SCREEN ══════════ -->
   <div id="screen-login" class="screen">
@@ -921,10 +1019,8 @@ html, body {
               <div style="font-size:18px;font-weight:700;color:var(--text)" id="profile-display-name"></div>
               <div style="font-size:13px;color:var(--text2);margin-top:4px" id="profile-username-text"></div>
             </div>
-            <label style="cursor:pointer">
-              <input type="file" accept="image/*" id="avatar-file-input" style="display:none" onchange="uploadAvatar(this)">
-              <div class="btn btn-primary" style="padding:10px 24px;font-size:14px" onclick="document.getElementById('avatar-file-input').click()">📷 Загрузить аватар</div>
-            </label>
+            <input type="file" accept="image/*" id="avatar-file-input" style="display:none" onchange="uploadAvatar(this)">
+            <button class="btn btn-primary" style="padding:10px 24px;font-size:14px" onclick="document.getElementById('avatar-file-input').click()">📷 Загрузить аватар</button>
             <div id="avatar-upload-status" style="font-size:13px;color:var(--text2)"></div>
             <button class="btn" style="background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.3);padding:10px 24px;margin-top:16px" onclick="doLogout()">🚪 Выйти</button>
           </div>
@@ -1225,6 +1321,12 @@ async function loadContacts() {
   }
 }
 
+// ── Back to HA ───────────────────────────────────────────────────────────────
+let _cameFromHA = false;
+function goBackToHA() {
+  window.location.href = '/ha-app/';
+}
+
 function _plural(n, one, few, many) {
   if (n % 10 === 1 && n % 100 !== 11) return one;
   if (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)) return few;
@@ -1257,31 +1359,165 @@ function loadProfile() {
   }
 }
 
-async function uploadAvatar(input) {
+// ── Avatar crop ───────────────────────────────────────────────────────────────
+var _cropFile = null;
+var _cropX = 0, _cropY = 0, _cropScale = 1;
+var _cropDragging = false, _cropLastX = 0, _cropLastY = 0;
+var _cropImgNW = 0, _cropImgNH = 0; // natural dimensions
+var _cropWrapSize = 0;
+
+function uploadAvatar(input) {
   const file = input.files[0];
   if (!file) return;
+  input.value = '';
+  _cropFile = file;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const img = document.getElementById('crop-image');
+    img.onload = function() {
+      _cropImgNW = img.naturalWidth;
+      _cropImgNH = img.naturalHeight;
+      const wrap = document.getElementById('crop-wrap');
+      _cropWrapSize = wrap.offsetWidth;
+      // Fit image to fill crop circle
+      const fitScale = Math.max(_cropWrapSize / _cropImgNW, _cropWrapSize / _cropImgNH);
+      _cropScale = fitScale;
+      _cropX = (_cropWrapSize - _cropImgNW * fitScale) / 2;
+      _cropY = (_cropWrapSize - _cropImgNH * fitScale) / 2;
+      _cropApplyTransform();
+      document.getElementById('crop-zoom').value = 1;
+    };
+    img.src = e.target.result;
+    document.getElementById('crop-modal').classList.add('open');
+    _cropAttachEvents();
+  };
+  reader.readAsDataURL(file);
+}
+
+function _cropApplyTransform() {
+  const img = document.getElementById('crop-image');
+  img.style.transform = 'translate(' + _cropX + 'px,' + _cropY + 'px) scale(' + _cropScale + ')';
+  // Clamp so image always fills circle
+  _cropClamp();
+  img.style.transform = 'translate(' + _cropX + 'px,' + _cropY + 'px) scale(' + _cropScale + ')';
+}
+
+function _cropClamp() {
+  const w = _cropImgNW * _cropScale, h = _cropImgNH * _cropScale;
+  const s = _cropWrapSize;
+  if (_cropX > 0) _cropX = 0;
+  if (_cropY > 0) _cropY = 0;
+  if (_cropX + w < s) _cropX = s - w;
+  if (_cropY + h < s) _cropY = s - h;
+}
+
+function cropZoomChange(val) {
+  const wrap = document.getElementById('crop-wrap');
+  const s = _cropWrapSize || wrap.offsetWidth;
+  const minScale = Math.max(s / _cropImgNW, s / _cropImgNH);
+  const newScale = minScale + (minScale * 2 - minScale) * (parseFloat(val) - 1) / 2;
+  const cx = s / 2, cy = s / 2;
+  _cropX = cx - (cx - _cropX) * (newScale / _cropScale);
+  _cropY = cy - (cy - _cropY) * (newScale / _cropScale);
+  _cropScale = newScale;
+  _cropApplyTransform();
+}
+
+function _cropAttachEvents() {
+  const wrap = document.getElementById('crop-wrap');
+  // Remove old listeners
+  wrap.replaceWith(wrap.cloneNode(true));
+  const w2 = document.getElementById('crop-wrap');
+  // Mouse
+  w2.addEventListener('mousedown', function(e) {
+    _cropDragging = true; _cropLastX = e.clientX; _cropLastY = e.clientY;
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', function(e) {
+    if (!_cropDragging) return;
+    _cropX += e.clientX - _cropLastX; _cropY += e.clientY - _cropLastY;
+    _cropLastX = e.clientX; _cropLastY = e.clientY;
+    _cropApplyTransform();
+  });
+  document.addEventListener('mouseup', function() { _cropDragging = false; });
+  // Touch
+  var _lastDist = 0, _lastTX = 0, _lastTY = 0;
+  w2.addEventListener('touchstart', function(e) {
+    if (e.touches.length === 1) {
+      _lastTX = e.touches[0].clientX; _lastTY = e.touches[0].clientY;
+    } else if (e.touches.length === 2) {
+      _lastDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
+                             e.touches[0].clientY - e.touches[1].clientY);
+    }
+    e.preventDefault();
+  }, { passive: false });
+  w2.addEventListener('touchmove', function(e) {
+    if (e.touches.length === 1) {
+      const dx = e.touches[0].clientX - _lastTX, dy = e.touches[0].clientY - _lastTY;
+      _cropX += dx; _cropY += dy;
+      _lastTX = e.touches[0].clientX; _lastTY = e.touches[0].clientY;
+      _cropApplyTransform();
+    } else if (e.touches.length === 2) {
+      const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
+                              e.touches[0].clientY - e.touches[1].clientY);
+      if (_lastDist > 0) {
+        const zoomEl = document.getElementById('crop-zoom');
+        const newVal = Math.min(3, Math.max(1, parseFloat(zoomEl.value) * (dist / _lastDist)));
+        zoomEl.value = newVal;
+        cropZoomChange(newVal);
+      }
+      _lastDist = dist;
+    }
+    e.preventDefault();
+  }, { passive: false });
+  w2.addEventListener('touchend', function() { _lastDist = 0; });
+}
+
+function cropCancel() {
+  document.getElementById('crop-modal').classList.remove('open');
+  _cropFile = null;
+}
+
+async function cropApply() {
+  const wrap = document.getElementById('crop-wrap');
+  const s = wrap.offsetWidth;
+  const canvas = document.createElement('canvas');
+  canvas.width = 512; canvas.height = 512;
+  const ctx = canvas.getContext('2d');
+  ctx.beginPath();
+  ctx.arc(256, 256, 256, 0, Math.PI * 2);
+  ctx.clip();
+  const img = document.getElementById('crop-image');
+  const displayScale = s / _cropWrapSize || 1;
+  const imgX = _cropX * (512 / s), imgY = _cropY * (512 / s);
+  const imgW = _cropImgNW * _cropScale * (512 / s), imgH = _cropImgNH * _cropScale * (512 / s);
+  ctx.drawImage(img, imgX, imgY, imgW, imgH);
+
+  document.getElementById('crop-modal').classList.remove('open');
   const statusEl = document.getElementById('avatar-upload-status');
   if (statusEl) statusEl.textContent = '⏳ Загружаю...';
-  const fd = new FormData();
-  fd.append('avatar', file);
-  try {
-    const res = await fetch(API_BASE + '/avatar', {
-      method: 'POST',
-      headers: { 'X-FR-Token': FR_TOKEN },
-      body: fd,
-    });
-    const data = await res.json();
-    if (data.ok) {
-      showToast('✅ Аватар обновлён');
-      if (statusEl) statusEl.textContent = '✅ Аватар обновлён';
-      loadProfile(); // reload to show new avatar
-    } else {
-      if (statusEl) statusEl.textContent = '❌ ' + (data.error || 'Ошибка');
+
+  canvas.toBlob(async function(blob) {
+    const fd = new FormData();
+    fd.append('avatar', blob, 'avatar.jpg');
+    try {
+      const res = await fetch(API_BASE + '/avatar', {
+        method: 'POST',
+        headers: { 'X-FR-Token': FR_TOKEN },
+        body: fd,
+      });
+      const data = await res.json();
+      if (data.ok) {
+        showToast('✅ Аватар обновлён');
+        if (statusEl) statusEl.textContent = '✅ Аватар обновлён';
+        loadProfile();
+      } else {
+        if (statusEl) statusEl.textContent = '❌ ' + (data.error || 'Ошибка');
+      }
+    } catch(e) {
+      if (statusEl) statusEl.textContent = '❌ ' + e.message;
     }
-  } catch(e) {
-    if (statusEl) statusEl.textContent = '❌ ' + e.message;
-  }
-  input.value = '';
+  }, 'image/jpeg', 0.9);
 }
 
 // ── Weather ───────────────────────────────────────────────────────────────────
@@ -2133,15 +2369,24 @@ document.addEventListener('keydown', function(e) {
   const ssoToken = params.get('sso');
   if (ssoToken) {
     history.replaceState({}, '', location.pathname); // remove token from URL
+    _cameFromHA = true;
+    sessionStorage.setItem('fr_came_from_ha', '1');
     FR_TOKEN = ssoToken;
     frApi('/me').then(function(me) {
       _saveAuth({ token: ssoToken, username: me.username, display_name: me.display_name, role: me.role });
+      document.getElementById('back-to-ha-btn').classList.add('visible');
       _initMain();
     }).catch(function() {
       FR_TOKEN = '';
       showScreen('screen-login');
     });
     return;
+  }
+
+  // Restore "came from HA" flag on reload
+  if (sessionStorage.getItem('fr_came_from_ha')) {
+    _cameFromHA = true;
+    document.getElementById('back-to-ha-btn').classList.add('visible');
   }
 
   // Check for invite link
