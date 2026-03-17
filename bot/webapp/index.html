@@ -1356,9 +1356,12 @@ body::before {
   transition: transform .15s, opacity .15s;
 }
 .call-video-btn:active { transform: scale(0.88); opacity: 0.85; }
-.call-video-btn-end { background: #ef4444; }
+.call-video-btn-end    { background: #ef4444; }
 .call-video-btn-accept { background: #22c55e; }
-.call-video-btn-mute { background: rgba(255,255,255,0.2); backdrop-filter: blur(8px); }
+.call-video-btn-mute   { background: rgba(255,255,255,0.18); backdrop-filter: blur(8px); }
+.call-video-btn-camera { background: rgba(255,255,255,0.18); backdrop-filter: blur(8px); transition: transform .15s, opacity .15s, background .2s; }
+.call-video-btn-camera:active { transform: scale(0.88) rotate(180deg) !important; }
+#call-remote-video { transform-origin: center center; will-change: transform; }
 
 /* ── Buttons ── */
 .btn {
@@ -5373,9 +5376,13 @@ async function acceptCall() {
     await _sendCallSignal(_rtcCallTarget.username, 'answer', { sdp: answer.sdp, type: answer.type });
     _setCallStatus('🔄 Подключение...');
 
-    // Update buttons
+    // Update buttons — hide accept, reveal camera switch
     const acceptBtn = document.getElementById('call-accept-btn');
     if (acceptBtn) acceptBtn.style.display = 'none';
+    const videoAcceptBtn = document.getElementById('call-video-accept-btn');
+    if (videoAcceptBtn) videoAcceptBtn.style.display = 'none';
+    const cameraBtn = document.getElementById('call-camera-btn');
+    if (cameraBtn) cameraBtn.style.display = '';
     const rejectBtn = document.getElementById('call-reject-btn');
     if (rejectBtn) { rejectBtn.textContent = '⏹ Завершить'; rejectBtn.onclick = endCall; }
   } catch(e) {
@@ -5398,11 +5405,74 @@ function _toggleMute() {
   if (btn) btn.textContent = _rtcMuted ? '🔇' : '🎤';
 }
 
+let _rtcFacingMode = 'user';
+async function _switchCamera() {
+  if (!_rtcLocalStream) return;
+  const btn = document.getElementById('call-camera-btn');
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.4'; }
+  const nextFacing = (_rtcFacingMode === 'user') ? 'environment' : 'user';
+  try {
+    const newStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: nextFacing } }, audio: false
+    });
+    const newTrack = newStream.getVideoTracks()[0];
+    // Replace in peer connection
+    if (_rtcPeer) {
+      const sender = _rtcPeer.getSenders().find(s => s.track && s.track.kind === 'video');
+      if (sender) await sender.replaceTrack(newTrack);
+    }
+    // Rebuild local stream: keep audio, swap video
+    const audioTracks = _rtcLocalStream.getAudioTracks();
+    _rtcLocalStream.getVideoTracks().forEach(t => t.stop());
+    _rtcLocalStream = new MediaStream([...audioTracks, newTrack]);
+    const lv = document.getElementById('call-local-video');
+    if (lv) lv.srcObject = _rtcLocalStream;
+    _rtcFacingMode = nextFacing;
+  } catch(e) {
+    showToast('❌ Камера недоступна');
+  } finally {
+    if (btn) { btn.disabled = false; btn.style.opacity = ''; }
+  }
+}
+
+// Pinch-to-zoom on remote video (FaceTime style)
+let _rvZoom = 1;
+function _initVideoZoom() {
+  const rv = document.getElementById('call-remote-video');
+  if (!rv) return;
+  let _startDist = 0, _startZoom = 1;
+  rv.addEventListener('touchstart', function(e) {
+    if (e.touches.length === 2) {
+      _startDist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY);
+      _startZoom = _rvZoom;
+    }
+  }, { passive: true });
+  rv.addEventListener('touchmove', function(e) {
+    if (e.touches.length !== 2) return;
+    e.preventDefault();
+    const dist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY);
+    _rvZoom = Math.min(Math.max(_startZoom * (dist / _startDist), 1), 4);
+    rv.style.transform = 'scale(' + _rvZoom + ')';
+  }, { passive: false });
+  // Double-tap to reset zoom
+  var _lastTap = 0;
+  rv.addEventListener('touchend', function() {
+    var now = Date.now();
+    if (now - _lastTap < 300) { _rvZoom = 1; rv.style.transform = ''; }
+    _lastTap = now;
+  });
+}
+
 function endCall() {
   if (_rtcCallTarget) _sendCallSignal(_rtcCallTarget.username, 'hangup', {}).catch(()=>{});
   if (_rtcPeer) { _rtcPeer.close(); _rtcPeer = null; }
   if (_rtcLocalStream) { _rtcLocalStream.getTracks().forEach(t => t.stop()); _rtcLocalStream = null; }
   _rtcCallTarget = null; _rtcOfferSdp = null; _rtcIceQueue = []; _rtcRemoteReady = false;
+  _rtcFacingMode = 'user'; _rtcMuted = false; _rvZoom = 1;
   const overlay = document.getElementById('call-overlay');
   if (overlay) overlay.remove();
   const au = document.getElementById('call-remote-audio');
@@ -5447,11 +5517,13 @@ function _showCallUI(mode, name, type) {
           <div class="call-status" id="call-status">${statusText}</div>
         </div>
         <div class="call-video-bottom">
-          ${isIncoming ? `<button class="call-video-btn call-video-btn-accept" onclick="acceptCall()">✅</button>` : ''}
+          ${isIncoming ? `<button id="call-video-accept-btn" class="call-video-btn call-video-btn-accept" onclick="acceptCall()">✅</button>` : ''}
           <button class="call-video-btn call-video-btn-mute" id="call-mute-btn" onclick="_toggleMute()">🎤</button>
+          <button id="call-camera-btn" class="call-video-btn call-video-btn-camera" onclick="_switchCamera()" style="${isIncoming ? 'display:none' : ''}">🔄</button>
           <button class="call-video-btn call-video-btn-end" onclick="${isIncoming ? 'rejectCall()' : 'endCall()'}">📵</button>
         </div>
       </div>`;
+    requestAnimationFrame(_initVideoZoom);
   } else {
     overlay.className = 'call-overlay';
     overlay.innerHTML = `
