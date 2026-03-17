@@ -5700,12 +5700,12 @@ async def _web_camera_info(request: aiohttp_web.Request) -> aiohttp_web.Response
 
 async def _web_camera_snap(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/api/camera-snap/{entity_id} — прокси снимка камеры через бот (IPv4).
-    Браузер не должен напрямую обращаться к HA."""
-    if not _check_token(request):
-        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    Авторизация — HA camera access_token в query string (выдаётся только аутентифицированным).
+    <img src> не может отправить Authorization header, поэтому _check_token не используется."""
     eid = request.match_info.get("entity_id", "")
     tok = request.rel_url.query.get("token", "")
-    if not eid.startswith("camera.") or not tok:
+    # HA access_token — 64-символьный hex, выдаётся только через авторизованный /camera/{eid}
+    if not eid.startswith("camera.") or len(tok) < 32:
         return aiohttp_web.Response(status=400, text="Bad request", headers=_CORS_HEADERS)
     try:
         snap_url = f"{HA_URL}/api/camera_proxy/{eid}?token={tok}"
