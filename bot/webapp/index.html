@@ -5165,6 +5165,22 @@ const _STUN_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
 ];
+// Enhanced audio constraints — mono 48kHz, tight latency, full DSP
+const _AUDIO_CONSTRAINTS = {
+  echoCancellation: { ideal: true },
+  noiseSuppression: { ideal: true },
+  autoGainControl:  { ideal: true },
+  channelCount:     { ideal: 1 },       // mono — better voice quality/bandwidth
+  sampleRate:       { ideal: 48000 },    // Opus native rate
+  latency:          { ideal: 0.02, max: 0.05 },
+};
+// Enhanced video constraints for calls
+const _VIDEO_CONSTRAINTS_CALL = {
+  facingMode: 'user',
+  width:     { ideal: 1280, min: 480 },
+  height:    { ideal: 720,  min: 360 },
+  frameRate: { ideal: 30,   min: 15  },
+};
 let _rtcIceServers  = null;
 let _rtcPeer        = null;
 let _rtcLocalStream = null;
@@ -5211,6 +5227,86 @@ function _setCallStatus(txt) {
   if (el) el.textContent = txt;
 }
 
+// ── WebRTC quality helpers ─────────────────────────────────────────────────
+function _boostAudioSDP(sdp) {
+  // Inject Opus FEC (useinbandfec) + DTX (usedtx) + 128 kbps cap into SDP
+  // FEC sends redundant audio packets → survives up to ~5% packet loss
+  // DTX skips packets during silence → saves ~50% bandwidth
+  const m = sdp.match(/a=rtpmap:(\d+) opus\/48000\/2/i);
+  if (!m) return sdp;
+  const pt = m[1];
+  const fmtp = `a=fmtp:${pt} minptime=10;useinbandfec=1;usedtx=1;stereo=0;maxaveragebitrate=128000`;
+  if (sdp.includes(`a=fmtp:${pt} `))
+    return sdp.replace(new RegExp(`a=fmtp:${pt} [^\r\n]+`), fmtp);
+  return sdp.replace(`a=rtpmap:${pt} opus/48000/2`, `a=rtpmap:${pt} opus/48000/2\r\n${fmtp}`);
+}
+
+async function _applyEncoderParams(pc) {
+  for (const s of pc.getSenders()) {
+    if (!s.track) continue;
+    try {
+      const p = s.getParameters();
+      if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+      if (s.track.kind === 'audio') {
+        p.encodings[0].maxBitrate = 128000;
+        try { p.encodings[0].priority = 'high'; p.encodings[0].networkPriority = 'high'; } catch(_) {}
+      } else if (s.track.kind === 'video') {
+        p.encodings[0].maxBitrate   = 2000000;  // 2 Mbps start
+        p.encodings[0].maxFramerate = 30;
+      }
+      await s.setParameters(p);
+    } catch(_) {}
+  }
+}
+
+let _statsTimer   = null;
+let _callQuality  = 'good';
+
+function _startStatsMonitor(pc) {
+  clearInterval(_statsTimer);
+  _statsTimer = setInterval(async () => {
+    if (!pc || pc.signalingState === 'closed') { clearInterval(_statsTimer); return; }
+    try {
+      const stats = await pc.getStats();
+      let rtt = 0, loss = 0;
+      stats.forEach(r => {
+        if (r.type === 'candidate-pair' && r.nominated && r.currentRoundTripTime)
+          rtt = r.currentRoundTripTime;
+        if (r.type === 'inbound-rtp' && r.packetsLost != null && r.packetsReceived != null) {
+          const tot = r.packetsLost + r.packetsReceived;
+          if (tot > 0) loss = Math.max(loss, r.packetsLost / tot);
+        }
+      });
+      const q = (rtt > 0.35 || loss > 0.1) ? 'poor'
+              : (rtt > 0.15 || loss > 0.04) ? 'medium' : 'good';
+      if (q !== _callQuality) {
+        _callQuality = q;
+        _updateQualityUI(q);
+        // Adapt video bitrate to network conditions
+        if (_rtcCallType === 'video') {
+          const vs = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+          if (vs) {
+            const p = vs.getParameters();
+            if (p.encodings && p.encodings.length) {
+              p.encodings[0].maxBitrate = q === 'poor' ? 400000 : q === 'medium' ? 1000000 : 2000000;
+              try { await vs.setParameters(p); } catch(_) {}
+            }
+          }
+        }
+      }
+    } catch(_) {}
+  }, 5000);
+}
+
+function _updateQualityUI(q) {
+  const el = document.getElementById('call-quality');
+  if (!el) return;
+  const bars = { good: '▂▄█', medium: '▂▄▁', poor: '▂▁▁' };
+  const cols  = { good: '#34d399', medium: '#fbbf24', poor: '#f87171' };
+  el.textContent = bars[q] || '';
+  el.style.color = cols[q] || '';
+}
+
 function _makePeer(iceServers) {
   const pc = new RTCPeerConnection({ iceServers, iceTransportPolicy: 'all', bundlePolicy: 'max-bundle' });
   pc.onicecandidate = e => {
@@ -5223,6 +5319,10 @@ function _makePeer(iceServers) {
                   failed:'❌ Не удалось подключиться', disconnected:'⚠️ Разрыв связи' };
     if (map[s]) _setCallStatus(map[s]);
     if (s === 'failed') showToast('❌ ICE failed — нет маршрута');
+    if (s === 'connected' || s === 'completed') {
+      _applyEncoderParams(pc);
+      _startStatsMonitor(pc);
+    }
   };
   pc.ontrack = e => {
     // e.streams[0] may be empty on some browsers — build stream from track
@@ -5281,9 +5381,9 @@ async function startCall(haName, displayName, type) {
   _showCallUI('outgoing', displayName, type);
 
   try {
-    const _audioConstraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
     _rtcLocalStream = await navigator.mediaDevices.getUserMedia(
-      type === 'video' ? { video: { facingMode: 'user' }, audio: _audioConstraints } : { audio: _audioConstraints }
+      type === 'video' ? { video: _VIDEO_CONSTRAINTS_CALL, audio: _AUDIO_CONSTRAINTS }
+                       : { audio: _AUDIO_CONSTRAINTS }
     );
     const iceServers = await _getIceServers();
     _rtcPeer = _makePeer(iceServers);
@@ -5294,8 +5394,9 @@ async function startCall(haName, displayName, type) {
     if (lv) { lv.srcObject = _rtcLocalStream; lv.play().catch(()=>{}); }
 
     const offer = await _rtcPeer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: type === 'video' });
-    await _rtcPeer.setLocalDescription(offer);
-    await _sendCallSignal(username, 'offer', { sdp: offer.sdp, type: offer.type, callType: type });
+    const offDesc = new RTCSessionDescription({ type: offer.type, sdp: _boostAudioSDP(offer.sdp) });
+    await _rtcPeer.setLocalDescription(offDesc);
+    await _sendCallSignal(username, 'offer', { sdp: offDesc.sdp, type: offDesc.type, callType: type });
     _setCallStatus(type === 'video' ? '📹 Вызов...' : '📞 Вызов...');
   } catch(e) {
     showToast('❌ ' + e.message);
@@ -5357,9 +5458,9 @@ async function acceptCall() {
   }
 
   try {
-    const _audioConstraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
     _rtcLocalStream = await navigator.mediaDevices.getUserMedia(
-      _rtcCallType === 'video' ? { video: { facingMode: 'user' }, audio: _audioConstraints } : { audio: _audioConstraints }
+      _rtcCallType === 'video' ? { video: _VIDEO_CONSTRAINTS_CALL, audio: _AUDIO_CONSTRAINTS }
+                               : { audio: _AUDIO_CONSTRAINTS }
     );
     const iceServers = await _getIceServers();
     _rtcPeer = _makePeer(iceServers);
@@ -5372,8 +5473,9 @@ async function acceptCall() {
     await _flushIceQueue(); // drain ICE candidates that arrived before accept
 
     const answer = await _rtcPeer.createAnswer();
-    await _rtcPeer.setLocalDescription(answer);
-    await _sendCallSignal(_rtcCallTarget.username, 'answer', { sdp: answer.sdp, type: answer.type });
+    const ansDesc = new RTCSessionDescription({ type: answer.type, sdp: _boostAudioSDP(answer.sdp) });
+    await _rtcPeer.setLocalDescription(ansDesc);
+    await _sendCallSignal(_rtcCallTarget.username, 'answer', { sdp: ansDesc.sdp, type: ansDesc.type });
     _setCallStatus('🔄 Подключение...');
 
     // Update buttons — hide accept, reveal camera switch
@@ -5473,6 +5575,7 @@ function endCall() {
   if (_rtcLocalStream) { _rtcLocalStream.getTracks().forEach(t => t.stop()); _rtcLocalStream = null; }
   _rtcCallTarget = null; _rtcOfferSdp = null; _rtcIceQueue = []; _rtcRemoteReady = false;
   _rtcFacingMode = 'user'; _rtcMuted = false; _rvZoom = 1;
+  clearInterval(_statsTimer); _statsTimer = null; _callQuality = 'good';
   const overlay = document.getElementById('call-overlay');
   if (overlay) overlay.remove();
   const au = document.getElementById('call-remote-audio');
@@ -5513,7 +5616,10 @@ function _showCallUI(mode, name, type) {
         <video id="call-remote-video" autoplay playsinline></video>
         <video id="call-local-video"  autoplay playsinline muted></video>
         <div class="call-video-top">
-          <div class="call-name">${escapeHtml(name)}</div>
+          <div style="display:flex;align-items:center;gap:8px;justify-content:center">
+            <div class="call-name">${escapeHtml(name)}</div>
+            <span id="call-quality" style="font-size:11px;letter-spacing:1px;font-weight:700"></span>
+          </div>
           <div class="call-status" id="call-status">${statusText}</div>
         </div>
         <div class="call-video-bottom">
@@ -5533,7 +5639,10 @@ function _showCallUI(mode, name, type) {
           <div class="call-pulse-ring"></div>
         </div>
         <div class="call-name">${escapeHtml(name)}</div>
-        <div class="call-status" id="call-status">${statusText}</div>
+        <div style="display:flex;align-items:center;gap:8px;justify-content:center">
+          <div class="call-status" id="call-status">${statusText}</div>
+          <span id="call-quality" style="font-size:11px;letter-spacing:1px;font-weight:700"></span>
+        </div>
         <div style="font-size:44px;margin:8px 0">🎙️</div>
         <div class="call-buttons">
           ${isIncoming ? `<button id="call-accept-btn" class="call-btn call-btn-accept" onclick="acceptCall()">✅ Принять</button>` : ''}
