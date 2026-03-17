@@ -1297,6 +1297,7 @@ body::before {
   background: linear-gradient(135deg, #6366f1, #8b5cf6);
   display: flex; align-items: center; justify-content: center;
   font-size: 32px; font-weight: 700; color: #fff;
+  position: relative; overflow: hidden;
 }
 @keyframes callPulse {
   0%,100% { transform: scale(1); opacity: 0.5; }
@@ -4100,6 +4101,7 @@ let HA_USER_ROLE    = localStorage.getItem('ha_user_role')    || 'viewer';
 let HA_USERNAME     = localStorage.getItem('ha_username')     || '';
 let HA_DISPLAY_NAME = localStorage.getItem('ha_display_name') || '';
 let HA_AVATAR_URL   = localStorage.getItem('ha_avatar_url')   || '';
+let _haAvatarVer    = Date.now(); // bumped after avatar upload to bust cache
 
 // ── Role Permissions ───────────────────────────────────────────────────────
 // SECTION_PERM_MAP removed — sections now use data-section-perm attribute directly
@@ -4117,6 +4119,20 @@ function applyRolePermissions(perms) {
     });
 }
 
+function _loadAvatarInto(el, username) {
+  if (!el || !username) return;
+  const img = new Image();
+  img.onload = function() {
+    el.textContent = '';
+    el.style.background = 'none';
+    const i = document.createElement('img');
+    i.src = img.src;
+    i.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%';
+    el.appendChild(i);
+  };
+  img.src = '/ha-app/api/user-avatar/' + encodeURIComponent(username) + '?_t=' + Date.now();
+}
+
 function _updateUserBadge() {
   const badge = document.getElementById('user-badge');
   const avatar = document.getElementById('user-avatar');
@@ -4129,6 +4145,7 @@ function _updateUserBadge() {
     avatar.innerHTML = '';
     avatar.textContent = name ? name.charAt(0).toUpperCase() : '👤';
     avatar.style.background = HA_USER_ROLE === 'admin' ? '#3b82f6' : '#6366f1';
+    if (HA_USERNAME) _loadAvatarInto(avatar, HA_USERNAME);
   }
   if (HA_USER_ROLE === 'admin') admShow();
 }
@@ -4176,21 +4193,7 @@ function showUserMenu() {
   document.body.appendChild(div);
   requestAnimationFrame(function() { div.style.transform = 'translateY(0)'; });
   // Load actual avatar after sheet animates in
-  if (HA_USERNAME) {
-    const avatarWrap = document.getElementById('ha-menu-avatar-wrap');
-    if (avatarWrap) {
-      const imgTest = new Image();
-      imgTest.onload = function() {
-        if (!avatarWrap) return;
-        avatarWrap.innerHTML = '';
-        const i = document.createElement('img');
-        i.src = imgTest.src;
-        i.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%';
-        avatarWrap.appendChild(i);
-      };
-      imgTest.src = '/ha-app/api/user-avatar/' + encodeURIComponent(HA_USERNAME) + '?_t=' + Date.now();
-    }
-  }
+  if (HA_USERNAME) _loadAvatarInto(document.getElementById('ha-menu-avatar-wrap'), HA_USERNAME);
 }
 function closeUserMenu() {
   var sh = document.getElementById('user-menu-sheet');
@@ -4342,18 +4345,10 @@ async function hacroppingApply() {
       const data = await res.json();
       if (data.ok) {
         if (statusEl) statusEl.textContent = '✅ Аватар обновлён';
-        const avatarWrap = document.getElementById('ha-menu-avatar-wrap');
-        if (avatarWrap) {
-          const freshImg = new Image();
-          freshImg.onload = function() {
-            avatarWrap.innerHTML = '';
-            const i = document.createElement('img');
-            i.src = freshImg.src;
-            i.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%';
-            avatarWrap.appendChild(i);
-          };
-          freshImg.src = '/ha-app/api/user-avatar/' + encodeURIComponent(HA_USERNAME) + '?_t=' + Date.now();
-        }
+        _haAvatarVer = Date.now();
+        _loadAvatarInto(document.getElementById('ha-menu-avatar-wrap'), HA_USERNAME);
+        _loadAvatarInto(document.getElementById('user-avatar'), HA_USERNAME);
+        renderFamilyCards();
         setTimeout(function() { if (statusEl) statusEl.textContent = ''; }, 3000);
       } else {
         if (statusEl) statusEl.textContent = '❌ ' + (data.error || 'Ошибка');
@@ -5986,7 +5981,7 @@ async function startCall(haName, displayName, type) {
   _rtcCallTarget = { username, display: displayName };
   _rtcIceQueue   = [];
   _rtcRemoteReady = false;
-  _showCallUI('outgoing', displayName, type);
+  _showCallUI('outgoing', displayName, type, username);
 
   try {
     _rtcLocalStream = await navigator.mediaDevices.getUserMedia(
@@ -6028,7 +6023,7 @@ async function _handleCallSignal(sig) {
     _rtcOfferSdp    = payload;
     _rtcIceQueue    = [];
     _rtcRemoteReady = false;
-    _showCallUI('incoming', from_display || from_user, _rtcCallType);
+    _showCallUI('incoming', from_display || from_user, _rtcCallType, from_user);
 
   } else if (signal_type === 'answer') {
     if (!_rtcPeer) return;
@@ -6202,11 +6197,11 @@ async function _checkPendingCall() {
     // Pre-populate ICE queue with candidates stored server-side (sent before callee opened app)
     _rtcIceQueue    = call.ice_candidates ? [...call.ice_candidates] : [];
     _rtcRemoteReady = false;
-    _showCallUI('incoming', call.from_display || call.from_user, _rtcCallType);
+    _showCallUI('incoming', call.from_display || call.from_user, _rtcCallType, call.from_user);
   } catch(_) {}
 }
 
-function _showCallUI(mode, name, type) {
+function _showCallUI(mode, name, type, username) {
   let overlay = document.getElementById('call-overlay');
   if (!overlay) {
     overlay = document.createElement('div');
@@ -6227,6 +6222,7 @@ function _showCallUI(mode, name, type) {
         <video id="call-local-video"  autoplay playsinline muted></video>
         <div class="call-video-top">
           <div style="display:flex;align-items:center;gap:8px;justify-content:center">
+            <div id="call-vid-avatar" style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#8b5cf6);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:#fff;overflow:hidden;flex-shrink:0;border:2px solid rgba(255,255,255,0.3)">${escapeHtml(initLetter)}</div>
             <div class="call-name">${escapeHtml(name)}</div>
             <span id="call-quality" style="font-size:11px;letter-spacing:1px;font-weight:700"></span>
           </div>
@@ -6240,12 +6236,13 @@ function _showCallUI(mode, name, type) {
         </div>
       </div>`;
     requestAnimationFrame(_initVideoZoom);
+    if (username) _loadAvatarInto(document.getElementById('call-vid-avatar'), username);
   } else {
     overlay.className = 'call-overlay';
     overlay.innerHTML = `
       <div class="call-box">
         <div class="call-avatar-wrap">
-          <div class="call-avatar">${escapeHtml(initLetter)}</div>
+          <div class="call-avatar" id="call-audio-avatar">${escapeHtml(initLetter)}</div>
           <div class="call-pulse-ring"></div>
         </div>
         <div class="call-name">${escapeHtml(name)}</div>
@@ -6262,6 +6259,7 @@ function _showCallUI(mode, name, type) {
           </button>
         </div>
       </div>`;
+    if (username) _loadAvatarInto(document.getElementById('call-audio-avatar'), username);
   }
 }
 
@@ -7027,7 +7025,7 @@ function renderFamilyCards() {
       : '';
     return `<div class="family-card ${isHome?'home':''}">
       <div class="family-card-top">
-        <div class="family-avatar ${isHome?'home':''}" style="${isUnknown?'opacity:0.7':''}">${pulse}${initials}</div>
+        <div class="family-avatar ${isHome?'home':''}" style="${isUnknown?'opacity:0.7':''}" data-av="${escapeAttr(username)}">${pulse}<span class="fav-init">${initials}</span></div>
         <div class="family-info">
           <div class="family-card-name">${escapeHtml(name)} <span style="font-size:12px">${roleLabel}</span></div>
           <div class="family-card-status">${escapeHtml(statusText)}</div>
@@ -7050,6 +7048,21 @@ function renderFamilyCards() {
       </div>
     </div>`;
   }).join('');
+  // Load avatars for each family member
+  el.querySelectorAll('[data-av]').forEach(function(avatarEl) {
+    const uname = avatarEl.dataset.av;
+    if (!uname) return;
+    const img = new Image();
+    img.onload = function() {
+      const initEl = avatarEl.querySelector('.fav-init');
+      if (initEl) initEl.remove();
+      const i = document.createElement('img');
+      i.src = img.src;
+      i.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:50%';
+      avatarEl.appendChild(i);
+    };
+    img.src = '/ha-app/api/user-avatar/' + encodeURIComponent(uname) + '?_t=' + _haAvatarVer;
+  });
   // Load extra data once
   if (!_familyLoaded) { _familyLoaded = true; loadFamilyExtra(); }
 }

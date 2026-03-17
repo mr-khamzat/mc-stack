@@ -4040,8 +4040,7 @@ _HA_AVATARS_DIR = Path("/opt/ha-bot/avatars/ha")
 
 async def _web_user_avatar(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/api/user-avatar/{username} — сначала локальный аватар, потом HA."""
-    if not _check_token(request):
-        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    # No auth required — avatars are public profile pictures
     username = request.match_info.get("username", "")
     # 1. Проверить локально загруженный аватар
     for ext in ("jpg", "jpeg", "png", "webp"):
@@ -8356,6 +8355,8 @@ _FR_MIGRATIONS = [
     "ALTER TABLE fr_invites ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0",
     # migration: group admin role
     "ALTER TABLE fr_users ADD COLUMN group_role TEXT NOT NULL DEFAULT ''",
+    # migration: extra groups access (JSON list of group IDs)
+    "ALTER TABLE fr_users ADD COLUMN extra_groups TEXT NOT NULL DEFAULT '[]'",
 ]
 
 def _fr_db_init():
@@ -8633,12 +8634,21 @@ async def _fr_contacts(request):
             "WHERE u.username != ? ORDER BY u.display_name", (username,)
         ).fetchall()
     else:
-        rows = c.execute(
-            "SELECT u.username, u.display_name, u.status, u.group_id, u.last_login, g.name as group_name "
-            "FROM fr_users u LEFT JOIN fr_groups g ON u.group_id=g.id "
-            "WHERE u.username != ? AND u.group_id=? AND u.status='active' ORDER BY u.display_name",
-            (username, user["group_id"])
-        ).fetchall()
+        try:
+            extra = json.loads(user["extra_groups"] or "[]") if "extra_groups" in user.keys() else []
+        except Exception:
+            extra = []
+        allowed = [gid for gid in ([user["group_id"]] + extra) if gid]
+        if not allowed:
+            rows = []
+        else:
+            ph = ",".join("?" * len(allowed))
+            rows = c.execute(
+                f"SELECT u.username, u.display_name, u.status, u.group_id, u.last_login, g.name as group_name "
+                f"FROM fr_users u LEFT JOIN fr_groups g ON u.group_id=g.id "
+                f"WHERE u.username != ? AND u.group_id IN ({ph}) AND u.status='active' ORDER BY u.display_name",
+                [username] + allowed
+            ).fetchall()
     result = [{"username": r["username"], "display_name": r["display_name"],
                "status": r["status"], "group_id": r["group_id"],
                "group_name": r["group_name"] or "", "last_login": r["last_login"]}
@@ -8679,6 +8689,11 @@ async def _fr_call_signal(request):
                 "ice_candidates": [],
                 "expires_at": _time.time() + 60,
             }
+            call_type_label = "📹 Входящий видеозвонок" if payload.get("callType") == "video" else "📞 Входящий звонок"
+            asyncio.create_task(push_notify(
+                to_user, f"{call_type_label}", f"{display} вызывает вас",
+                "/friends/?incoming_call=1", tag="fr-incoming-call"
+            ))
         elif sig_type == "ice":
             if to_user in _FR_PENDING_CALLS and payload.get("candidate"):
                 _FR_PENDING_CALLS[to_user]["ice_candidates"].append(payload["candidate"])
@@ -8725,6 +8740,12 @@ async def _fr_admin_users(request):
                 c.execute("UPDATE fr_users SET display_name=? WHERE username=?", (body["display_name"][:60], uname))
             if "group_role" in body:
                 c.execute("UPDATE fr_users SET group_role=? WHERE username=?", (body["group_role"], uname))
+            if "password" in body and body["password"]:
+                c.execute("UPDATE fr_users SET password_hash=? WHERE username=?",
+                          (_fr_hash(uname, body["password"]), uname))
+            if "extra_groups" in body:
+                c.execute("UPDATE fr_users SET extra_groups=? WHERE username=?",
+                          (json.dumps(body["extra_groups"]), uname))
             c.commit()
         # Notify user via SSE if approved
         if body.get("status") == "active":
@@ -8742,17 +8763,18 @@ async def _fr_admin_users(request):
                                     headers=_CORS_HEADERS)
     # GET — list all users
     rows = _db().execute(
-        "SELECT u.username, u.display_name, u.role, u.status, u.group_id, u.last_login, u.group_role, g.name as group_name "
+        "SELECT u.username, u.display_name, u.role, u.status, u.group_id, u.last_login, u.group_role, u.extra_groups, g.name as group_name "
         "FROM fr_users u LEFT JOIN fr_groups g ON u.group_id=g.id ORDER BY u.created_at"
     ).fetchall()
-    def _safe_gr(r):
-        try: return r["group_role"]
-        except Exception: return ""
+    def _safe_col(r, col, default=""):
+        try: return r[col] or default
+        except Exception: return default
     return aiohttp_web.Response(
         text=json.dumps([{"username": r["username"], "display_name": r["display_name"],
                           "role": r["role"], "status": r["status"],
                           "group_id": r["group_id"], "group_name": r["group_name"] or "",
-                          "group_role": _safe_gr(r),
+                          "group_role": _safe_col(r, "group_role"),
+                          "extra_groups": json.loads(_safe_col(r, "extra_groups", "[]")),
                           "last_login": r["last_login"]} for r in rows], ensure_ascii=False),
         content_type="application/json", headers=_CORS_HEADERS)
 
@@ -8840,6 +8862,60 @@ async def _fr_admin_invites(request):
                           "expires_at": r["expires_at"],
                           "use_count": r["use_count"] if "use_count" in r.keys() else 0} for r in rows], ensure_ascii=False),
         content_type="application/json", headers=_CORS_HEADERS)
+
+async def _fr_sw(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /friends/sw.js — Service Worker для Friends PWA."""
+    path = Path("/opt/ha-bot/webapp/friends-sw.js")
+    if not path.exists():
+        return aiohttp_web.Response(status=404, text="Not found")
+    return aiohttp_web.Response(
+        text=path.read_text(encoding="utf-8"),
+        content_type="application/javascript",
+        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/friends/"},
+    )
+
+async def _fr_push_subscribe(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /friends/api/push-subscribe — сохранить push-подписку для пользователя Friends."""
+    username = _fr_auth(request)
+    if not username:
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body     = await request.json()
+        endpoint = body.get("endpoint", "")
+        p256dh   = (body.get("keys") or {}).get("p256dh", "")
+        auth_key = (body.get("keys") or {}).get("auth", "")
+        if not endpoint or not p256dh or not auth_key:
+            return aiohttp_web.Response(status=400, text='{"error":"incomplete subscription"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        with _DB_LOCK:
+            c = _db()
+            c.execute("DELETE FROM push_subscriptions WHERE username=? AND endpoint=?", (username, endpoint))
+            c.execute("INSERT INTO push_subscriptions(username,endpoint,p256dh,auth,created_at) VALUES(?,?,?,?,datetime('now'))",
+                      (username, endpoint, p256dh, auth_key))
+            c.commit()
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+async def _fr_turn_creds(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /friends/api/turn-creds — TURN creds for Friends app (uses X-FR-Token auth)."""
+    username = _fr_auth(request)
+    if not username:
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    import time, hmac as _hmac, hashlib as _hl, base64 as _b64
+    ttl  = 3600
+    ts   = int(time.time()) + ttl
+    user = f"{ts}:webrtc"
+    sig  = _hmac.new(_TURN_SECRET.encode(), user.encode(), _hl.sha1).digest()
+    cred = _b64.b64encode(sig).decode()
+    data = {
+        "urls":       [f"turn:{_TURN_HOST}:3478", f"turn:{_TURN_HOST}:3478?transport=tcp"],
+        "username":   user,
+        "credential": cred,
+    }
+    return aiohttp_web.Response(text=json.dumps(data, ensure_ascii=False),
+                                content_type="application/json", headers=_CORS_HEADERS)
 
 # ── Group admin endpoints ──────────────────────────────────────────────────────
 def _fr_group_role(user) -> str:
@@ -9235,7 +9311,7 @@ async def _start_web():
     app.router.add_get("/friends/api/contacts",                   _fr_contacts)
     app.router.add_post("/friends/api/call/signal",               _fr_call_signal)
     app.router.add_get("/friends/api/call/pending",               _fr_call_pending)
-    app.router.add_get("/friends/api/turn-creds",                 _web_turn_creds)
+    app.router.add_get("/friends/api/turn-creds",                 _fr_turn_creds)
     app.router.add_get("/friends/api/admin/users",                _fr_admin_users)
     app.router.add_patch("/friends/api/admin/users/{username}",   _fr_admin_users)
     app.router.add_delete("/friends/api/admin/users/{username}",  _fr_admin_users)
@@ -9252,6 +9328,8 @@ async def _start_web():
     app.router.add_delete("/friends/api/my-group/members/{username}", _fr_my_group_member)
     app.router.add_post("/friends/api/my-group/invite",           _fr_my_group_invite)
     app.router.add_delete("/friends/api/my-group/invite/{token}", _fr_my_group_invite)
+    app.router.add_get("/friends/sw.js",                          _fr_sw)
+    app.router.add_post("/friends/api/push-subscribe",            _fr_push_subscribe)
     for path in ["/friends/api/login", "/friends/api/register", "/friends/api/me",
                  "/friends/api/contacts", "/friends/api/call/signal",
                  "/friends/api/call/pending", "/friends/api/turn-creds",
@@ -9260,7 +9338,8 @@ async def _start_web():
                  "/friends/api/admin/invites", "/friends/api/admin/invites/{id}",
                  "/friends/api/ha-sso", "/friends/api/avatar",
                  "/friends/api/my-group", "/friends/api/my-group/members/{username}",
-                 "/friends/api/my-group/invite", "/friends/api/my-group/invite/{token}"]:
+                 "/friends/api/my-group/invite", "/friends/api/my-group/invite/{token}",
+                 "/friends/api/push-subscribe"]:
         app.router.add_route("OPTIONS", path, _web_options)
     runner = aiohttp_web.AppRunner(app)
     await runner.setup()

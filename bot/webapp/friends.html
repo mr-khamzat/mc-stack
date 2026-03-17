@@ -1246,6 +1246,36 @@ function _initMain() {
   switchTab('contacts');
   _startSSE();
   setTimeout(_checkPendingCall, 1200);
+  setTimeout(_frRegisterPush, 2000);
+}
+
+// ── Push notifications (Friends) ──────────────────────────────────────────────
+var FR_VAPID_KEY = 'BKKRiuBQ1XUitF3EikVhd0gJViHA9SYOaMBNZYqXiHRFexic_2T14q2rqQWZEZKwf69JCVk22ROn5mWuBK7e9Os';
+
+function _frUrlB64ToUint8(base64String) {
+  var padding = '='.repeat((4 - base64String.length % 4) % 4);
+  var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  var rawData = atob(base64);
+  var buf = new Uint8Array(rawData.length);
+  for (var i = 0; i < rawData.length; i++) buf[i] = rawData.charCodeAt(i);
+  return buf;
+}
+
+async function _frRegisterPush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  if (!FR_TOKEN) return;
+  try {
+    var reg = await navigator.serviceWorker.register('/friends/sw.js', { scope: '/friends/' });
+    var perm = await Notification.requestPermission();
+    if (perm !== 'granted') return;
+    var sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: _frUrlB64ToUint8(FR_VAPID_KEY)
+    });
+    await frApi('/push-subscribe', 'POST', sub.toJSON());
+  } catch(e) {
+    console.warn('Push registration failed:', e);
+  }
 }
 
 // ── Tab switcher ──────────────────────────────────────────────────────────────
@@ -1327,10 +1357,8 @@ async function loadContacts() {
             '<div class="contact-group">' + escapeHtml(c.group_name || '') + '</div>' +
           '</div>' +
           '<div class="contact-actions">' +
-            '<button class="call-action-btn call-action-audio" title="Голосовой звонок" onclick="startFrCall(' +
-              JSON.stringify(c.username) + ',' + JSON.stringify(c.display_name || c.username) + ",'audio'" + ')">📞</button>' +
-            '<button class="call-action-btn call-action-video" title="Видеозвонок" onclick="startFrCall(' +
-              JSON.stringify(c.username) + ',' + JSON.stringify(c.display_name || c.username) + ",'video'" + ')">📹</button>' +
+            '<button class="call-action-btn call-action-audio" title="Голосовой звонок" data-u="' + escapeHtml(c.username) + '" data-d="' + escapeHtml(c.display_name || c.username) + '" onclick="startFrCall(this.dataset.u,this.dataset.d,\'audio\')">📞</button>' +
+            '<button class="call-action-btn call-action-video" title="Видеозвонок" data-u="' + escapeHtml(c.username) + '" data-d="' + escapeHtml(c.display_name || c.username) + '" onclick="startFrCall(this.dataset.u,this.dataset.d,\'video\')">📹</button>' +
           '</div>' +
         '</div>';
       });
@@ -1689,31 +1717,33 @@ async function _loadGuestPrayers(lat, lon) {
 }
 
 // ── Admin: Users ───────────────────────────────────────────────────────────────
+let _adminUsersCache = [];
+
 async function loadAdminUsers() {
   const el = document.getElementById('admin-users-list');
   el.innerHTML = '<div class="loader"><div class="loader-dot"></div><div class="loader-dot"></div><div class="loader-dot"></div></div>';
   try {
-    const users = await frApi('/admin/users');
-    if (!users || !users.length) {
+    _adminUsersCache = await frApi('/admin/users');
+    if (!_adminUsersCache || !_adminUsersCache.length) {
       el.innerHTML = '<div class="empty-state"><div class="empty-icon">👤</div>Нет пользователей</div>';
       return;
     }
-    el.innerHTML = users.map(function(u) {
+    el.innerHTML = _adminUsersCache.map(function(u) {
       const statusMap = { active: 'badge-active', pending: 'badge-pending', suspended: 'badge-suspended' };
       const statusLabel = { active: 'Активен', pending: 'Ожидает', suspended: 'Заблокирован' };
       const badge = statusMap[u.status] || 'badge-pending';
       const label = statusLabel[u.status] || u.status;
+      const roleIcon = u.role === 'admin' ? '👑 ' : (u.group_role === 'admin' ? '🏠 ' : '');
       return '<div class="user-row">' +
         '<div class="user-row-info">' +
-          '<div class="user-row-name">' + escapeHtml(u.display_name || u.username) +
+          '<div class="user-row-name">' + roleIcon + escapeHtml(u.display_name || u.username) +
             ' <span class="status-badge ' + badge + '">' + label + '</span></div>' +
           '<div class="user-row-meta">@' + escapeHtml(u.username) +
             (u.group_name ? ' · ' + escapeHtml(u.group_name) : '') + '</div>' +
         '</div>' +
         '<div class="user-row-actions">' +
-          (u.status === 'pending' ? '<button class="action-btn action-approve" title="Одобрить" onclick="approveUser(' + JSON.stringify(u.username) + ')">✅</button>' : '') +
-          (u.role !== 'admin' ? '<button class="action-btn" title="' + (u.group_role === 'admin' ? 'Снять с роли админа группы' : 'Назначить админом группы') + '" onclick="toggleGroupAdmin(' + JSON.stringify(u.username) + ',' + JSON.stringify(u.group_role || '') + ')" style="' + (u.group_role === 'admin' ? 'background:rgba(250,204,21,0.25);color:#fde047' : 'background:rgba(99,102,241,0.15);color:#a5b4fc') + '">👑</button>' : '') +
-          '<button class="action-btn action-delete" title="Удалить" onclick="deleteUser(' + JSON.stringify(u.username) + ')">🗑</button>' +
+          (u.status === 'pending' ? '<button class="action-btn action-approve" title="Одобрить" data-u="' + escapeHtml(u.username) + '" onclick="approveUser(this.dataset.u)">✅</button>' : '') +
+          (u.role !== 'admin' ? '<button class="action-btn" title="Редактировать" data-u="' + escapeHtml(u.username) + '" onclick="openEditUser(this.dataset.u)" style="background:rgba(99,102,241,0.15);color:#a5b4fc">✏️</button>' : '') +
         '</div>' +
       '</div>';
     }).join('');
@@ -1735,15 +1765,114 @@ async function deleteUser(username) {
   try {
     await frApi('/admin/users/' + encodeURIComponent(username), 'DELETE');
     showToast('🗑 Удалён');
+    document.getElementById('fr-edit-user-sheet')?.remove();
+    document.getElementById('fr-edit-user-bd')?.remove();
     loadAdminUsers();
   } catch(e) { showToast('❌ ' + e.message); }
 }
 
-async function toggleGroupAdmin(username, currentGroupRole) {
-  const newRole = currentGroupRole === 'admin' ? '' : 'admin';
+// ── Edit User Sheet ─────────────────────────────────────────────────────────────
+async function openEditUser(username) {
+  document.getElementById('fr-edit-user-sheet')?.remove();
+  document.getElementById('fr-edit-user-bd')?.remove();
+
+  const u = _adminUsersCache.find(x => x.username === username);
+  if (!u) return;
+
+  // Load groups list
+  let groups = [];
+  try { groups = await frApi('/admin/groups'); } catch(_) {}
+
+  const extraIds = Array.isArray(u.extra_groups) ? u.extra_groups : [];
+
+  const groupOptions = groups.map(g =>
+    '<option value="' + g.id + '"' + (u.group_id === g.id ? ' selected' : '') + '>' + escapeHtml(g.name) + '</option>'
+  ).join('');
+
+  const extraGroupsHtml = groups.filter(g => g.id !== u.group_id).map(g =>
+    '<label style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer">' +
+      '<input type="checkbox" value="' + g.id + '"' + (extraIds.includes(g.id) ? ' checked' : '') + ' style="width:18px;height:18px;accent-color:var(--accent)">' +
+      '<span style="font-size:14px;color:var(--text)">' + escapeHtml(g.name) + '</span>' +
+    '</label>'
+  ).join('');
+
+  const bd = document.createElement('div');
+  bd.id = 'fr-edit-user-bd';
+  bd.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000';
+  bd.onclick = function(e) { if (e.target === bd) closeEditUser(); };
+
+  const sheet = document.createElement('div');
+  sheet.id = 'fr-edit-user-sheet';
+  sheet.style.cssText = 'position:fixed;bottom:0;left:50%;transform:translateX(-50%) translateY(100%);width:100%;max-width:480px;background:#131929;border-radius:20px 20px 0 0;z-index:1001;padding:20px 16px 32px;transition:transform 0.28s cubic-bezier(.32,.72,0,1);max-height:90vh;overflow-y:auto';
+  sheet.innerHTML =
+    '<div style="width:40px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;margin:0 auto 16px"></div>' +
+    '<div style="font-size:17px;font-weight:700;color:var(--text);margin-bottom:16px">✏️ ' + escapeHtml(u.display_name || u.username) + '</div>' +
+
+    '<div style="font-size:12px;color:var(--text3);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Отображаемое имя</div>' +
+    '<input id="eu-display" class="form-input" type="text" value="' + escapeHtml(u.display_name || '') + '" style="margin-bottom:14px">' +
+
+    '<div style="font-size:12px;color:var(--text3);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Основная группа</div>' +
+    '<select id="eu-group" class="select-input" style="margin-bottom:14px">' +
+      '<option value="">— без группы —</option>' + groupOptions +
+    '</select>' +
+
+    (groups.filter(g => g.id !== u.group_id).length ? (
+      '<div style="font-size:12px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px">Видит контакты дополнительных групп</div>' +
+      '<div id="eu-extra-groups" style="margin-bottom:14px">' + (extraGroupsHtml || '<div style="color:var(--text3);font-size:13px">Нет других групп</div>') + '</div>'
+    ) : '') +
+
+    '<div style="font-size:12px;color:var(--text3);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Права</div>' +
+    '<label style="display:flex;align-items:center;gap:10px;padding:10px 0;margin-bottom:14px;cursor:pointer">' +
+      '<input type="checkbox" id="eu-group-admin"' + (u.group_role === 'admin' ? ' checked' : '') + ' style="width:18px;height:18px;accent-color:var(--accent)">' +
+      '<span style="font-size:14px;color:var(--text)">🏠 Администратор своей группы</span>' +
+    '</label>' +
+
+    '<details style="margin-bottom:14px">' +
+      '<summary style="font-size:13px;color:var(--text2);cursor:pointer;padding:8px 0">🔑 Сменить пароль</summary>' +
+      '<div style="margin-top:8px">' +
+        '<input id="eu-password" class="form-input" type="password" placeholder="Новый пароль" style="margin-bottom:0">' +
+      '</div>' +
+    '</details>' +
+
+    '<div style="display:flex;gap:10px;margin-top:4px">' +
+      '<button class="btn btn-primary" data-u="' + escapeHtml(username) + '" onclick="saveUserEdit(this.dataset.u)" style="flex:1">💾 Сохранить</button>' +
+      '<button class="btn" data-u="' + escapeHtml(username) + '" onclick="deleteUser(this.dataset.u)" style="background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.3)">🗑 Удалить</button>' +
+    '</div>';
+
+  document.body.appendChild(bd);
+  document.body.appendChild(sheet);
+  requestAnimationFrame(function() { sheet.style.transform = 'translateX(-50%) translateY(0)'; });
+}
+
+function closeEditUser() {
+  const sheet = document.getElementById('fr-edit-user-sheet');
+  const bd = document.getElementById('fr-edit-user-bd');
+  if (sheet) sheet.style.transform = 'translateX(-50%) translateY(100%)';
+  setTimeout(function() { sheet?.remove(); bd?.remove(); }, 300);
+}
+
+async function saveUserEdit(username) {
+  const displayName = document.getElementById('eu-display')?.value.trim();
+  const groupId = document.getElementById('eu-group')?.value;
+  const groupAdmin = document.getElementById('eu-group-admin')?.checked;
+  const password = document.getElementById('eu-password')?.value.trim();
+
+  // Collect extra groups
+  const extraChecks = document.querySelectorAll('#eu-extra-groups input[type=checkbox]:checked');
+  const extraGroups = Array.from(extraChecks).map(cb => parseInt(cb.value));
+
+  const patch = {
+    group_role: groupAdmin ? 'admin' : '',
+    extra_groups: extraGroups,
+  };
+  if (displayName) patch.display_name = displayName;
+  if (groupId !== undefined) patch.group_id = groupId ? parseInt(groupId) : null;
+  if (password) patch.password = password;
+
   try {
-    await frApi('/admin/users/' + encodeURIComponent(username), 'PATCH', { group_role: newRole });
-    showToast(newRole === 'admin' ? '👑 Назначен админом группы' : '👤 Снят с роли админа группы');
+    await frApi('/admin/users/' + encodeURIComponent(username), 'PATCH', patch);
+    showToast('✅ Сохранено');
+    closeEditUser();
     _tabLoaded.admin = false;
     loadAdminUsers();
   } catch(e) { showToast('❌ ' + e.message); }
@@ -1763,7 +1892,7 @@ async function loadAdminGroups() {
       return '<div class="group-row">' +
         '<div class="group-row-name">' + escapeHtml(g.name) + '</div>' +
         '<div class="group-row-count">' + (g.member_count || 0) + ' чел.</div>' +
-        '<button class="action-btn action-delete" title="Удалить" onclick="deleteGroup(' + JSON.stringify(g.id || g.name) + ')">🗑</button>' +
+        '<button class="action-btn action-delete" title="Удалить" data-gid="' + escapeHtml(String(g.id || g.name)) + '" onclick="deleteGroup(this.dataset.gid)">🗑</button>' +
       '</div>';
     }).join('');
   } catch(e) {
@@ -1813,11 +1942,11 @@ async function loadAdminInvites() {
             '<div class="invite-row-meta">Истекает: ' + exp + ' · Использован: ' + (inv.use_count || 0) + ' раз</div>' +
           '</div>' +
           '<div style="display:flex;gap:6px">' +
-            '<button class="action-btn" style="background:rgba(99,102,241,0.2);color:#a5b4fc" title="Копировать" onclick="copyInviteLink(' + JSON.stringify(link) + ')">📋</button>' +
-            '<button class="action-btn action-delete" title="Удалить" onclick="deleteInvite(' + JSON.stringify(inv.token) + ')">🗑</button>' +
+            '<button class="action-btn" style="background:rgba(99,102,241,0.2);color:#a5b4fc" title="Копировать" data-lnk="' + escapeHtml(link) + '" onclick="copyInviteLink(this.dataset.lnk)">📋</button>' +
+            '<button class="action-btn action-delete" title="Удалить" data-id="' + escapeHtml(String(inv.id)) + '" onclick="deleteInvite(this.dataset.id)">🗑</button>' +
           '</div>' +
         '</div>' +
-        '<div class="invite-row-link" onclick="copyInviteLink(' + JSON.stringify(link) + ')">' + escapeHtml(link) + '</div>' +
+        '<div class="invite-row-link" data-lnk="' + escapeHtml(link) + '" onclick="copyInviteLink(this.dataset.lnk)">' + escapeHtml(link) + '</div>' +
       '</div>';
     }).join('');
   } catch(e) {
@@ -1882,11 +2011,11 @@ async function loadMyGroup() {
         '<div class="invite-row-top">' +
           '<div><div class="invite-row-meta">Истекает: ' + exp + ' · Использован: ' + (inv.use_count || 0) + ' раз</div></div>' +
           '<div style="display:flex;gap:6px">' +
-            '<button class="action-btn" style="background:rgba(99,102,241,0.2);color:#a5b4fc" onclick="copyInviteLink(' + JSON.stringify(link) + ')">📋</button>' +
-            '<button class="action-btn action-delete" onclick="deleteMyGroupInvite(' + JSON.stringify(inv.token) + ')">🗑</button>' +
+            '<button class="action-btn" style="background:rgba(99,102,241,0.2);color:#a5b4fc" data-lnk="' + escapeHtml(link) + '" onclick="copyInviteLink(this.dataset.lnk)">📋</button>' +
+            '<button class="action-btn action-delete" data-tk="' + escapeHtml(inv.token) + '" onclick="deleteMyGroupInvite(this.dataset.tk)">🗑</button>' +
           '</div>' +
         '</div>' +
-        '<div class="invite-row-link" onclick="copyInviteLink(' + JSON.stringify(link) + ')">' + escapeHtml(link) + '</div>' +
+        '<div class="invite-row-link" data-lnk="' + escapeHtml(link) + '" onclick="copyInviteLink(this.dataset.lnk)">' + escapeHtml(link) + '</div>' +
       '</div>';
     }).join('');
 
@@ -1897,7 +2026,7 @@ async function loadMyGroup() {
           '<div class="user-row-meta">@' + escapeHtml(m.username) + '</div>' +
         '</div>' +
         '<div class="user-row-actions">' +
-          '<button class="action-btn action-delete" title="Удалить из группы" onclick="deleteMyGroupMember(' + JSON.stringify(m.username) + ')">🗑</button>' +
+          '<button class="action-btn action-delete" title="Удалить из группы" data-u="' + escapeHtml(m.username) + '" onclick="deleteMyGroupMember(this.dataset.u)">🗑</button>' +
         '</div>' +
       '</div>';
     }).join('');
