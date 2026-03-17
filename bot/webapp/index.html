@@ -8647,38 +8647,39 @@ async function openCameraModal(eid) {
   document.getElementById('cam-modal-overlay')?.remove();
   const ov = document.createElement('div');
   ov.id = 'cam-modal-overlay';
-  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:4000;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:0';
+  ov.style.cssText = 'position:fixed;inset:0;background:#000;z-index:4000;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;overflow:hidden';
 
   const camId = eid.replace('camera.', '');
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-  const streamLabel = isMobile ? 'Снимки каждые 2 сек · нажмите ✕ для остановки'
-                               : 'Прямой поток MJPEG · нажмите ✕ для остановки';
 
   ov.innerHTML = `
-    <div style="width:100%;max-width:600px;display:flex;flex-direction:column;height:100%">
-      <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;flex-shrink:0">
-        <span style="font-size:14px;font-weight:700;color:#e0e0f0;flex:1">📹 ${escapeHtml(camName)}</span>
-        <button onclick="expandCamFullscreen()" title="На весь экран"
-          style="background:rgba(255,255,255,0.1);border:none;border-radius:8px;width:32px;height:32px;color:#c0c0e0;cursor:pointer;font-size:16px">⛶</button>
+    <div style="width:100%;max-width:600px;display:flex;flex-direction:column;height:100%;position:relative">
+      <!-- Header — always visible, safe-area aware -->
+      <div style="display:flex;align-items:center;gap:8px;padding:max(env(safe-area-inset-top,12px),12px) 16px 10px;flex-shrink:0;background:rgba(0,0,0,0.7);z-index:2">
+        <span style="font-size:14px;font-weight:700;color:#e0e0f0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📹 ${escapeHtml(camName)}</span>
+        <button onclick="expandCamFullscreen()" title="Полный экран"
+          style="background:rgba(255,255,255,0.12);border:none;border-radius:8px;width:36px;height:36px;color:#c0c0e0;cursor:pointer;font-size:16px;flex-shrink:0">⛶</button>
         <button onclick="closeCameraModal()"
-          style="background:rgba(255,255,255,0.1);border:none;border-radius:8px;padding:6px 12px;color:#c0c0e0;cursor:pointer;font-size:13px">✕</button>
+          style="background:rgba(239,68,68,0.2);border:1px solid rgba(239,68,68,0.4);border-radius:8px;width:36px;height:36px;color:#f87171;cursor:pointer;font-size:18px;font-weight:700;flex-shrink:0;line-height:1">✕</button>
       </div>
+      <!-- Stream -->
       <div id="cam-stream-wrap" style="position:relative;background:#000;flex-shrink:0">
         <img id="cam-modal-img" alt="camera stream"
-             style="width:100%;display:block;max-height:55vh;object-fit:contain">
+             style="width:100%;display:block;max-height:56vh;object-fit:contain">
         <div id="cam-modal-err" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:#6060a0;font-size:13px">
           <span style="font-size:30px">📷</span><span>Поток недоступен</span>
           <button onclick="retryCameraModal('${escapeAttr(eid)}')" class="btn btn-neutral" style="margin-top:4px">↺ Повторить</button>
         </div>
       </div>
+      <!-- Recordings -->
       <div style="flex:1;overflow-y:auto;padding:10px 16px">
         <div style="font-size:12px;color:#50508a;margin-bottom:8px">📼 Последние записи</div>
         <div id="cam-recordings-list" style="display:flex;gap:8px;flex-wrap:wrap">
           <div style="color:#50508a;font-size:12px">Загрузка...</div>
         </div>
       </div>
-      <div style="padding:8px 16px 12px;font-size:11px;color:#50508a;text-align:center;flex-shrink:0">
-        ${streamLabel}
+      <div style="padding:6px 16px max(env(safe-area-inset-bottom,8px),8px);font-size:11px;color:#50508a;text-align:center;flex-shrink:0">
+        Обновление каждые 2 сек
       </div>
     </div>`;
 
@@ -8688,19 +8689,8 @@ async function openCameraModal(eid) {
 
   const _cmErr = document.getElementById('cam-modal-err');
   const _cmImg = document.getElementById('cam-modal-img');
-  if (isMobile) {
-    // Mobile (iOS/Android): snapshot polling every 2s (MJPEG not supported on mobile)
-    if (_cmImg) _startSnapshotPolling(snapUrl, _cmErr, _cmImg);
-  } else {
-    // Desktop: MJPEG stream with snapshot fallback
-    if (_cmImg) {
-      if (_cmErr) _cmImg.addEventListener('error', () => {
-        _cmImg.style.display = 'none';
-        _startSnapshotPolling(snapUrl, _cmErr, _cmImg);
-      }, { once: true });
-      _cmImg.src = streamUrl;
-    }
-  }
+  // Always use snapshot polling — stream is proxied through bot server
+  if (_cmImg) _startSnapshotPolling(snapUrl, _cmErr, _cmImg);
 
   // Load recordings async
   _loadCamRecordings(camId);

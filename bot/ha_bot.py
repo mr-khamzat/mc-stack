@@ -5682,18 +5682,48 @@ async def _web_camera_info(request: aiohttp_web.Request) -> aiohttp_web.Response
             return aiohttp_web.Response(status=404, text="Not found", headers=_CORS_HEADERS)
         attrs = d.get("attributes", {})
         tok = attrs.get("access_token", "")
+        # Proxy snapshot/stream through bot so browser doesn't need direct HA access
+        proxy_base = f"/ha-app/api/camera-snap/{eid}?token={tok}"
         payload = {
             "entity_id":    eid,
             "name":         attrs.get("friendly_name", eid),
             "state":        d.get("state", ""),
-            "stream_url":   f"{HA_URL}/api/camera_proxy_stream/{eid}?token={tok}",
-            "snapshot_url": f"{HA_URL}/api/camera_proxy/{eid}?token={tok}",
-            "hls_url":      f"{HA_URL}/api/hls/{tok}/index.m3u8",
+            "stream_url":   proxy_base,
+            "snapshot_url": proxy_base,
+            "hls_url":      "",
         }
         return aiohttp_web.Response(text=json.dumps(payload, ensure_ascii=False),
                                     content_type="application/json", headers=_CORS_HEADERS)
     except Exception as e:
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
+async def _web_camera_snap(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/camera-snap/{entity_id} — прокси снимка камеры через бот (IPv4).
+    Браузер не должен напрямую обращаться к HA."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    eid = request.match_info.get("entity_id", "")
+    tok = request.rel_url.query.get("token", "")
+    if not eid.startswith("camera.") or not tok:
+        return aiohttp_web.Response(status=400, text="Bad request", headers=_CORS_HEADERS)
+    try:
+        snap_url = f"{HA_URL}/api/camera_proxy/{eid}?token={tok}"
+        async with _ha_cs() as sess:
+            async with sess.get(snap_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    return aiohttp_web.Response(status=resp.status, headers=_CORS_HEADERS)
+                data = await resp.read()
+                ct = resp.headers.get("Content-Type", "image/jpeg")
+                return aiohttp_web.Response(
+                    body=data,
+                    content_type=ct,
+                    headers={**_CORS_HEADERS,
+                             "Cache-Control": "no-cache, no-store",
+                             "X-Timestamp": str(int(__import__("time").time()))},
+                )
+    except Exception as e:
+        return aiohttp_web.Response(status=502, text=str(e), headers=_CORS_HEADERS)
 
 async def _web_frigate_events(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /ha-app/api/frigate/events — последние события детекции Frigate.
@@ -9185,6 +9215,7 @@ async def _start_web():
     app.router.add_get("/ha-app/api/sections",                _web_sections_get)
     app.router.add_post("/ha-app/api/sections",               _web_sections_post)
     app.router.add_get("/ha-app/api/camera/{entity_id}",      _web_camera_info)
+    app.router.add_get("/ha-app/api/camera-snap/{entity_id}", _web_camera_snap)
     app.router.add_get("/ha-app/api/frigate/events",          _web_frigate_events)
     app.router.add_get("/ha-app/api/frigate/recordings",          _web_frigate_recordings)
     app.router.add_get("/ha-app/api/frigate/clip/{event_id}",     _web_frigate_clip_proxy)
