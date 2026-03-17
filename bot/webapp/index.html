@@ -5797,15 +5797,103 @@ async function _sendCallSignal(toUser, type, payload) {
   }
 }
 
-// Unlock iOS AudioContext — must be called inside user gesture
+// ── Call audio engine (Web Audio API, no files needed) ────────────────────────
+var _haAudioCtx   = null;
+var _haAudioTimer = null;
+var _haAudioNodes = [];
+
+function _getAudioCtx() {
+  if (!_haAudioCtx) {
+    try { _haAudioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) { return null; }
+  }
+  if (_haAudioCtx.state === 'suspended') _haAudioCtx.resume().catch(() => {});
+  return _haAudioCtx;
+}
+
+document.addEventListener('touchstart', function _initAudio() {
+  _getAudioCtx();
+  document.removeEventListener('touchstart', _initAudio);
+}, { passive: true, once: true });
+
 function _unlockAudio() {
+  const ctx = _getAudioCtx();
+  if (!ctx) return;
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const buf = ctx.createBuffer(1, 1, 22050);
     const src = ctx.createBufferSource();
     src.buffer = buf; src.connect(ctx.destination); src.start(0);
-    setTimeout(() => ctx.close(), 500);
   } catch(_) {}
+}
+
+function _audioTone(freq, start, dur, vol, type) {
+  const ctx = _getAudioCtx();
+  if (!ctx) return;
+  const osc  = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type || 'sine';
+  osc.frequency.setValueAtTime(freq, start);
+  gain.gain.setValueAtTime(0, start);
+  gain.gain.linearRampToValueAtTime(vol || 0.3, start + 0.01);
+  gain.gain.setValueAtTime(vol || 0.3, start + dur - 0.02);
+  gain.gain.linearRampToValueAtTime(0, start + dur);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(start);
+  osc.stop(start + dur);
+  _haAudioNodes.push(osc);
+}
+
+function _stopCallAudio() {
+  clearTimeout(_haAudioTimer);
+  _haAudioTimer = null;
+  _haAudioNodes.forEach(n => { try { n.stop(); n.disconnect(); } catch(e) {} });
+  _haAudioNodes = [];
+}
+
+function _playRingtone() {
+  _stopCallAudio();
+  const ctx = _getAudioCtx();
+  if (!ctx) return;
+  function sched() {
+    const t = ctx.currentTime;
+    _audioTone(1200, t,       0.4, 0.4, 'sine');
+    _audioTone(1200, t + 0.6, 0.4, 0.4, 'sine');
+    _haAudioTimer = setTimeout(() => { _haAudioNodes = []; sched(); }, 3000);
+  }
+  sched();
+}
+
+function _playRingback() {
+  _stopCallAudio();
+  const ctx = _getAudioCtx();
+  if (!ctx) return;
+  function sched() {
+    const t = ctx.currentTime;
+    _audioTone(440, t, 2.0, 0.2, 'sine');
+    _audioTone(480, t, 2.0, 0.15, 'sine');
+    _haAudioTimer = setTimeout(() => { _haAudioNodes = []; sched(); }, 6000);
+  }
+  sched();
+}
+
+function _playConnectedSound() {
+  _stopCallAudio();
+  const ctx = _getAudioCtx();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  _audioTone(880,  t,       0.09, 0.45, 'sine');
+  _audioTone(1108, t + 0.09, 0.09, 0.45, 'sine');
+  _audioTone(1318, t + 0.18, 0.14, 0.5,  'sine');
+}
+
+function _playHangupSound() {
+  _stopCallAudio();
+  const ctx = _getAudioCtx();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  _audioTone(480, t,       0.18, 0.3, 'sine');
+  _audioTone(480, t + 0.25, 0.18, 0.3, 'sine');
+  _audioTone(480, t + 0.5,  0.18, 0.3, 'sine');
 }
 
 function _attachRemoteStream(stream) {
@@ -5923,6 +6011,8 @@ function _makePeer(iceServers) {
     if (map[s]) _setCallStatus(map[s]);
     if (s === 'failed') showToast('❌ ICE failed — нет маршрута');
     if (s === 'connected' || s === 'completed') {
+      _stopCallAudio();
+      _playConnectedSound();
       _applyEncoderParams(pc);
       _startStatsMonitor(pc);
     }
@@ -6027,19 +6117,22 @@ async function _handleCallSignal(sig) {
 
   } else if (signal_type === 'answer') {
     if (!_rtcPeer) return;
+    _stopCallAudio();
     try {
       await _rtcPeer.setRemoteDescription(new RTCSessionDescription(payload));
       await _flushIceQueue();
-      _setCallStatus('🔄 Подключение...');  // ICE will update to '🟢 Подключено' on connected/completed
+      _setCallStatus('🔄 Подключение...');
     } catch(e) { showToast('❌ answer: ' + e.message); }
 
   } else if (signal_type === 'ice') {
     if (payload && payload.candidate) await _addIce(payload.candidate);
 
   } else if (signal_type === 'reject') {
+    _stopCallAudio();
     showToast('📵 Отклонено');
     endCall();
   } else if (signal_type === 'hangup') {
+    _stopCallAudio();
     showToast('📵 Звонок завершён');
     endCall();
   }
@@ -6047,6 +6140,7 @@ async function _handleCallSignal(sig) {
 
 // ── Callee ───────────────────────────────────────────────────────────────────
 async function acceptCall() {
+  _stopCallAudio();
   if (!_rtcOfferSdp) return;
   _unlockAudio(); // must be inside user gesture (tap "Принять")
 
@@ -6097,6 +6191,7 @@ async function acceptCall() {
 }
 
 function rejectCall() {
+  _stopCallAudio();
   if (_rtcCallTarget) _sendCallSignal(_rtcCallTarget.username, 'reject', {});
   endCall();
 }
@@ -6173,6 +6268,8 @@ function _initVideoZoom() {
 }
 
 function endCall() {
+  _stopCallAudio();
+  _playHangupSound();
   if (_rtcCallTarget) _sendCallSignal(_rtcCallTarget.username, 'hangup', {}).catch(()=>{});
   if (_rtcPeer) { _rtcPeer.close(); _rtcPeer = null; }
   if (_rtcLocalStream) { _rtcLocalStream.getTracks().forEach(t => t.stop()); _rtcLocalStream = null; }
@@ -6202,6 +6299,9 @@ async function _checkPendingCall() {
 }
 
 function _showCallUI(mode, name, type, username) {
+  if (mode === 'incoming') _playRingtone();
+  else if (mode === 'outgoing') _playRingback();
+
   let overlay = document.getElementById('call-overlay');
   if (!overlay) {
     overlay = document.createElement('div');
