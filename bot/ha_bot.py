@@ -708,8 +708,12 @@ class DeviceMgmt(StatesGroup):
 # Документация HA REST API: https://developers.home-assistant.io/docs/api/rest/
 
 def _ha_cs(**kw) -> aiohttp.ClientSession:
-    """ClientSession с IPv4-only (Keenetic NDNS не поддерживает IPv6)."""
-    connector = aiohttp.TCPConnector(family=socket.AF_INET)
+    """ClientSession с IPv4-only и без проверки SSL (сертификат crazedns.ru — wildcard,
+    не покрывает ha-as.khamzat-home.crazedns.ru)."""
+    _ssl_ctx = _ssl.create_default_context()
+    _ssl_ctx.check_hostname = False
+    _ssl_ctx.verify_mode = _ssl.CERT_NONE
+    connector = aiohttp.TCPConnector(family=socket.AF_INET, ssl=_ssl_ctx)
     return aiohttp.ClientSession(connector=connector, **kw)
 
 async def ha_get(path: str) -> dict | list | None:
@@ -731,7 +735,7 @@ async def ha_get(path: str) -> dict | list | None:
         async with _ha_cs() as s:
             async with s.get(
                 f"{HA_URL}/api/{path}", headers=HA_HEADERS,
-                timeout=aiohttp.ClientTimeout(total=10), ssl=True
+                timeout=aiohttp.ClientTimeout(total=10), ssl=False
             ) as r:
                 if r.status == 200:
                     return await r.json()
@@ -755,7 +759,7 @@ async def ha_post(path: str, data: dict = None) -> dict | None:
         async with _ha_cs() as s:
             async with s.post(
                 f"{HA_URL}/api/{path}", headers=HA_HEADERS,
-                json=data or {}, timeout=aiohttp.ClientTimeout(total=10), ssl=True
+                json=data or {}, timeout=aiohttp.ClientTimeout(total=10), ssl=False
             ) as r:
                 return await r.json()
     except Exception as e:
@@ -922,6 +926,8 @@ async def ha_ws_get_todo_items(entity_id: str) -> list:
         return []
     ws_url = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
     ssl_ctx = _ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = _ssl.CERT_NONE
     try:
         async with websockets.connect(ws_url, ssl=ssl_ctx, family=socket.AF_INET) as ws:
             msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
@@ -4050,7 +4056,7 @@ async def _web_user_avatar(request: aiohttp_web.Request) -> aiohttp_web.Response
     url = (HA_URL + ep) if ep.startswith("/") else ep
     try:
         async with _ha_cs() as s:
-            r = await s.get(url, headers={"Authorization": f"Bearer {HA_TOKEN}"}, ssl=True)
+            r = await s.get(url, headers={"Authorization": f"Bearer {HA_TOKEN}"}, ssl=False)
             if r.status != 200:
                 return aiohttp_web.Response(status=r.status, headers=_CORS_HEADERS)
             data = await r.read()
@@ -4661,6 +4667,8 @@ async def _web_shopping_items(request: aiohttp_web.Request) -> aiohttp_web.Respo
             # Call HA WS to add item
             ws_url = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
             ssl_ctx = _ssl.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = _ssl.CERT_NONE
             import websockets as _ws2
             async with _ws2.connect(ws_url, ssl=ssl_ctx, family=socket.AF_INET) as ws:
                 msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
@@ -4694,6 +4702,8 @@ async def _ha_todo_complete_item(entity_id: str, item_text: str) -> None:
     """Mark a todo item as completed in Home Assistant via WebSocket."""
     ws_url = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
     ssl_ctx = _ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = _ssl.CERT_NONE
     try:
         async with websockets.connect(ws_url, ssl=ssl_ctx, family=socket.AF_INET) as ws:
             msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
@@ -5164,6 +5174,8 @@ async def _ha_state_watch_loop():
     """
     ha_ws = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
     ssl_ctx = _ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = _ssl.CERT_NONE
     watch_eids: set[str] = set()
     _ws_backoff = 5  # exponential backoff: 5→10→30→60 сек
 
@@ -5810,7 +5822,7 @@ async def _web_frigate_thumb_proxy(request: aiohttp_web.Request) -> aiohttp_web.
         async with _ha_cs() as sess:
             async with sess.get(snap_url, headers={"Authorization": f"Bearer {HA_TOKEN}"},
                                 timeout=aiohttp.ClientTimeout(total=15),
-                                ssl=True, allow_redirects=True) as resp:
+                                ssl=False, allow_redirects=True) as resp:
                 if resp.status == 200:
                     data = await resp.read()
                     ct = resp.headers.get("Content-Type", "image/jpeg")
@@ -6126,7 +6138,7 @@ async def _web_ha_login(request: aiohttp_web.Request) -> aiohttp_web.Response:
                 json={"handler": ["homeassistant", None],
                       "redirect_uri": HA_URL + "/",
                       "client_id": HA_URL + "/"},
-                ssl=True)
+                ssl=False)
             d1 = await r1.json()
             flow_id = d1.get("flow_id")
             if not flow_id:
@@ -6136,7 +6148,7 @@ async def _web_ha_login(request: aiohttp_web.Request) -> aiohttp_web.Response:
             r2 = await s.post(f"{HA_URL}/auth/login_flow/{flow_id}",
                 json={"username": username, "password": password,
                       "client_id": HA_URL + "/"},
-                ssl=True)
+                ssl=False)
             d2 = await r2.json()
 
             # Шаг 3: получить имя и аватар пользователя из HA (person entity)
@@ -6145,7 +6157,7 @@ async def _web_ha_login(request: aiohttp_web.Request) -> aiohttp_web.Response:
             if d2.get("type") == "create_entry":
                 try:
                     r4 = await s.get(f"{HA_URL}/api/states/person.{username.lower()}",
-                        headers={"Authorization": f"Bearer {HA_TOKEN}"}, ssl=True)
+                        headers={"Authorization": f"Bearer {HA_TOKEN}"}, ssl=False)
                     if r4.status == 200:
                         ps = await r4.json()
                         attrs = ps.get("attributes") or {}
