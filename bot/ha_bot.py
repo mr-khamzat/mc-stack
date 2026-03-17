@@ -7791,6 +7791,8 @@ async def _web_call_signal(request: aiohttp_web.Request) -> aiohttp_web.Response
                     (from_user, to_user, call_type, now_str)
                 )
                 cid = c2.execute("SELECT last_insert_rowid()").fetchone()[0]
+                # Оставляем только последние 5 записей
+                c2.execute("DELETE FROM call_log WHERE id NOT IN (SELECT id FROM call_log ORDER BY id DESC LIMIT 5)")
                 c2.commit()
             _call_sessions[f"{from_user}:{to_user}"] = {"id": cid, "answered_at": None}
             asyncio.create_task(push_notify(to_user, f"📞 {display} звонит", "Нажмите чтобы ответить", "/ha-app/", tag="incoming-call"))
