@@ -71,30 +71,33 @@
 .compact-bar {
   position: fixed;
   top: 0; left: 0; right: 0;
-  height: calc(48px + env(safe-area-inset-top, 0px));
+  height: calc(52px + env(safe-area-inset-top, 0px));
   z-index: 200;
   display: flex;
-  align-items: flex-end;
-  padding: 0 16px env(safe-area-inset-bottom, 0px);
-  padding-top: env(safe-area-inset-top, 0px);
-  gap: 12px;
-  background: linear-gradient(170deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 100%);
-  border-bottom: 0.5px solid rgba(255,255,255,0.08);
-  backdrop-filter: blur(24px) saturate(1.5) brightness(1.05);
-  -webkit-backdrop-filter: blur(24px) saturate(1.5) brightness(1.05);
+  align-items: center;
+  justify-content: space-between;
+  padding: env(safe-area-inset-top, 0px) 16px 0;
+  gap: 8px;
+  background: linear-gradient(170deg, rgba(20,20,40,0.92) 0%, rgba(15,15,30,0.88) 100%);
+  border-bottom: 0.5px solid rgba(255,255,255,0.1);
+  backdrop-filter: blur(28px) saturate(1.6) brightness(1.08);
+  -webkit-backdrop-filter: blur(28px) saturate(1.6) brightness(1.08);
   transform: translateY(-100%);
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 24px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.04) inset;
 }
 .compact-bar.visible { transform: translateY(0); }
+.cb-left  { display:flex; align-items:center; gap:8px; flex:1; }
+.cb-right { display:flex; align-items:center; gap:6px; justify-content:flex-end; flex:1; }
 .cb-clock {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
-  color: rgba(220,220,252,0.9);
+  color: rgba(225,225,255,0.9);
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.2px;
-  flex-shrink: 0;
+  letter-spacing: -0.3px;
   white-space: nowrap;
+  text-align: center;
+  flex-shrink: 0;
 }
 .cb-dot {
   width: 7px; height: 7px; border-radius: 50%;
@@ -104,18 +107,23 @@
   animation: statusLivePulse 2s infinite;
 }
 .cb-dot.off { background: #f87171; box-shadow: 0 0 6px rgba(248,113,113,0.6); }
-.cb-chips { display: flex; gap: 8px; flex: 1; overflow: hidden; }
 .cb-chip {
   font-size: 12px;
   font-weight: 600;
   color: rgba(180,180,240,0.85);
   background: rgba(255,255,255,0.07);
-  border: 0.5px solid rgba(255,255,255,0.1);
+  border: 0.5px solid rgba(255,255,255,0.12);
   border-radius: 20px;
   padding: 3px 10px;
   white-space: nowrap;
   flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
 }
+.cb-chip-weather {
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+.cb-chip-weather:active { background: rgba(255,255,255,0.15); transform: scale(0.94); }
 
 /* ── Skeleton loaders ───────────────────────────────────────────────────── */
 @keyframes shimmer {
@@ -2003,6 +2011,10 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
   from { opacity: 0; transform: translateY(8px) scale(0.97); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
+@keyframes fadeInScale {
+  from { opacity: 0; transform: scale(0.88); }
+  to   { opacity: 1; transform: scale(1); }
+}
 @keyframes sectionIn {
   from { opacity: 0; transform: translateY(16px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -2435,6 +2447,18 @@ body.fab-open .fab-backdrop { display: block; }
 .family-call-btn:active { transform:scale(0.88); }
 .family-card-footer { display:flex; align-items:center; justify-content:space-between; margin-top:10px; }
 .family-last-seen { font-size:11px; color:#475569; }
+/* Phone data chips */
+.family-phone-row { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
+.phone-chip {
+  display:inline-flex; align-items:center; gap:3px;
+  padding:2px 8px; border-radius:20px; font-size:11px;
+  background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08);
+  color:#94a3b8;
+}
+.phone-chip.bat-low  { background:rgba(239,68,68,0.12); border-color:rgba(239,68,68,0.25); color:#f87171; }
+.phone-chip.bat-mid  { background:rgba(251,191,36,0.1);  border-color:rgba(251,191,36,0.2);  color:#fbbf24; }
+.phone-chip.bat-ok   { background:rgba(52,211,153,0.1);  border-color:rgba(52,211,153,0.2);  color:#34d399; }
+.phone-chip.charging { background:rgba(99,102,241,0.1);  border-color:rgba(99,102,241,0.25); color:#a5b4fc; }
 
 /* ── Family tabs ─────────────────────────────────────────────────────────── */
 .family-tabs-bar {
@@ -2539,12 +2563,14 @@ body.fab-open .fab-backdrop { display: block; }
 </div>
 
 <div class="compact-bar" id="compact-bar">
-  <div class="cb-dot" id="cb-dot"></div>
-  <div class="cb-clock" id="cb-clock">--:--</div>
-  <div class="cb-chips" id="cb-chips">
-    <span class="cb-chip" id="cb-temp">--°</span>
-    <span class="cb-chip" id="cb-outdoor" style="display:none">🌡 --°</span>
+  <div class="cb-left">
+    <div class="cb-dot" id="cb-dot"></div>
     <span class="cb-chip" id="cb-power">-- Вт</span>
+  </div>
+  <div class="cb-clock" id="cb-clock">--:--</div>
+  <div class="cb-right">
+    <span class="cb-chip" id="cb-outdoor" style="display:none">🌡 --°</span>
+    <span class="cb-chip cb-chip-weather" id="cb-temp" onclick="showSection('weather')">--°</span>
   </div>
 </div>
 
@@ -2577,9 +2603,18 @@ body.fab-open .fab-backdrop { display: block; }
   <div id="ptr-bar">↓ Обновление...</div>
 
   <div class="app-header">
-    <h1 style="font-size:22px;line-height:1">🏠</h1>
-    <div id="header-weather" style="display:none;align-items:center;gap:4px;font-size:12px;color:rgba(255,255,255,0.7);cursor:pointer;flex:1;justify-content:center" onclick="toggleSection('sec-weather-body')" title="Погода">
-      <span id="hw-icon">🌤</span><span id="hw-temp">--°</span>
+    <h1 style="font-size:22px;line-height:1;flex-shrink:0">🏠</h1>
+    <div id="header-weather" onclick="showSection('weather')" title="Погода"
+         style="display:none;flex:1;align-items:center;justify-content:center;gap:10px;cursor:pointer;padding:6px 12px;border-radius:14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);margin:0 10px;transition:background 0.2s,transform 0.15s;-webkit-tap-highlight-color:transparent"
+         ontouchstart="this.style.background='rgba(255,255,255,0.13)';this.style.transform='scale(0.96)'"
+         ontouchend="this.style.background='rgba(255,255,255,0.06)';this.style.transform=''"
+         onmousedown="this.style.background='rgba(255,255,255,0.13)';this.style.transform='scale(0.96)'"
+         onmouseup="this.style.background='rgba(255,255,255,0.06)';this.style.transform=''">
+      <span id="hw-icon" style="font-size:22px;line-height:1">🌤</span>
+      <div style="display:flex;flex-direction:column;align-items:flex-start;gap:1px">
+        <span id="hw-temp" style="font-size:18px;font-weight:700;color:#e2e8f0;line-height:1">--°</span>
+        <span id="hw-desc" style="font-size:10px;color:rgba(255,255,255,0.45);line-height:1">Погода</span>
+      </div>
     </div>
     <div style="display:flex;align-items:center;gap:8px">
       <span class="last-updated" id="last-updated">—</span>
@@ -3430,6 +3465,19 @@ window.onunhandledrejection = function(e) {
     setTimeout(function() { tryTgInit(attempts - 1); }, 200);
   }
 })(20);
+
+// ── Navigate to section by name ────────────────────────────────────────────
+function showSection(name) {
+  var sec = document.querySelector('[data-section-perm="' + name + '"]');
+  if (!sec) return;
+  var body = sec.querySelector('.section-body');
+  if (body && !body.classList.contains('open')) {
+    toggleSection(body.id);
+  }
+  setTimeout(function() {
+    sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 60);
+}
 
 // ── Collapsible sections ───────────────────────────────────────────────────
 function toggleSection(id) {
@@ -6052,6 +6100,7 @@ async function runScene(id, btn) {
 let _lastFamilyHA  = {};   // {name: {state, lat, lon}} from HA status
 let _familyExtra   = {};   // {statuses, note, cooking, reactions}
 let _familyLoaded  = false;
+let _familyPhone   = {};   // {username: {battery, battery_state, steps, activity, connection}}
 
 async function loadFamilyExtra() {
   try {
@@ -6059,7 +6108,44 @@ async function loadFamilyExtra() {
     _familyExtra = await api('/family-extra');
     renderFamilyCards();
     renderFamilyWidgets();
+    // Загружаем данные телефонов асинхронно, не блокируем рендер
+    api('/family-phone').then(d => {
+      _familyPhone = d || {};
+      // Обновляем только чипы телефонов без перерисовки всех карточек
+      Object.entries(_familyPhone).forEach(([uname, phone]) => {
+        var el = document.getElementById('phone-chips-' + uname);
+        if (el) el.innerHTML = _renderPhoneChips(phone);
+      });
+    }).catch(() => {});
   } catch(e) {}
+}
+
+function _renderPhoneChips(phone) {
+  if (!phone || Object.keys(phone).length === 0) return '';
+  var chips = [];
+  // Батарея
+  if (phone.battery != null) {
+    var b = phone.battery;
+    var isCharging = (phone.battery_state || '').toLowerCase().includes('charg');
+    var cls = isCharging ? 'charging' : b <= 20 ? 'bat-low' : b <= 50 ? 'bat-mid' : 'bat-ok';
+    var icon = isCharging ? '⚡' : b <= 20 ? '🪫' : '🔋';
+    chips.push('<span class="phone-chip ' + cls + '">' + icon + ' ' + b + '%</span>');
+  }
+  // Шаги
+  if (phone.steps != null && phone.steps > 0) {
+    chips.push('<span class="phone-chip">👟 ' + phone.steps.toLocaleString() + '</span>');
+  }
+  // Активность
+  if (phone.activity && phone.activity !== 'Stationary') {
+    var actIcon = phone.activity === 'Walking' ? '🚶' : phone.activity === 'Running' ? '🏃' : phone.activity === 'Automotive' ? '🚗' : '📍';
+    chips.push('<span class="phone-chip">' + actIcon + ' ' + phone.activity + '</span>');
+  }
+  // Тип связи
+  if (phone.connection) {
+    var connIcon = phone.connection.includes('Wi-Fi') ? '📶' : '📡';
+    chips.push('<span class="phone-chip">' + connIcon + ' ' + phone.connection + '</span>');
+  }
+  return chips.join('');
 }
 
 // Кнопки быстрых пингов по умолчанию в зависимости от роли члена семьи
@@ -6161,6 +6247,7 @@ function renderFamilyCards() {
           <span class="family-emoji-status" onclick="${isSelf?'familySetStatus()':''}" title="${isSelf?'Изменить статус':''}" style="${isSelf?'cursor:pointer':'cursor:default'}">${emojiStatus}</span>
         </div>
       </div>
+      <div id="phone-chips-${username}" class="family-phone-row">${_renderPhoneChips(_familyPhone[username])}</div>
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
         <div class="family-reactions" style="display:flex;flex-wrap:wrap;gap:5px;align-items:center">
           ${isSelf ? '' : pings.map(p =>
@@ -9371,9 +9458,13 @@ function updateWeatherMini(w) {
   var hwIcon = document.getElementById('hw-icon');
   var hwTemp = document.getElementById('hw-temp');
   if (hw) {
+    var wasHidden = hw.style.display === 'none' || !hw.style.display;
     hw.style.display = 'flex';
+    if (wasHidden) { hw.style.animation = 'none'; void hw.offsetWidth; hw.style.animation = 'fadeInScale 0.35s ease both'; }
     if (hwIcon) hwIcon.textContent = wicon;
     if (hwTemp) hwTemp.textContent = (w.temp != null ? Math.round(w.temp) : '--') + '°';
+    var hwDesc = document.getElementById('hw-desc');
+    if (hwDesc) hwDesc.textContent = w.condition || w.description || 'Погода';
   }
 }
 
