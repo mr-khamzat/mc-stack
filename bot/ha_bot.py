@@ -328,6 +328,24 @@ CREATE TABLE IF NOT EXISTS photos (
             duration_sec INTEGER,
             status       TEXT NOT NULL DEFAULT 'missed'
         )""",
+        """CREATE TABLE IF NOT EXISTS webapp_users (
+            username     TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL DEFAULT '',
+            role         TEXT NOT NULL DEFAULT 'viewer',
+            permissions  TEXT NOT NULL DEFAULT '{}',
+            last_login   TEXT NOT NULL DEFAULT ''
+        )""",
+        "ALTER TABLE webapp_users ADD COLUMN visible_contacts TEXT DEFAULT '[]'",
+        "ALTER TABLE webapp_users ADD COLUMN tg_user_id INTEGER",
+        """CREATE TABLE IF NOT EXISTS invite_tokens (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            token       TEXT    NOT NULL UNIQUE,
+            role        TEXT    NOT NULL DEFAULT 'guest',
+            created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+            expires_at  TEXT    NOT NULL,
+            used_by     TEXT,
+            used_at     TEXT
+        )""",
     ]:
         try:
             c.execute(migration)
@@ -1585,20 +1603,203 @@ _invite_codes: dict = {}  # {code: {"role": "viewer"|"admin", "ts": float}}
 async def cmd_invite(msg: Message):
     if not is_admin(msg.from_user.id): return
     parts = (msg.text or "").split()
-    role  = "viewer"
+
+    # /invite viewer|admin → старый бот-инвайт для телеграм-пользователей
     if len(parts) > 1 and parts[1] in ("viewer", "admin"):
         role = parts[1]
-    code = _secrets.token_urlsafe(8)
-    _invite_codes[code] = {"role": role, "ts": _time.time()}
-    # Get bot username for link
-    me = await bot.get_me()
-    link = f"https://t.me/{me.username}?start=inv_{code}"
+        code = _secrets.token_urlsafe(8)
+        _invite_codes[code] = {"role": role, "ts": _time.time()}
+        me = await bot.get_me()
+        link = f"https://t.me/{me.username}?start=inv_{code}"
+        await msg.answer(
+            f"🔗 <b>Ссылка-приглашение (бот, {role})</b>\n"
+            f"Действует 24 часа:\n\n<code>{link}</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    # /invite (без аргументов) → гостевая ссылка для Mini App
+    token = _secrets.token_urlsafe(16)
+    expires = (datetime.now(MSK) + timedelta(days=7)).isoformat()
+    try:
+        with _DB_LOCK:
+            c = _db()
+            c.execute(
+                "INSERT INTO invite_tokens (token, role, expires_at) VALUES (?,?,?)",
+                (token, "guest", expires)
+            )
+            c.commit()
+    except Exception as e:
+        log.error(f"invite_tokens insert: {e}")
+        await msg.answer("❌ Ошибка при создании ссылки")
+        return
+    link = f"{WEBAPP_URL}?invite={token}"
     await msg.answer(
-        f"🔗 <b>Ссылка-приглашение [{role}]</b>\n"
-        f"Действует 24 часа:\n\n<code>{link}</code>\n\n"
-        "Отправь эту ссылку пользователю.",
+        f"🔗 <b>Гостевая ссылка на Mini App</b>\n"
+        f"Действует 7 дней:\n\n<code>{link}</code>\n\n"
+        f"Гость увидит: 🌤 Погода • 🕌 Намаз • 📞 Звонки",
         parse_mode="HTML"
     )
+
+# ── Guest web-invite approve/reject ───────────────────────────────────────────
+@dp.callback_query(F.data.startswith("guest:approve:"))
+async def guest_approve_cb(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    username = cb.data.split(":", 2)[2]
+    c = _db()
+    row = c.execute("SELECT display_name FROM webapp_users WHERE username=?", (username,)).fetchone()
+    name = row["display_name"] if row else username
+    with _DB_LOCK:
+        _db().execute("UPDATE webapp_users SET role='guest' WHERE username=?", (username,))
+        _db().commit()
+    _activity_log("guest_approved", f"{name} ({username})")
+    await cb.answer("Гость одобрен ✅")
+    try:
+        await cb.message.edit_text(
+            (cb.message.text or "") + f"\n\n✅ <b>Одобрен как гость</b>",
+            parse_mode="HTML", reply_markup=None
+        )
+    except Exception:
+        pass
+
+@dp.callback_query(F.data.startswith("guest:reject:"))
+async def guest_reject_cb(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    username = cb.data.split(":", 2)[2]
+    c = _db()
+    row = c.execute("SELECT display_name FROM webapp_users WHERE username=?", (username,)).fetchone()
+    name = row["display_name"] if row else username
+    with _DB_LOCK:
+        _db().execute("UPDATE webapp_users SET role='rejected' WHERE username=?", (username,))
+        _db().commit()
+    _activity_log("guest_rejected", f"{name} ({username})")
+    await cb.answer("Отклонено ❌")
+    try:
+        await cb.message.edit_text(
+            (cb.message.text or "") + f"\n\n❌ <b>Отклонён</b>",
+            parse_mode="HTML", reply_markup=None
+        )
+    except Exception:
+        pass
+
+# ── /guests — управление гостями ──────────────────────────────────────────────
+async def _guests_text_kb(c):
+    rows = c.execute(
+        "SELECT username, display_name, role, visible_contacts FROM webapp_users "
+        "WHERE role IN ('guest','pending','rejected') ORDER BY last_login DESC"
+    ).fetchall()
+    if not rows:
+        return "👥 Нет гостей.", None
+    icon_map = {"guest": "✅", "pending": "⏳", "rejected": "❌"}
+    lines = []
+    for r in rows:
+        icon = icon_map.get(r["role"], "👤")
+        vc = json.loads(r["visible_contacts"] or "[]")
+        vc_str = ", ".join(vc) if vc else "все"
+        lines.append(f"{icon} <b>{r['display_name']}</b> (<code>{r['username']}</code>)\n   Контакты: {vc_str}")
+    builder = InlineKeyboardBuilder()
+    for r in rows:
+        if r["role"] == "guest":
+            builder.button(text=f"🔧 {r['display_name']}", callback_data=f"gst:edit:{r['username']}")
+    builder.adjust(1)
+    kb = builder.as_markup() if any(r["role"] == "guest" for r in rows) else None
+    return "👥 <b>Гости Mini App:</b>\n\n" + "\n\n".join(lines), kb
+
+@dp.message(Command("guests"))
+async def cmd_guests(msg: Message):
+    if not is_admin(msg.from_user.id): return
+    text, kb = await _guests_text_kb(_db())
+    await msg.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@dp.callback_query(F.data == "gst:back")
+async def gst_back_cb(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    text, kb = await _guests_text_kb(_db())
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    await cb.answer()
+
+@dp.callback_query(F.data.startswith("gst:edit:"))
+async def gst_edit_cb(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    username = cb.data.split(":", 2)[2]
+    c = _db()
+    guest = c.execute(
+        "SELECT display_name, visible_contacts FROM webapp_users WHERE username=?", (username,)
+    ).fetchone()
+    if not guest:
+        await cb.answer("Не найден"); return
+    family = c.execute(
+        "SELECT username, display_name FROM webapp_users "
+        "WHERE role NOT IN ('guest','pending','rejected') ORDER BY display_name"
+    ).fetchall()
+    visible = set(json.loads(guest["visible_contacts"] or "[]"))
+    builder = InlineKeyboardBuilder()
+    for f in family:
+        icon = "✅" if f["username"] in visible else "☐"
+        builder.button(
+            text=f"{icon} {f['display_name'] or f['username']}",
+            callback_data=f"gst:tog:{username}:{f['username']}"
+        )
+    builder.button(text="👁 Показать всех",  callback_data=f"gst:all:{username}")
+    builder.button(text="🗑 Удалить гостя",  callback_data=f"gst:del:{username}")
+    builder.button(text="◀ Назад",           callback_data="gst:back")
+    builder.adjust(1)
+    vc = list(visible)
+    vc_str = ", ".join(vc) if vc else "все"
+    await cb.message.edit_text(
+        f"👤 <b>{guest['display_name']}</b>\nВидимые контакты: {vc_str}\n\nВыбери кому разрешить:",
+        parse_mode="HTML", reply_markup=builder.as_markup()
+    )
+    await cb.answer()
+
+@dp.callback_query(F.data.startswith("gst:tog:"))
+async def gst_toggle_cb(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    parts = cb.data.split(":", 3)
+    username, contact = parts[2], parts[3]
+    c = _db()
+    row = c.execute("SELECT visible_contacts FROM webapp_users WHERE username=?", (username,)).fetchone()
+    if not row:
+        await cb.answer("Не найден"); return
+    visible = set(json.loads(row["visible_contacts"] or "[]"))
+    if contact in visible:
+        visible.discard(contact)
+    else:
+        visible.add(contact)
+    with _DB_LOCK:
+        _db().execute("UPDATE webapp_users SET visible_contacts=? WHERE username=?",
+                      (json.dumps(list(visible)), username))
+        _db().commit()
+    await cb.answer("Обновлено")
+    # Re-render edit screen
+    cb.data = f"gst:edit:{username}"
+    await gst_edit_cb(cb)
+
+@dp.callback_query(F.data.startswith("gst:all:"))
+async def gst_all_cb(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    username = cb.data.split(":", 2)[2]
+    with _DB_LOCK:
+        _db().execute("UPDATE webapp_users SET visible_contacts='[]' WHERE username=?", (username,))
+        _db().commit()
+    await cb.answer("Гость видит всех")
+    cb.data = f"gst:edit:{username}"
+    await gst_edit_cb(cb)
+
+@dp.callback_query(F.data.startswith("gst:del:"))
+async def gst_del_cb(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    username = cb.data.split(":", 2)[2]
+    c = _db()
+    row = c.execute("SELECT display_name FROM webapp_users WHERE username=?", (username,)).fetchone()
+    name = row["display_name"] if row else username
+    with _DB_LOCK:
+        _db().execute("DELETE FROM webapp_users WHERE username=?", (username,))
+        _db().commit()
+    _activity_log("guest_deleted", name)
+    await cb.answer(f"Удалён: {name}")
+    text, kb = await _guests_text_kb(_db())
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
 @dp.callback_query(F.data.startswith("usr:del:"))
 async def usr_del_cb(cb: CallbackQuery):
@@ -6040,13 +6241,18 @@ def _user_perms_save(username: str, perms: dict):
         c.commit()
 
 async def _web_family_users(request: aiohttp_web.Request) -> aiohttp_web.Response:
-    """GET /ha-app/api/family-users — список пользователей с family_type и кастомными пингами."""
+    """GET /ha-app/api/family-users — список пользователей с family_type и кастомными пингами.
+    Для гостей фильтрует по visible_contacts (пустой список = видит всех).
+    Гостевые аккаунты не включаются в список семьи.
+    """
     if not _check_token(request):
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
     try:
         c = _db()
+        # Exclude guest/pending/rejected accounts from family list
         rows = c.execute(
-            "SELECT username, display_name, permissions FROM webapp_users ORDER BY display_name"
+            "SELECT username, display_name, permissions FROM webapp_users "
+            "WHERE role NOT IN ('guest','pending','rejected') ORDER BY display_name"
         ).fetchall()
         result = []
         for r in rows:
@@ -6057,6 +6263,17 @@ async def _web_family_users(request: aiohttp_web.Request) -> aiohttp_web.Respons
                 "family_type":  perms.get("family_type", "other"),
                 "family_pings": perms.get("family_pings", []),
             })
+        # Filter for guest users: only show their allowed contacts
+        requesting_user = request.headers.get("X-HA-User", "").lower()
+        if requesting_user:
+            guest_row = c.execute(
+                "SELECT role, visible_contacts FROM webapp_users WHERE username=?",
+                (requesting_user,)
+            ).fetchone()
+            if guest_row and guest_row["role"] == "guest":
+                visible = json.loads(guest_row["visible_contacts"] or "[]")
+                if visible:  # empty list = see all
+                    result = [u for u in result if u["username"] in visible]
     except Exception:
         result = []
     return aiohttp_web.Response(
@@ -6309,6 +6526,134 @@ async def _web_auth_telegram(request: aiohttp_web.Request) -> aiohttp_web.Respon
             content_type="application/json", headers=_CORS_HEADERS)
     return aiohttp_web.Response(
         text=json.dumps({"ok": True, "token": WEBAPP_TOKEN}),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+
+# ── Guest invite registration ─────────────────────────────────────────────────
+async def _web_register_invite(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """POST /ha-app/api/register-invite — регистрация гостя по invite-токену."""
+    try:
+        body = await request.json()
+    except Exception:
+        return aiohttp_web.Response(status=400,
+            text=json.dumps({"ok": False, "error": "bad request"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+
+    token = body.get("token", "").strip()
+    name  = body.get("name",  "").strip()[:50]
+    if not token or not name:
+        return aiohttp_web.Response(status=400,
+            text=json.dumps({"ok": False, "error": "Укажите имя"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+
+    c = _db()
+    inv = c.execute(
+        "SELECT id, role, expires_at, used_by FROM invite_tokens WHERE token=?", (token,)
+    ).fetchone()
+    if not inv:
+        return aiohttp_web.Response(status=404,
+            text=json.dumps({"ok": False, "error": "Ссылка недействительна"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+    if inv["used_by"]:
+        return aiohttp_web.Response(status=410,
+            text=json.dumps({"ok": False, "error": "Ссылка уже использована"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+    now = datetime.now(MSK)
+    if inv["expires_at"] < now.isoformat():
+        return aiohttp_web.Response(status=410,
+            text=json.dumps({"ok": False, "error": "Ссылка истекла"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+
+    username  = f"guest_{token[:8]}"
+    psession  = _secrets.token_urlsafe(16)
+    now_str   = now.strftime("%Y-%m-%d %H:%M:%S")
+    perms_str = json.dumps({"psession": psession})
+    try:
+        with _DB_LOCK:
+            c = _db()
+            c.execute("""
+                INSERT INTO webapp_users (username, display_name, role, permissions, last_login)
+                VALUES (?,?,?,?,?)
+                ON CONFLICT(username) DO UPDATE SET
+                    display_name=excluded.display_name,
+                    role='pending',
+                    permissions=excluded.permissions,
+                    last_login=excluded.last_login
+            """, (username, name, "pending", perms_str, now_str))
+            c.execute("UPDATE invite_tokens SET used_by=?, used_at=? WHERE token=?",
+                      (username, now_str, token))
+            c.commit()
+    except Exception as e:
+        log.error(f"register_invite db: {e}")
+        return aiohttp_web.Response(status=500,
+            text=json.dumps({"ok": False, "error": "DB error"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+
+    # Notify admin with approve/reject buttons
+    req_kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Разрешить", callback_data=f"guest:approve:{username}"),
+        InlineKeyboardButton(text="❌ Отклонить",  callback_data=f"guest:reject:{username}"),
+    ]])
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"👤 <b>Гость хочет войти в Mini App</b>\n"
+            f"Имя: <b>{name}</b>\n"
+            f"Username: <code>{username}</code>",
+            parse_mode="HTML", reply_markup=req_kb,
+        )
+    except Exception as e:
+        log.warning(f"register_invite notify: {e}")
+
+    return aiohttp_web.Response(
+        text=json.dumps({"ok": True, "psession": psession, "username": username}),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+
+async def _web_guest_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/guest-status — проверка статуса одобрения гостя."""
+    psession = request.query.get("psession", "")
+    username = request.query.get("username", "")
+    if not psession or not username:
+        return aiohttp_web.Response(status=400,
+            text=json.dumps({"status": "error"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+
+    c = _db()
+    row = c.execute(
+        "SELECT role, permissions FROM webapp_users WHERE username=?", (username,)
+    ).fetchone()
+    if not row:
+        return aiohttp_web.Response(
+            text=json.dumps({"status": "not_found"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+
+    role  = row["role"]
+    perms = json.loads(row["permissions"] or "{}")
+    if perms.get("psession") != psession:
+        return aiohttp_web.Response(status=403,
+            text=json.dumps({"status": "error"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+
+    if role == "pending":
+        return aiohttp_web.Response(
+            text=json.dumps({"status": "pending"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+    elif role == "rejected":
+        return aiohttp_web.Response(
+            text=json.dumps({"status": "rejected"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+    elif role == "guest":
+        return aiohttp_web.Response(
+            text=json.dumps({
+                "status":   "approved",
+                "token":    WEBAPP_TOKEN,
+                "username": username,
+                "role":     "guest",
+            }),
+            content_type="application/json", headers=_CORS_HEADERS)
+    return aiohttp_web.Response(
+        text=json.dumps({"status": "unknown"}),
         content_type="application/json", headers=_CORS_HEADERS)
 
 
@@ -7863,6 +8208,14 @@ async def _web_call_signal(request: aiohttp_web.Request) -> aiohttp_web.Response
                 c2.commit()
             _call_sessions[f"{from_user}:{to_user}"] = {"id": cid, "answered_at": None}
             asyncio.create_task(push_notify(to_user, f"📞 {display} звонит", "Нажмите чтобы ответить", "/ha-app/", tag="incoming-call"))
+        elif sig_type == "ice":
+            # Store ICE candidates so callee can get them via /call/pending
+            # (needed when callee opens app from push notification after ICE was broadcast via SSE)
+            if to_user in _pending_calls:
+                if "ice_candidates" not in _pending_calls[to_user]:
+                    _pending_calls[to_user]["ice_candidates"] = []
+                if payload.get("candidate"):
+                    _pending_calls[to_user]["ice_candidates"].append(payload["candidate"])
         elif sig_type == "answer":
             _pending_calls.pop(from_user, None)
             key = f"{to_user}:{from_user}"  # to_user is caller, from_user is callee
@@ -7956,6 +8309,10 @@ async def _start_web():
     app.router.add_post("/ha-app/api/frigate/person-identified",  _web_frigate_person_identified)
     app.router.add_get("/ha-app/api/frigate/faces-history",       _web_frigate_faces_history)
     app.router.add_post("/ha-app/api/auth",                       _web_auth_telegram)
+    app.router.add_post("/ha-app/api/register-invite",            _web_register_invite)
+    app.router.add_get("/ha-app/api/guest-status",                _web_guest_status)
+    app.router.add_route("OPTIONS", "/ha-app/api/register-invite", _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/guest-status",    _web_options)
     app.router.add_post("/ha-app/api/ha-login",                   _web_ha_login)
     app.router.add_route("OPTIONS", "/ha-app/api/ha-login",       _web_options)
     app.router.add_get("/ha-app/api/presence-stats",              _web_presence_stats)

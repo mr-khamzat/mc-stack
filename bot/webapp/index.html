@@ -4031,8 +4031,10 @@ function handleSSEUpdate(d) {
   }
   // For most entity changes, just refresh full status (cache already invalidated server-side)
   // Do it with a small debounce to avoid rapid refresh
-  if (_sseRefreshTimer) clearTimeout(_sseRefreshTimer);
-  _sseRefreshTimer = setTimeout(loadStatus, 1500);
+  if (HA_USER_ROLE !== 'guest') {
+    if (_sseRefreshTimer) clearTimeout(_sseRefreshTimer);
+    _sseRefreshTimer = setTimeout(loadStatus, 1500);
+  }
 }
 let _sseRefreshTimer = null;
 
@@ -4506,6 +4508,21 @@ async function doHaLogin() {
 async function ensureAuth() {
   if (API_TOKEN) { _updateUserBadge(); return true; }
 
+  // Гость с незакрытой сессией ожидания → показать экран ожидания
+  const pendingSession  = localStorage.getItem('ha_guest_psession');
+  const pendingUsername = localStorage.getItem('ha_guest_username');
+  if (pendingSession && pendingUsername) {
+    _showGuestPending(pendingSession, pendingUsername);
+    return false;
+  }
+
+  // Приглашение гостя в URL (?invite=TOKEN)
+  const inviteToken = new URLSearchParams(location.search).get('invite');
+  if (inviteToken) {
+    _showInviteRegistration(inviteToken);
+    return false;
+  }
+
   // Кешированный токен из localStorage (после успешного входа)
   const cached = localStorage.getItem('ha_bot_token');
   if (cached) {
@@ -4518,6 +4535,302 @@ async function ensureAuth() {
   // Нет токена → показать форму входа
   _showLoginForm();
   return false;
+}
+
+// ── Гостевой режим ────────────────────────────────────────────────────────────
+function _applyGuestPermissions() {
+  const GUEST_PERMS = {
+    weather: true, prayers: true, family: true,
+    status: false, energy: false, lights: false, climate: false,
+    tv: false, vacuum: false, scenes: false, shopping: false,
+    presence: false, faces: false,
+  };
+  localStorage.setItem('ha_permissions', JSON.stringify(GUEST_PERMS));
+  document.querySelectorAll('[data-section-perm]').forEach(function(el) {
+    var perm = el.getAttribute('data-section-perm');
+    el.style.display = GUEST_PERMS.hasOwnProperty(perm) ? (GUEST_PERMS[perm] ? '' : 'none') : 'none';
+  });
+}
+
+function _showInviteRegistration(token) {
+  var el = document.getElementById('access-denied-screen');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'access-denied-screen';
+    el.className = 'login-screen';
+    document.body.appendChild(el);
+  }
+  var dots = Array.from({length: 18}, function(_, i) {
+    var x=(Math.random()*100).toFixed(0), y=(Math.random()*100).toFixed(0);
+    var d=(Math.random()*6+3).toFixed(1), dur=(Math.random()*8+6).toFixed(1), del=(Math.random()*4).toFixed(1);
+    return '<circle cx="'+x+'%" cy="'+y+'%" r="'+(d/2)+'" fill="currentColor" opacity="0.1" style="animation:floatDot '+dur+'s ease-in-out '+del+'s infinite;color:var(--accent)"/>';
+  }).join('');
+  el.innerHTML =
+    '<svg class="login-particles" viewBox="0 0 100 100" preserveAspectRatio="none">'+dots+'</svg>' +
+    '<div class="login-card">' +
+      '<div class="login-icon-wrap"><div class="login-orbit"></div><span class="login-icon">👋</span></div>' +
+      '<div class="login-title">Гостевой доступ</div>' +
+      '<div class="login-sub">Введите ваше имя для входа</div>' +
+      '<input id="guest-name-inp" type="text" placeholder="Ваше имя" maxlength="50" class="login-input" autocomplete="given-name">' +
+      '<div id="ha-err" class="login-err"></div>' +
+      '<button id="ha-btn" class="login-btn" onclick="_doGuestRegister(\''+token+'\')">Продолжить ➜</button>' +
+    '</div>';
+  el.querySelector('#guest-name-inp').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') _doGuestRegister(token);
+  });
+  setTimeout(function() { var n = el.querySelector('#guest-name-inp'); if(n) n.focus(); }, 120);
+}
+
+async function _doGuestRegister(token) {
+  var nameEl = document.getElementById('guest-name-inp');
+  var errEl  = document.getElementById('ha-err');
+  var btn    = document.getElementById('ha-btn');
+  if (!nameEl) return;
+  var name = nameEl.value.trim();
+  if (!name) { if(errEl) errEl.textContent = 'Введите имя'; return; }
+  btn.disabled = true; btn.className = 'login-btn loading'; btn.textContent = 'Отправка...';
+  if (errEl) errEl.textContent = '';
+  try {
+    var res = await fetch(API_BASE + '/register-invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: token, name: name })
+    });
+    var d = await res.json();
+    if (d.ok) {
+      localStorage.setItem('ha_guest_psession', d.psession);
+      localStorage.setItem('ha_guest_username', d.username);
+      localStorage.setItem('ha_guest_name', name);
+      _showGuestPending(d.psession, d.username);
+    } else {
+      if (errEl) errEl.textContent = d.error || 'Ошибка регистрации';
+      btn.disabled = false; btn.className = 'login-btn'; btn.textContent = 'Продолжить ➜';
+    }
+  } catch(e) {
+    if (errEl) errEl.textContent = 'Ошибка сети';
+    btn.disabled = false; btn.className = 'login-btn'; btn.textContent = 'Продолжить ➜';
+  }
+}
+
+let _guestPollTimer = null;
+function _showGuestPending(psession, username) {
+  var el = document.getElementById('access-denied-screen');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'access-denied-screen';
+    el.className = 'login-screen';
+    document.body.appendChild(el);
+  }
+  var name = localStorage.getItem('ha_guest_name') || username;
+  el.innerHTML =
+    '<div class="login-card">' +
+      '<div class="login-icon-wrap"><div class="login-orbit"></div><span class="login-icon" id="guest-wait-icon">⏳</span></div>' +
+      '<div class="login-title">Ожидание</div>' +
+      '<div class="login-sub">Привет, <b>'+escapeHtml(name)+'</b>!<br>Администратор подтверждает ваш запрос...</div>' +
+      '<div id="guest-pending-msg" style="font-size:12px;color:rgba(120,140,180,0.55);text-align:center;margin-top:12px">Проверяю статус...</div>' +
+    '</div>';
+  if (_guestPollTimer) clearInterval(_guestPollTimer);
+  _guestPollTimer = setInterval(function() { _guestPollCheck(psession, username); }, 5000);
+  _guestPollCheck(psession, username);
+}
+
+async function _guestPollCheck(psession, username) {
+  try {
+    var res = await fetch(API_BASE + '/guest-status?psession=' + encodeURIComponent(psession) +
+                          '&username=' + encodeURIComponent(username));
+    var d = await res.json();
+    var msgEl = document.getElementById('guest-pending-msg');
+    if (d.status === 'approved') {
+      clearInterval(_guestPollTimer);
+      API_TOKEN       = d.token;
+      HA_USER_ROLE    = 'guest';
+      HA_USERNAME     = d.username;
+      HA_DISPLAY_NAME = localStorage.getItem('ha_guest_name') || d.username;
+      localStorage.setItem('ha_bot_token',    d.token);
+      localStorage.setItem('ha_user_role',    'guest');
+      localStorage.setItem('ha_username',     d.username);
+      localStorage.setItem('ha_display_name', HA_DISPLAY_NAME);
+      localStorage.removeItem('ha_guest_psession');
+      localStorage.removeItem('ha_guest_username');
+      localStorage.removeItem('ha_guest_name');
+      history.replaceState(null, '', location.pathname);
+      var scr = document.getElementById('access-denied-screen');
+      if (scr) { scr.style.transition='opacity 0.35s'; scr.style.opacity='0'; setTimeout(function(){ if(scr.parentNode) scr.remove(); }, 360); }
+      _initGuestApp();
+    } else if (d.status === 'rejected') {
+      clearInterval(_guestPollTimer);
+      localStorage.removeItem('ha_guest_psession');
+      localStorage.removeItem('ha_guest_username');
+      localStorage.removeItem('ha_guest_name');
+      if (msgEl) msgEl.textContent = '❌ Запрос отклонён администратором.';
+      var ico = document.getElementById('guest-wait-icon');
+      if (ico) ico.textContent = '❌';
+    } else if (d.status === 'pending') {
+      if (msgEl) msgEl.textContent = '⏳ Ожидаем подтверждения...';
+    }
+  } catch(e) { /* network error, retry next poll */ }
+}
+
+async function _initGuestApp() {
+  showSkeletons();
+  _applyGuestPermissions();
+  _updateUserBadge();
+  hideLoading();
+  // Load family users for calls (already filtered by visible_contacts on server)
+  try {
+    var users = await api('/family-users');
+    window._shopFamilyCache = users || [];
+    _lastFamilyHA = {};
+    (users || []).forEach(function(u) {
+      _lastFamilyHA[u.display_name || u.username] = { state: 'unknown' };
+    });
+    renderFamilyCards();
+  } catch(e) {}
+  // Load geolocation-based weather and prayers
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      function(pos) {
+        _loadGuestWeather(pos.coords.latitude, pos.coords.longitude);
+        _loadGuestPrayers(pos.coords.latitude, pos.coords.longitude);
+      },
+      function() {
+        var wc = document.getElementById('weather-content');
+        if (wc) wc.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:12px">Разрешите геолокацию для отображения погоды 📍</div>';
+      }
+    );
+  }
+  startSSE();
+  setTimeout(_checkPendingCall, 1200);
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', function(e) {
+      if (e.data && e.data.type === 'incoming-call') setTimeout(_checkPendingCall, 300);
+    });
+  }
+  if (new URLSearchParams(location.search).get('incoming_call')) {
+    setTimeout(_checkPendingCall, 800);
+  }
+}
+
+async function _loadGuestWeather(lat, lon) {
+  try {
+    var url = 'https://api.open-meteo.com/v1/forecast?latitude='+lat+'&longitude='+lon+
+      '&current=temperature_2m,apparent_temperature,precipitation,wind_speed_10m,weather_code,relative_humidity_2m' +
+      '&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_sum' +
+      '&timezone=auto&forecast_days=4';
+    var res = await fetch(url);
+    var d   = await res.json();
+    var cur   = d.current || {};
+    var daily = d.daily   || {};
+    var WMO_I = {0:'☀️',1:'🌤️',2:'⛅',3:'☁️',45:'🌫️',48:'🌫️',51:'🌦️',53:'🌦️',55:'🌦️',
+      61:'🌧️',63:'🌧️',65:'🌧️',71:'🌨️',73:'🌨️',75:'🌨️',77:'❄️',
+      80:'🌦️',81:'🌧️',82:'⛈️',95:'⛈️',96:'⛈️',99:'⛈️'};
+    var WMO_D = {0:'Ясно',1:'Преимущественно ясно',2:'Переменная облачность',3:'Пасмурно',
+      45:'Туман',48:'Иней',51:'Слабая морось',53:'Морось',55:'Сильная морось',
+      61:'Слабый дождь',63:'Дождь',65:'Сильный дождь',71:'Слабый снег',73:'Снег',75:'Сильный снег',
+      80:'Ливень',81:'Сильный ливень',82:'Гроза с ливнем',95:'Гроза',96:'Гроза с градом',99:'Гроза с крупным градом'};
+    var WMO_T = {
+      '☀️':'#facc15,#f59e0b','🌤️':'#60a5fa,#3b82f6','⛅':'#94a3b8,#64748b','☁️':'#475569,#334155',
+      '🌦️':'#60a5fa,#6366f1','🌧️':'#6366f1,#4338ca','⛈️':'#7c3aed,#4c1d95',
+      '🌨️':'#e2e8f0,#cbd5e1','❄️':'#bae6fd,#7dd3fc','🌫️':'#9ca3af,#6b7280'
+    };
+    var code = cur.weather_code || 0;
+    var icon = WMO_I[code] || '🌡️';
+    var cond = WMO_D[code] || '';
+    var temp = Math.round(cur.temperature_2m ?? 0);
+    var feel = Math.round(cur.apparent_temperature ?? temp);
+    var forecastDays = (daily.time || []).slice(1, 4).map(function(t, i) {
+      var d2 = new Date(t + 'T12:00:00');
+      var label = d2.toLocaleDateString('ru', {weekday:'short'});
+      return {label: label, icon: WMO_I[daily.weather_code[i+1]] || '🌡️',
+              max: Math.round(daily.temperature_2m_max[i+1] ?? 0),
+              min: Math.round(daily.temperature_2m_min[i+1] ?? 0)};
+    });
+    var forecastHtml = forecastDays.length ? '<div class="weather-forecast">' +
+      forecastDays.map(function(f) { return '<div class="forecast-day">' +
+        '<div class="forecast-label">'+escapeHtml(f.label)+'</div>' +
+        '<div class="forecast-icon">'+f.icon+'</div>' +
+        '<div class="forecast-max">'+f.max+'°</div>' +
+        '<div class="forecast-min">'+f.min+'°</div></div>'; }).join('') + '</div>' : '';
+    var tint = WMO_T[icon] || '#6366f1,#4338ca';
+    var wc = document.getElementById('weather-content');
+    if (wc) wc.innerHTML =
+      '<div class="w-hero" style="--w-tint:linear-gradient(135deg,'+tint+')">' +
+        '<div class="w-bg-emoji">'+icon+'</div>' +
+        '<div class="w-hero-top"><span class="w-greeting">Погода</span>' +
+          '<span class="w-updated-top" style="font-size:10px;opacity:0.4">по вашему местоположению</span></div>' +
+        '<div class="w-hero-main">' +
+          '<div class="w-temp-huge">'+temp+'°</div>' +
+          '<div class="w-hero-right"><span class="w-icon-large">'+icon+'</span>' +
+            '<div class="w-cond-text">'+escapeHtml(cond)+'</div>' +
+            '<div class="w-feel-text">Ощущается '+feel+'°</div></div>' +
+        '</div><div class="w-divider"></div>' +
+        '<div class="w-strip">' +
+          '<div class="w-strip-item"><span class="w-strip-icon">💧</span>' +
+            '<span class="w-strip-val">'+(cur.relative_humidity_2m??'?')+'%</span>' +
+            '<span class="w-strip-lbl">Влажн.</span></div>' +
+          '<div class="w-strip-sep"></div>' +
+          '<div class="w-strip-item"><span class="w-strip-icon">💨</span>' +
+            '<span class="w-strip-val">'+Math.round(cur.wind_speed_10m??0)+' км/ч</span>' +
+            '<span class="w-strip-lbl">Ветер</span></div>' +
+          '<div class="w-strip-sep"></div>' +
+          '<div class="w-strip-item"><span class="w-strip-icon">🌧</span>' +
+            '<span class="w-strip-val">'+(cur.precipitation??0)+' мм</span>' +
+            '<span class="w-strip-lbl">Осадки</span></div>' +
+        '</div></div>' + forecastHtml;
+    var cbTemp = document.getElementById('cb-temp');
+    if (cbTemp) cbTemp.textContent = temp + '°';
+    setTimeout(function() {
+      var wh = document.querySelector('#weather-content .w-hero');
+      if (wh && typeof _startWeatherAnim === 'function') _startWeatherAnim(wh, icon);
+    }, 60);
+  } catch(e) {
+    var wc = document.getElementById('weather-content');
+    if (wc) wc.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:12px">Не удалось загрузить погоду</div>';
+  }
+}
+
+async function _loadGuestPrayers(lat, lon) {
+  try {
+    var today = new Date();
+    var m = today.getMonth()+1, day = today.getDate(), y = today.getFullYear();
+    var url = 'https://api.aladhan.com/v1/timings/'+day+'-'+m+'-'+y+
+              '?latitude='+lat+'&longitude='+lon+'&method=3';
+    var res  = await fetch(url);
+    var data = await res.json();
+    var timings = data.data && data.data.timings;
+    if (!timings) return;
+    var PRAYERS = [
+      {key:'Fajr',    name:'Фаджр',  icon:'🌅'},
+      {key:'Dhuhr',   name:'Зухр',   icon:'☀️'},
+      {key:'Asr',     name:'Аср',    icon:'🌇'},
+      {key:'Maghrib', name:'Магриб', icon:'🌆'},
+      {key:'Isha',    name:'Иша',    icon:'🌙'},
+    ];
+    var now = new Date(), nowMin = now.getHours()*60 + now.getMinutes(), nextIdx = -1;
+    var parsed = PRAYERS.map(function(p, i) {
+      var t = timings[p.key] || '00:00', parts = t.split(':');
+      var h = parseInt(parts[0])||0, min = parseInt(parts[1])||0;
+      var totalMin = h*60 + min;
+      if (nextIdx === -1 && totalMin > nowMin) nextIdx = i;
+      return Object.assign({}, p, {time: t.slice(0,5), totalMin: totalMin, past: totalMin <= nowMin});
+    });
+    if (nextIdx === -1) nextIdx = 0;
+    var hijri = data.data.date && data.data.date.hijri;
+    var hijriStr = hijri ? hijri.day+' '+hijri.month.ar+' '+hijri.year : '';
+    var items = parsed.map(function(p, i) {
+      var cls = p.past ? 'past' : (i===nextIdx ? 'next' : '');
+      return '<div class="prayer-item '+cls+'">' +
+        '<div class="prayer-left"><span class="prayer-icon">'+p.icon+'</span><span class="prayer-name">'+p.name+'</span></div>' +
+        '<span class="prayer-time">'+p.time+'</span></div>';
+    }).join('');
+    var sec = document.getElementById('sec-prayers-body');
+    if (sec) {
+      var cont = sec.querySelector('.section-content');
+      if (cont) cont.innerHTML = '<div class="prayer-header-card">' +
+        '<div class="prayer-hijri">'+escapeHtml(hijriStr)+'</div>' +
+        '<div class="prayers-list">'+items+'</div></div>';
+    }
+  } catch(e) { /* silently fail */ }
 }
 
 // ── Инициализация приложения ──────────────────────────────────────────────
@@ -4551,6 +4864,8 @@ async function init() {
   try {
     const authOk = await ensureAuth();
     if (!authOk) { clearTimeout(timer); hideLoading(); return; }
+    // Guest mode: limited UI without HA status polling
+    if (HA_USER_ROLE === 'guest') { clearTimeout(timer); await _initGuestApp(); return; }
     await loadStatus();
     // Apply saved section order + custom names
     applySavedSections();
@@ -5427,7 +5742,7 @@ async function _handleCallSignal(sig) {
     try {
       await _rtcPeer.setRemoteDescription(new RTCSessionDescription(payload));
       await _flushIceQueue();
-      _setCallStatus('🟢 Подключено');
+      _setCallStatus('🔄 Подключение...');  // ICE will update to '🟢 Подключено' on connected/completed
     } catch(e) { showToast('❌ answer: ' + e.message); }
 
   } else if (signal_type === 'ice') {
@@ -5590,7 +5905,8 @@ async function _checkPendingCall() {
     _rtcCallTarget  = { username: call.from_user, display: call.from_display || call.from_user };
     _rtcCallType    = call.call_type || 'audio';
     _rtcOfferSdp    = call.payload;
-    _rtcIceQueue    = [];
+    // Pre-populate ICE queue with candidates stored server-side (sent before callee opened app)
+    _rtcIceQueue    = call.ice_candidates ? [...call.ice_candidates] : [];
     _rtcRemoteReady = false;
     _showCallUI('incoming', call.from_display || call.from_user, _rtcCallType);
   } catch(_) {}
