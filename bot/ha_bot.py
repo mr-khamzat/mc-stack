@@ -6072,6 +6072,81 @@ async def _web_family_users(request: aiohttp_web.Request) -> aiohttp_web.Respons
         content_type="application/json", headers=_CORS_HEADERS)
 
 
+async def _web_family_phone(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /ha-app/api/family-phone — данные телефонов всех пользователей (батарея, шаги, активность).
+    Автоматически ищет сенсоры по username и настроенному phone_prefix в permissions.
+    """
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        c = _db()
+        rows = c.execute("SELECT username, permissions FROM webapp_users").fetchall()
+        # Сопоставление username → список возможных префиксов сенсоров
+        _prefixes = {
+            "khamzat": ["sensor.khamzat", "sensor.iphone"],
+            "sulim":   ["sensor.sulim"],
+            "aiza":    ["sensor.iphone_aiza_doulbieva"],
+            "kamila":  ["sensor.iphone_kamila", "sensor.ipad_kamila"],
+        }
+        result = {}
+        for row in rows:
+            uname = row[0]
+            perms = json.loads(row[1]) if row[1] else {}
+            # Можно хранить кастомный префикс в permissions["phone_prefix"]
+            custom_prefix = perms.get("phone_prefix", "")
+            prefixes = ([custom_prefix] if custom_prefix else []) + _prefixes.get(uname, [f"sensor.{uname}"])
+
+            # Параллельно запрашиваем нужные сенсоры
+            suffixes = ["_battery_level", "_battery_state", "_steps", "_steps_sensor",
+                        "_activity", "_connection_type", "_ssid"]
+            tasks = []
+            task_keys = []
+            for pfx in prefixes:
+                for sfx in suffixes:
+                    tasks.append(ha_get(f"states/{pfx}{sfx}"))
+                    task_keys.append(f"{pfx}{sfx}")
+
+            states_list = await asyncio.gather(*tasks, return_exceptions=True)
+
+            phone = {}
+            for key, val in zip(task_keys, states_list):
+                if isinstance(val, Exception) or val is None:
+                    continue
+                state = val.get("state", "")
+                if state in ("unavailable", "unknown", ""):
+                    continue
+                # Определяем тип сенсора по суффиксу
+                if key.endswith("_battery_level"):
+                    try:
+                        phone["battery"] = int(float(state))
+                    except Exception:
+                        pass
+                elif key.endswith("_battery_state"):
+                    phone["battery_state"] = state  # Charging / Not Charging / discharging
+                elif key.endswith(("_steps", "_steps_sensor")):
+                    try:
+                        v = int(float(state))
+                        if v > phone.get("steps", -1):  # берём большее значение (khamzat_2 vs khamzat)
+                            phone["steps"] = v
+                    except Exception:
+                        pass
+                elif key.endswith("_activity"):
+                    phone["activity"] = state
+                elif key.endswith("_connection_type"):
+                    phone["connection"] = state
+                elif key.endswith("_ssid"):
+                    phone["ssid"] = state
+
+            result[uname] = phone
+
+        return aiohttp_web.Response(
+            text=json.dumps(result, ensure_ascii=False),
+            content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        log.error(f"family-phone error: {e}")
+        return aiohttp_web.Response(text="{}", content_type="application/json", headers=_CORS_HEADERS)
+
+
 async def _web_family_type(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """PATCH /ha-app/api/family-type — установить family_type и family_pings для пользователя (admin only).
     Body: {"username": "sulim", "family_type": "child", "family_pings": [...]}
@@ -7924,7 +7999,9 @@ async def _start_web():
     app.router.add_route("OPTIONS", "/ha-app/api/scenes/{scene_id}", _web_options)
     app.router.add_get("/ha-app/api/user-avatar/{username}", _web_user_avatar)
     app.router.add_get("/ha-app/api/family-users",  _web_family_users)
+    app.router.add_get("/ha-app/api/family-phone",  _web_family_phone)
     app.router.add_route("OPTIONS", "/ha-app/api/family-users", _web_options)
+    app.router.add_route("OPTIONS", "/ha-app/api/family-phone", _web_options)
     app.router.add_route("PATCH",   "/ha-app/api/family-type",  _web_family_type)
     app.router.add_route("OPTIONS", "/ha-app/api/family-type",  _web_options)
     app.router.add_get("/ha-app/api/family-extra",     _web_family_extra)
