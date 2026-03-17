@@ -8254,6 +8254,619 @@ async def _web_call_signal(request: aiohttp_web.Request) -> aiohttp_web.Response
         return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
 
 
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║              FRIENDS APP — независимое приложение контактов              ║
+# ║  URL: /friends/   API: /friends/api/...   Файл: webapp/friends.html      ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+import hashlib as _hashlib
+
+_FR_SSE_CLIENTS: set = set()
+_FR_PENDING_CALLS: dict = {}
+
+# ── DB migrations ─────────────────────────────────────────────────────────────
+_FR_MIGRATIONS = [
+    """CREATE TABLE IF NOT EXISTS fr_users (
+        username     TEXT PRIMARY KEY,
+        password_hash TEXT NOT NULL,
+        display_name TEXT NOT NULL DEFAULT '',
+        role         TEXT NOT NULL DEFAULT 'member',
+        status       TEXT NOT NULL DEFAULT 'pending',
+        group_id     INTEGER,
+        created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        last_login   TEXT NOT NULL DEFAULT ''
+    )""",
+    """CREATE TABLE IF NOT EXISTS fr_groups (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        name       TEXT NOT NULL UNIQUE,
+        created_by TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )""",
+    """CREATE TABLE IF NOT EXISTS fr_invites (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        token      TEXT NOT NULL UNIQUE,
+        group_id   INTEGER,
+        created_by TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at TEXT NOT NULL,
+        used_by    TEXT,
+        used_at    TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS fr_sessions (
+        token      TEXT PRIMARY KEY,
+        username   TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at TEXT NOT NULL
+    )""",
+]
+
+def _fr_db_init():
+    c = _db()
+    for sql in _FR_MIGRATIONS:
+        try:
+            c.execute(sql)
+        except Exception:
+            pass
+    c.commit()
+    # Ensure admin exists (first run)
+    admin = c.execute("SELECT username FROM fr_users WHERE role='admin'").fetchone()
+    if not admin:
+        import os as _os
+        adm_pass = _os.environ.get("FR_ADMIN_PASSWORD", "admin123")
+        c.execute(
+            "INSERT OR IGNORE INTO fr_users(username,password_hash,display_name,role,status) VALUES(?,?,?,?,?)",
+            ("admin", _fr_hash("admin", adm_pass), "Администратор", "admin", "active")
+        )
+        c.commit()
+
+def _fr_hash(username: str, password: str) -> str:
+    salt = _hashlib.sha256(username.lower().encode()).hexdigest()[:16]
+    return salt + ":" + _hashlib.sha256((salt + password).encode()).hexdigest()
+
+def _fr_verify(username: str, password: str, stored: str) -> bool:
+    try:
+        salt, h = stored.split(":", 1)
+        return _hashlib.sha256((salt + password).encode()).hexdigest() == h
+    except Exception:
+        return False
+
+def _fr_new_token() -> str:
+    import secrets
+    return secrets.token_hex(24)
+
+def _fr_create_session(username: str) -> str:
+    token = _fr_new_token()
+    from datetime import datetime, timedelta
+    exp = (datetime.utcnow() + timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+    with _DB_LOCK:
+        c = _db()
+        c.execute("INSERT INTO fr_sessions(token,username,expires_at) VALUES(?,?,?)",
+                  (token, username, exp))
+        c.commit()
+    return token
+
+def _fr_auth(request) -> str | None:
+    """Return username if token valid, else None."""
+    token = (request.headers.get("X-FR-Token") or
+             request.rel_url.query.get("token") or "")
+    if not token:
+        return None
+    row = _db().execute(
+        "SELECT username FROM fr_sessions WHERE token=? AND expires_at > datetime('now')",
+        (token,)
+    ).fetchone()
+    return row["username"] if row else None
+
+def _fr_is_admin(username: str) -> bool:
+    row = _db().execute("SELECT role FROM fr_users WHERE username=?", (username,)).fetchone()
+    return row and row["role"] == "admin"
+
+def _fr_user(username: str):
+    return _db().execute("SELECT * FROM fr_users WHERE username=?", (username,)).fetchone()
+
+def _fr_sse_broadcast(data: str):
+    dead = set()
+    for q in _FR_SSE_CLIENTS:
+        try:
+            q.put_nowait(data)
+        except Exception:
+            dead.add(q)
+    _FR_SSE_CLIENTS.difference_update(dead)
+
+# ── File serving ──────────────────────────────────────────────────────────────
+async def _fr_serve_html(request):
+    import os as _os
+    path = _os.path.join(_os.path.dirname(__file__), "webapp", "friends.html")
+    try:
+        with open(path, "rb") as f:
+            return aiohttp_web.Response(body=f.read(), content_type="text/html",
+                                        charset="utf-8")
+    except FileNotFoundError:
+        return aiohttp_web.Response(status=404, text="friends.html not found")
+
+# ── SSE ───────────────────────────────────────────────────────────────────────
+async def _fr_events(request):
+    username = _fr_auth(request)
+    if not username:
+        return aiohttp_web.Response(status=401, text="Unauthorized")
+    queue = asyncio.Queue(maxsize=50)
+    _FR_SSE_CLIENTS.add(queue)
+    resp = aiohttp_web.StreamResponse(headers={
+        "Content-Type":  "text/event-stream",
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    })
+    await resp.prepare(request)
+    try:
+        while True:
+            try:
+                data = await asyncio.wait_for(queue.get(), timeout=25)
+                await resp.write(f"data: {data}\n\n".encode())
+            except asyncio.TimeoutError:
+                await resp.write(b": ping\n\n")
+    except Exception:
+        pass
+    finally:
+        _FR_SSE_CLIENTS.discard(queue)
+    return resp
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+async def _fr_login(request):
+    try:
+        body = await request.json()
+        username = (body.get("username") or "").strip().lower()
+        password = body.get("password") or ""
+        if not username or not password:
+            return aiohttp_web.Response(status=400,
+                text='{"error":"Введите логин и пароль"}',
+                content_type="application/json", headers=_CORS_HEADERS)
+        user = _fr_user(username)
+        if not user or not _fr_verify(username, password, user["password_hash"]):
+            return aiohttp_web.Response(status=401,
+                text='{"error":"Неверный логин или пароль"}',
+                content_type="application/json", headers=_CORS_HEADERS)
+        if user["status"] == "pending":
+            return aiohttp_web.Response(status=403,
+                text='{"error":"pending","detail":"Ожидайте подтверждения администратора"}',
+                content_type="application/json", headers=_CORS_HEADERS)
+        if user["status"] == "suspended":
+            return aiohttp_web.Response(status=403,
+                text='{"error":"suspended","detail":"Аккаунт заблокирован"}',
+                content_type="application/json", headers=_CORS_HEADERS)
+        token = _fr_create_session(username)
+        with _DB_LOCK:
+            c = _db()
+            c.execute("UPDATE fr_users SET last_login=datetime('now') WHERE username=?", (username,))
+            c.commit()
+        group = None
+        if user["group_id"]:
+            g = _db().execute("SELECT name FROM fr_groups WHERE id=?", (user["group_id"],)).fetchone()
+            group = {"id": user["group_id"], "name": g["name"]} if g else None
+        return aiohttp_web.Response(
+            text=json.dumps({"ok": True, "token": token, "username": username,
+                             "display_name": user["display_name"], "role": user["role"],
+                             "group": group}, ensure_ascii=False),
+            content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=json.dumps({"error": str(e)}),
+                                    content_type="application/json", headers=_CORS_HEADERS)
+
+async def _fr_register(request):
+    """POST /friends/api/register — registration via invite token."""
+    try:
+        body = await request.json()
+        invite_token = (body.get("invite_token") or "").strip()
+        username     = (body.get("username") or "").strip().lower()
+        password     = body.get("password") or ""
+        display_name = (body.get("display_name") or "").strip()[:60]
+        if not invite_token or not username or not password:
+            return aiohttp_web.Response(status=400,
+                text='{"error":"Заполните все поля"}',
+                content_type="application/json", headers=_CORS_HEADERS)
+        if len(username) < 3 or len(username) > 30:
+            return aiohttp_web.Response(status=400,
+                text='{"error":"Логин от 3 до 30 символов"}',
+                content_type="application/json", headers=_CORS_HEADERS)
+        import re as _re
+        if not _re.match(r'^[a-z0-9_]+$', username):
+            return aiohttp_web.Response(status=400,
+                text='{"error":"Логин: только латиница, цифры, _"}',
+                content_type="application/json", headers=_CORS_HEADERS)
+        if len(password) < 6:
+            return aiohttp_web.Response(status=400,
+                text='{"error":"Пароль минимум 6 символов"}',
+                content_type="application/json", headers=_CORS_HEADERS)
+        # Check invite
+        inv = _db().execute(
+            "SELECT * FROM fr_invites WHERE token=? AND used_by IS NULL AND expires_at > datetime('now')",
+            (invite_token,)
+        ).fetchone()
+        if not inv:
+            return aiohttp_web.Response(status=400,
+                text='{"error":"Ссылка недействительна или истекла"}',
+                content_type="application/json", headers=_CORS_HEADERS)
+        # Check username not taken
+        if _db().execute("SELECT 1 FROM fr_users WHERE username=?", (username,)).fetchone():
+            return aiohttp_web.Response(status=409,
+                text='{"error":"Этот логин уже занят"}',
+                content_type="application/json", headers=_CORS_HEADERS)
+        pwd_hash = _fr_hash(username, password)
+        display_name = display_name or username
+        # Check if admin exists — first user becomes active, rest are pending
+        has_admin = _db().execute("SELECT 1 FROM fr_users WHERE role='admin' AND status='active'").fetchone()
+        status = "active" if not has_admin else "pending"
+        with _DB_LOCK:
+            c = _db()
+            c.execute(
+                "INSERT INTO fr_users(username,password_hash,display_name,role,status,group_id) VALUES(?,?,?,?,?,?)",
+                (username, pwd_hash, display_name, "member", status, inv["group_id"])
+            )
+            c.execute("UPDATE fr_invites SET used_by=?,used_at=datetime('now') WHERE token=?",
+                      (username, invite_token))
+            c.commit()
+        # Notify admin via Telegram
+        grp_name = ""
+        if inv["group_id"]:
+            g = _db().execute("SELECT name FROM fr_groups WHERE id=?", (inv["group_id"],)).fetchone()
+            grp_name = f" (группа: {g['name']})" if g else ""
+        if status == "pending":
+            try:
+                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                kb = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text="✅ Одобрить", callback_data=f"fr:approve:{username}"),
+                    InlineKeyboardButton(text="❌ Отклонить", callback_data=f"fr:reject:{username}"),
+                ]])
+                await bot.send_message(ADMIN_ID,
+                    f"👤 <b>Новый пользователь в Friends App</b>\n"
+                    f"Логин: <code>{username}</code>\n"
+                    f"Имя: {display_name}{grp_name}\n"
+                    f"Одобрить доступ?",
+                    reply_markup=kb, parse_mode="HTML")
+            except Exception:
+                pass
+        token = _fr_create_session(username) if status == "active" else None
+        return aiohttp_web.Response(
+            text=json.dumps({"ok": True, "status": status,
+                             "token": token, "username": username,
+                             "display_name": display_name}, ensure_ascii=False),
+            content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=json.dumps({"error": str(e)}),
+                                    content_type="application/json", headers=_CORS_HEADERS)
+
+async def _fr_me(request):
+    username = _fr_auth(request)
+    if not username:
+        return aiohttp_web.Response(status=401, text='{"error":"Unauthorized"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    user = _fr_user(username)
+    if not user:
+        return aiohttp_web.Response(status=404, text='{"error":"User not found"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    group = None
+    if user["group_id"]:
+        g = _db().execute("SELECT id,name FROM fr_groups WHERE id=?", (user["group_id"],)).fetchone()
+        group = {"id": g["id"], "name": g["name"]} if g else None
+    return aiohttp_web.Response(
+        text=json.dumps({"username": username, "display_name": user["display_name"],
+                         "role": user["role"], "status": user["status"],
+                         "group": group}, ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+# ── Contacts ──────────────────────────────────────────────────────────────────
+async def _fr_contacts(request):
+    username = _fr_auth(request)
+    if not username:
+        return aiohttp_web.Response(status=401, text='{"error":"Unauthorized"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    user = _fr_user(username)
+    if not user or user["status"] != "active":
+        return aiohttp_web.Response(status=403, text='{"error":"Access denied"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    c = _db()
+    if _fr_is_admin(username):
+        rows = c.execute(
+            "SELECT u.username, u.display_name, u.status, u.group_id, u.last_login, g.name as group_name "
+            "FROM fr_users u LEFT JOIN fr_groups g ON u.group_id=g.id "
+            "WHERE u.username != ? ORDER BY u.display_name", (username,)
+        ).fetchall()
+    else:
+        rows = c.execute(
+            "SELECT u.username, u.display_name, u.status, u.group_id, u.last_login, g.name as group_name "
+            "FROM fr_users u LEFT JOIN fr_groups g ON u.group_id=g.id "
+            "WHERE u.username != ? AND u.group_id=? AND u.status='active' ORDER BY u.display_name",
+            (username, user["group_id"])
+        ).fetchall()
+    result = [{"username": r["username"], "display_name": r["display_name"],
+               "status": r["status"], "group_id": r["group_id"],
+               "group_name": r["group_name"] or "", "last_login": r["last_login"]}
+              for r in rows]
+    return aiohttp_web.Response(text=json.dumps(result, ensure_ascii=False),
+                                content_type="application/json", headers=_CORS_HEADERS)
+
+# ── Calls (WebRTC, dedicated SSE channel) ─────────────────────────────────────
+async def _fr_call_signal(request):
+    username = _fr_auth(request)
+    if not username:
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    try:
+        body     = await request.json()
+        to_user  = body.get("to_user", "")
+        sig_type = body.get("type", "")
+        payload  = body.get("payload", {})
+        if not to_user or not sig_type:
+            return aiohttp_web.Response(status=400, text='{"error":"missing fields"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        display = _fr_user(username)
+        display = display["display_name"] if display else username
+        event_data = json.dumps({"type": "fr_call_signal", "from_user": username,
+                                 "from_display": display, "to_user": to_user,
+                                 "signal_type": sig_type, "payload": payload}, ensure_ascii=False)
+        _fr_sse_broadcast(event_data)
+        # Also deliver to HA SSE clients so admin in HA app receives friends calls
+        _ha_dead = set()
+        for _hq in list(_sse_clients):
+            try: _hq.put_nowait(event_data)
+            except Exception: _ha_dead.add(_hq)
+        _sse_clients.difference_update(_ha_dead)
+        import time as _time
+        if sig_type == "offer":
+            _FR_PENDING_CALLS[to_user] = {
+                "from_user": username, "from_display": display, "payload": payload,
+                "call_type": payload.get("callType", "audio"),
+                "ice_candidates": [],
+                "expires_at": _time.time() + 60,
+            }
+        elif sig_type == "ice":
+            if to_user in _FR_PENDING_CALLS and payload.get("candidate"):
+                _FR_PENDING_CALLS[to_user]["ice_candidates"].append(payload["candidate"])
+        elif sig_type in ("answer", "reject", "hangup"):
+            _FR_PENDING_CALLS.pop(to_user, None)
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+async def _fr_call_pending(request):
+    username = _fr_auth(request)
+    if not username:
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    import time as _time
+    now = _time.time()
+    _FR_PENDING_CALLS.update({k: v for k, v in _FR_PENDING_CALLS.items()})
+    expired = [u for u, c in _FR_PENDING_CALLS.items() if c["expires_at"] < now]
+    for u in expired:
+        del _FR_PENDING_CALLS[u]
+    call = _FR_PENDING_CALLS.get(username)
+    if call and call["expires_at"] > now:
+        return aiohttp_web.Response(text=json.dumps(call, ensure_ascii=False),
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    return aiohttp_web.Response(text='null', content_type="application/json",
+                                headers=_CORS_HEADERS)
+
+# ── Admin ─────────────────────────────────────────────────────────────────────
+async def _fr_admin_users(request):
+    username = _fr_auth(request)
+    if not username or not _fr_is_admin(username):
+        return aiohttp_web.Response(status=403, text='{"error":"Admin only"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    if request.method == "PATCH":
+        uname = request.match_info.get("username", "")
+        body  = await request.json()
+        with _DB_LOCK:
+            c = _db()
+            if "status" in body:
+                c.execute("UPDATE fr_users SET status=? WHERE username=?", (body["status"], uname))
+            if "group_id" in body:
+                c.execute("UPDATE fr_users SET group_id=? WHERE username=?", (body["group_id"], uname))
+            if "display_name" in body:
+                c.execute("UPDATE fr_users SET display_name=? WHERE username=?", (body["display_name"][:60], uname))
+            c.commit()
+        # Notify user via SSE if approved
+        if body.get("status") == "active":
+            _fr_sse_broadcast(json.dumps({"type": "fr_approved", "username": uname}))
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    if request.method == "DELETE":
+        uname = request.match_info.get("username", "")
+        with _DB_LOCK:
+            c = _db()
+            c.execute("DELETE FROM fr_users WHERE username=?", (uname,))
+            c.execute("DELETE FROM fr_sessions WHERE username=?", (uname,))
+            c.commit()
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    # GET — list all users
+    rows = _db().execute(
+        "SELECT u.username, u.display_name, u.role, u.status, u.group_id, u.last_login, g.name as group_name "
+        "FROM fr_users u LEFT JOIN fr_groups g ON u.group_id=g.id ORDER BY u.created_at"
+    ).fetchall()
+    return aiohttp_web.Response(
+        text=json.dumps([{"username": r["username"], "display_name": r["display_name"],
+                          "role": r["role"], "status": r["status"],
+                          "group_id": r["group_id"], "group_name": r["group_name"] or "",
+                          "last_login": r["last_login"]} for r in rows], ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+async def _fr_admin_groups(request):
+    username = _fr_auth(request)
+    if not username or not _fr_is_admin(username):
+        return aiohttp_web.Response(status=403, text='{"error":"Admin only"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    if request.method == "POST":
+        body = await request.json()
+        name = (body.get("name") or "").strip()[:50]
+        if not name:
+            return aiohttp_web.Response(status=400, text='{"error":"Укажите название"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        with _DB_LOCK:
+            c = _db()
+            try:
+                c.execute("INSERT INTO fr_groups(name,created_by) VALUES(?,?)", (name, username))
+                c.commit()
+                gid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+            except Exception:
+                return aiohttp_web.Response(status=409, text='{"error":"Группа уже существует"}',
+                                            content_type="application/json", headers=_CORS_HEADERS)
+        return aiohttp_web.Response(text=json.dumps({"ok": True, "id": gid, "name": name}),
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    if request.method == "DELETE":
+        gid = int(request.match_info.get("id", 0))
+        with _DB_LOCK:
+            c = _db()
+            c.execute("UPDATE fr_users SET group_id=NULL WHERE group_id=?", (gid,))
+            c.execute("DELETE FROM fr_groups WHERE id=?", (gid,))
+            c.commit()
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    # GET
+    rows = _db().execute(
+        "SELECT g.id, g.name, COUNT(u.username) as member_count "
+        "FROM fr_groups g LEFT JOIN fr_users u ON u.group_id=g.id AND u.status='active' "
+        "GROUP BY g.id ORDER BY g.name"
+    ).fetchall()
+    return aiohttp_web.Response(
+        text=json.dumps([{"id": r["id"], "name": r["name"],
+                          "member_count": r["member_count"]} for r in rows], ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+async def _fr_admin_invites(request):
+    username = _fr_auth(request)
+    if not username or not _fr_is_admin(username):
+        return aiohttp_web.Response(status=403, text='{"error":"Admin only"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    if request.method == "POST":
+        body  = await request.json()
+        days  = int(body.get("expires_days", 7))
+        gid   = body.get("group_id")
+        token = _fr_new_token()
+        from datetime import datetime, timedelta
+        exp = (datetime.utcnow() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        with _DB_LOCK:
+            c = _db()
+            c.execute("INSERT INTO fr_invites(token,group_id,created_by,expires_at) VALUES(?,?,?,?)",
+                      (token, gid, username, exp))
+            c.commit()
+        return aiohttp_web.Response(
+            text=json.dumps({"ok": True, "token": token,
+                             "url": f"/friends/?invite={token}",
+                             "expires_at": exp}, ensure_ascii=False),
+            content_type="application/json", headers=_CORS_HEADERS)
+    if request.method == "DELETE":
+        inv_id = int(request.match_info.get("id", 0))
+        with _DB_LOCK:
+            c = _db()
+            c.execute("DELETE FROM fr_invites WHERE id=?", (inv_id,))
+            c.commit()
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    # GET
+    rows = _db().execute(
+        "SELECT i.id, i.token, i.group_id, i.expires_at, i.used_by, i.created_by, g.name as group_name "
+        "FROM fr_invites i LEFT JOIN fr_groups g ON i.group_id=g.id "
+        "WHERE i.used_by IS NULL AND i.expires_at > datetime('now') ORDER BY i.created_at DESC"
+    ).fetchall()
+    return aiohttp_web.Response(
+        text=json.dumps([{"id": r["id"], "token": r["token"], "group_id": r["group_id"],
+                          "group_name": r["group_name"] or "Без группы",
+                          "expires_at": r["expires_at"]} for r in rows], ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+# ── Telegram callbacks for Friends App ────────────────────────────────────────
+@dp.callback_query(lambda c: c.data and c.data.startswith("fr:"))
+async def _fr_callback(callback):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("Нет доступа")
+        return
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    target = parts[2] if len(parts) > 2 else ""
+    if action == "approve":
+        with _DB_LOCK:
+            c = _db()
+            c.execute("UPDATE fr_users SET status='active' WHERE username=?", (target,))
+            c.commit()
+        _fr_sse_broadcast(json.dumps({"type": "fr_approved", "username": target}))
+        await callback.message.edit_text(
+            callback.message.text + f"\n\n✅ <b>{target}</b> одобрен", parse_mode="HTML")
+        await callback.answer("Одобрено")
+    elif action == "reject":
+        with _DB_LOCK:
+            c = _db()
+            c.execute("DELETE FROM fr_users WHERE username=? AND status='pending'", (target,))
+            c.execute("DELETE FROM fr_sessions WHERE username=?", (target,))
+            c.commit()
+        await callback.message.edit_text(
+            callback.message.text + f"\n\n❌ <b>{target}</b> отклонён", parse_mode="HTML")
+        await callback.answer("Отклонено")
+
+
+async def _fr_ha_sso(request):
+    """POST /friends/api/ha-sso — обмен HA-токена на friends-сессию для администратора."""
+    auth = request.headers.get("Authorization", "")
+    if auth != f"Bearer {WEBAPP_TOKEN}":
+        return aiohttp_web.Response(status=401, text='{"error":"Unauthorized"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    admin = _db().execute(
+        "SELECT username, display_name FROM fr_users WHERE role='admin' AND status='active' LIMIT 1"
+    ).fetchone()
+    if not admin:
+        return aiohttp_web.Response(status=404, text='{"error":"No admin"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    token = _fr_create_session(admin["username"])
+    return aiohttp_web.Response(
+        text=json.dumps({"ok": True, "token": token, "username": admin["username"],
+                         "display_name": admin["display_name"], "role": "admin"}, ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS)
+
+
+async def _fr_avatar_get(request):
+    """GET /friends/api/avatar/{username} — отдать аватар пользователя."""
+    username = request.match_info.get("username", "")
+    if not username:
+        return aiohttp_web.Response(status=404, text="Not found")
+    import pathlib as _pl
+    avatar_dir = _pl.Path("/opt/ha-bot/avatars/friends")
+    for ext in ["jpg", "jpeg", "png", "webp", "gif"]:
+        p = avatar_dir / f"{username}.{ext}"
+        if p.exists():
+            ctype = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
+            return aiohttp_web.Response(body=p.read_bytes(), content_type=ctype,
+                                        headers={"Cache-Control": "max-age=3600"})
+    return aiohttp_web.Response(status=404, text="No avatar")
+
+
+async def _fr_avatar_upload(request):
+    """POST /friends/api/avatar — загрузить свой аватар."""
+    username = _fr_auth(request)
+    if not username:
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    import pathlib as _pl
+    avatar_dir = _pl.Path("/opt/ha-bot/avatars/friends")
+    avatar_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        reader = await request.multipart()
+        field  = await reader.next()
+        if not field or field.name != "avatar":
+            return aiohttp_web.Response(status=400, text='{"error":"Expected avatar field"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        data = await field.read(decode=True)
+        if len(data) > 5 * 1024 * 1024:
+            return aiohttp_web.Response(status=413, text='{"error":"Too large (max 5 MB)"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        ct  = field.headers.get("Content-Type", "image/jpeg")
+        ext = {"image/jpeg": "jpg", "image/png": "png",
+               "image/webp": "webp", "image/gif": "gif"}.get(ct, "jpg")
+        for old in avatar_dir.glob(f"{username}.*"):
+            old.unlink(missing_ok=True)
+        p = avatar_dir / f"{username}.{ext}"
+        p.write_bytes(data)
+        return aiohttp_web.Response(
+            text=json.dumps({"ok": True, "url": f"/friends/api/avatar/{username}"}),
+            content_type="application/json", headers=_CORS_HEADERS)
+    except Exception as e:
+        return aiohttp_web.Response(status=500, text=str(e), headers=_CORS_HEADERS)
+
+
 async def _start_web():
     """Запустить aiohttp веб-сервер для Mini App на 127.0.0.1:8766.
 
@@ -8436,6 +9049,38 @@ async def _start_web():
     app.router.add_route("OPTIONS", "/ha-app/api/call/pending", _web_options)
     app.router.add_get("/ha-app/api/turn-creds",              _web_turn_creds)
     app.router.add_route("OPTIONS", "/ha-app/api/turn-creds", _web_options)
+    # ── Friends App ───────────────────────────────────────────────────────────
+    _fr_db_init()
+    app.router.add_get("/friends/",                               _fr_serve_html)
+    app.router.add_get("/friends",                                _fr_serve_html)
+    app.router.add_get("/friends/api/events",                     _fr_events)
+    app.router.add_post("/friends/api/login",                     _fr_login)
+    app.router.add_post("/friends/api/register",                  _fr_register)
+    app.router.add_get("/friends/api/me",                         _fr_me)
+    app.router.add_get("/friends/api/contacts",                   _fr_contacts)
+    app.router.add_post("/friends/api/call/signal",               _fr_call_signal)
+    app.router.add_get("/friends/api/call/pending",               _fr_call_pending)
+    app.router.add_get("/friends/api/turn-creds",                 _web_turn_creds)
+    app.router.add_get("/friends/api/admin/users",                _fr_admin_users)
+    app.router.add_patch("/friends/api/admin/users/{username}",   _fr_admin_users)
+    app.router.add_delete("/friends/api/admin/users/{username}",  _fr_admin_users)
+    app.router.add_get("/friends/api/admin/groups",               _fr_admin_groups)
+    app.router.add_post("/friends/api/admin/groups",              _fr_admin_groups)
+    app.router.add_delete("/friends/api/admin/groups/{id}",       _fr_admin_groups)
+    app.router.add_get("/friends/api/admin/invites",              _fr_admin_invites)
+    app.router.add_post("/friends/api/admin/invites",             _fr_admin_invites)
+    app.router.add_delete("/friends/api/admin/invites/{id}",      _fr_admin_invites)
+    app.router.add_post("/friends/api/ha-sso",                    _fr_ha_sso)
+    app.router.add_get("/friends/api/avatar/{username}",          _fr_avatar_get)
+    app.router.add_post("/friends/api/avatar",                    _fr_avatar_upload)
+    for path in ["/friends/api/login", "/friends/api/register", "/friends/api/me",
+                 "/friends/api/contacts", "/friends/api/call/signal",
+                 "/friends/api/call/pending", "/friends/api/turn-creds",
+                 "/friends/api/admin/users", "/friends/api/admin/users/{username}",
+                 "/friends/api/admin/groups", "/friends/api/admin/groups/{id}",
+                 "/friends/api/admin/invites", "/friends/api/admin/invites/{id}",
+                 "/friends/api/ha-sso", "/friends/api/avatar"]:
+        app.router.add_route("OPTIONS", path, _web_options)
     runner = aiohttp_web.AppRunner(app)
     await runner.setup()
     site = aiohttp_web.TCPSite(runner, "127.0.0.1", 8766)

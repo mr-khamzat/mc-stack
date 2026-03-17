@@ -4007,8 +4007,15 @@ function handleSSEUpdate(d) {
   if (!d) return;
   // Chat SSE event
   if (d.type === 'chat') { if (d.msg) onChatSSE(d.msg); return; }
-  // WebRTC call signaling
-  if (d.type === 'call_signal') { _handleCallSignal(d); return; }
+  // WebRTC call signaling (HA family)
+  if (d.type === 'call_signal') { _rtcCallIsFriends = false; _handleCallSignal(d); return; }
+  // Friends app call received in HA app (cross-app delivery)
+  if (d.type === 'fr_call_signal' && HA_USER_ROLE === 'admin') {
+    _rtcCallIsFriends = true;
+    _handleCallSignal({ from_user: d.from_user, from_display: d.from_display,
+                        signal_type: d.signal_type, payload: d.payload, to_user: d.to_user });
+    return;
+  }
   // Family members added/removed in HA
   if (d.type === 'family_members_changed') {
     _shopFamilyCache = null; window._shopFamilyCache = null; // force reload username mapping
@@ -4098,6 +4105,7 @@ function showUserMenu() {
     <div style="font-size:12px;color:rgba(140,140,190,0.55);margin-bottom:16px">${role}</div>
     <button onclick="closeUserMenu();openPermissionsSheet()" style="width:100%;padding:13px;border-radius:12px;border:1px solid rgba(255,255,255,0.10);background:rgba(255,255,255,0.05);color:rgba(200,200,230,0.85);font-size:15px;cursor:pointer;font-family:inherit;margin-bottom:8px;text-align:left">⚙️ Разрешения и устройство</button>
     ${HA_USER_ROLE === 'admin' ? `<button onclick="closeUserMenu();openUpdatesSheet()" style="width:100%;padding:13px;border-radius:12px;border:1px solid rgba(255,255,255,0.10);background:rgba(255,255,255,0.05);color:rgba(200,200,230,0.85);font-size:15px;cursor:pointer;font-family:inherit;margin-bottom:8px;text-align:left">🔄 Обновления</button>` : ''}
+    ${HA_USER_ROLE === 'admin' ? `<button onclick="closeUserMenu();openFriendsApp()" style="width:100%;padding:13px;border-radius:12px;border:1px solid rgba(99,210,140,0.25);background:rgba(99,210,140,0.08);color:rgba(140,235,180,0.9);font-size:15px;cursor:pointer;font-family:inherit;margin-bottom:8px;text-align:left">👥 Контакты и звонки</button>` : ''}
     <button onclick="autoThemeToggle();closeUserMenu()" style="width:100%;padding:13px;border-radius:12px;border:1px solid rgba(255,255,255,0.10);background:rgba(255,255,255,0.05);color:rgba(200,200,230,0.85);font-size:15px;cursor:pointer;font-family:inherit;margin-bottom:8px;text-align:left">${autoLabel}</button>
     <button onclick="doLogout();closeUserMenu()" style="width:100%;padding:13px;border-radius:12px;border:none;background:linear-gradient(135deg,rgba(239,68,68,0.2),rgba(239,68,68,0.1));border:1px solid rgba(239,68,68,0.25);color:#f87171;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit">🚪 Выйти</button>
   `;
@@ -4114,6 +4122,23 @@ function closeUserMenu() {
   var bd = document.getElementById('user-menu-backdrop');
   if (sh) sh.style.transform = 'translateY(100%)';
   setTimeout(function() { if(sh)sh.remove(); if(bd)bd.remove(); }, 320);
+}
+
+async function openFriendsApp() {
+  try {
+    var r = await fetch(window.location.origin + '/friends/api/ha-sso', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + API_TOKEN },
+    });
+    var res = await r.json();
+    if (res && res.ok && res.token) {
+      window.location.href = '/friends/?sso=' + encodeURIComponent(res.token);
+    } else {
+      alert('Не удалось открыть приложение контактов');
+    }
+  } catch(e) {
+    alert('Ошибка: ' + (e.message || e));
+  }
 }
 
 // ── Разрешения и устройство ───────────────────────────────────────────────────
@@ -5503,10 +5528,38 @@ let _rtcCallType    = 'audio';
 let _rtcCallTarget  = null;   // {username, display}
 let _rtcOfferSdp    = null;
 let _rtcIceQueue    = [];     // ICE candidates queued before RTCPeerConnection ready
+let _rtcCallIsFriends = false; // true when current call is from Friends app
+let _frToken        = null;    // friends app session token (obtained via ha-sso)
 let _rtcRemoteReady = false;  // true after setRemoteDescription
 
+async function _ensureFrToken() {
+  if (_frToken) return _frToken;
+  if (HA_USER_ROLE !== 'admin') return null;
+  try {
+    var r = await fetch(window.location.origin + '/friends/api/ha-sso', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + API_TOKEN },
+    });
+    var res = await r.json();
+    if (res && res.ok && res.token) _frToken = res.token;
+  } catch(_) {}
+  return _frToken;
+}
+
 async function _sendCallSignal(toUser, type, payload) {
-  try { await api('/call/signal', 'POST', { to_user: toUser, type, payload }); } catch(_) {}
+  if (_rtcCallIsFriends) {
+    var tok = await _ensureFrToken();
+    if (!tok) return;
+    try {
+      await fetch(window.location.origin + '/friends/api/call/signal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-FR-Token': tok },
+        body: JSON.stringify({ to_user: toUser, type, payload }),
+      });
+    } catch(_) {}
+  } else {
+    try { await api('/call/signal', 'POST', { to_user: toUser, type, payload }); } catch(_) {}
+  }
 }
 
 // Unlock iOS AudioContext — must be called inside user gesture
@@ -5889,6 +5942,7 @@ function endCall() {
   if (_rtcPeer) { _rtcPeer.close(); _rtcPeer = null; }
   if (_rtcLocalStream) { _rtcLocalStream.getTracks().forEach(t => t.stop()); _rtcLocalStream = null; }
   _rtcCallTarget = null; _rtcOfferSdp = null; _rtcIceQueue = []; _rtcRemoteReady = false;
+  _rtcCallIsFriends = false;
   _rtcFacingMode = 'user'; _rtcMuted = false; _rvZoom = 1;
   clearInterval(_statsTimer); _statsTimer = null; _callQuality = 'good';
   const overlay = document.getElementById('call-overlay');
