@@ -1,6 +1,8 @@
 # Systemd unit для HA Home Bot
 # Установка:
 #   cp ha-bot.service /etc/systemd/system/
+#   useradd -r -s /usr/sbin/nologin -d /opt/ha-bot habot
+#   chown -R habot:habot /opt/ha-bot && chmod 640 /opt/ha-bot/.env
 #   systemctl daemon-reload
 #   systemctl enable --now ha-bot
 
@@ -12,16 +14,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-
-# Рекомендуется создать отдельного пользователя:
-#   useradd -r -s /sbin/nologin -d /opt/ha-bot habot
-#   chown -R habot:habot /opt/ha-bot
-# Затем раскомментировать строку ниже и удалить User=root
-# User=habot
-
-# ⚠️ Если не создал пользователя habot — временно можно оставить root,
-# но это не рекомендуется в продакшене
-User=root
+User=habot
+Group=habot
 
 WorkingDirectory=/opt/ha-bot
 
@@ -29,14 +23,18 @@ WorkingDirectory=/opt/ha-bot
 EnvironmentFile=/opt/ha-bot/.env
 
 # Путь к Python (если используешь venv)
-ExecStart=/opt/ha-bot/venv/bin/python3 /opt/ha-bot/ha_bot.py
+ExecStart=/usr/bin/python3 /opt/ha-bot/bot.py
 
-# Если НЕ используешь venv (системный Python):
-# ExecStart=/usr/bin/python3 /opt/ha-bot/ha_bot.py
 
 # Автоматический рестарт при краше
 Restart=always
 RestartSec=10
+
+# Systemd security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/ha-bot
+PrivateTmp=yes
 
 # Логи: journalctl -u ha-bot -f
 StandardOutput=journal
