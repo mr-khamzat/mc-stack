@@ -2544,6 +2544,37 @@ body.fab-open .fab-backdrop { display: block; }
 .shop-stat-count { font-size:13px; font-weight:700; color:#a5b4fc; }
 .shop-hist-item { display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid rgba(255,255,255,0.04); }
 .shop-hist-item:last-child { border-bottom:none; }
+/* ── HA Avatar crop modal ── */
+.ha-crop-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0,0,0,0.92);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+.ha-crop-modal.open { display: flex; }
+.ha-crop-wrap {
+  position: relative;
+  width: min(300px, 86vw);
+  height: min(300px, 86vw);
+  border-radius: 50%;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  border: 3px solid rgba(99,130,255,0.7);
+  box-shadow: 0 0 0 3000px rgba(0,0,0,0.6);
+}
+.ha-crop-wrap:active { cursor: grabbing; }
+.ha-crop-image {
+  position: absolute;
+  transform-origin: 0 0;
+  pointer-events: none;
+  user-select: none;
+}
 </style>
 <!-- Inline failsafe: remove loading after 5s even without JS -->
 <script>
@@ -2554,6 +2585,23 @@ body.fab-open .fab-backdrop { display: block; }
 </script>
 </head>
 <body>
+
+<!-- HA Avatar crop modal -->
+<div class="ha-crop-modal" id="ha-crop-modal">
+  <div style="font-size:13px;color:rgba(180,200,220,0.6);text-align:center">Перетащите и масштабируйте фото</div>
+  <div class="ha-crop-wrap" id="ha-crop-wrap">
+    <img class="ha-crop-image" id="ha-crop-image" draggable="false" alt="">
+  </div>
+  <div style="display:flex;gap:12px;align-items:center">
+    <input type="range" id="ha-crop-zoom" min="1" max="3" step="0.01" value="1"
+           style="width:180px;accent-color:#6366f1" oninput="hacropZoomChange(this.value)">
+    <span style="font-size:12px;color:rgba(180,200,220,0.6)">🔍</span>
+  </div>
+  <div style="display:flex;gap:12px">
+    <button onclick="hacroppingApply()" style="padding:12px 28px;border-radius:12px;border:none;background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit">✅ Применить</button>
+    <button onclick="hacroppingCancel()" style="padding:12px 20px;border-radius:12px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.07);color:rgba(200,210,240,0.8);font-size:15px;cursor:pointer;font-family:inherit">Отмена</button>
+  </div>
+</div>
 
 <div class="pwa-banner" id="pwa-banner">
   <div class="pwa-banner-icon">📱</div>
@@ -4101,8 +4149,19 @@ function showUserMenu() {
     transform:translateY(100%);transition:transform 0.3s cubic-bezier(0.32,0.72,0,1)`;
   div.innerHTML = `
     <div style="width:40px;height:4px;background:rgba(255,255,255,0.14);border-radius:2px;margin:0 auto 16px"></div>
-    <div style="font-size:15px;font-weight:600;color:rgba(220,220,255,0.92);margin-bottom:4px">${escapeHtml(name)}</div>
-    <div style="font-size:12px;color:rgba(140,140,190,0.55);margin-bottom:16px">${role}</div>
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px">
+      <div style="position:relative;flex-shrink:0">
+        <div id="ha-menu-avatar-wrap" style="width:60px;height:60px;border-radius:50%;background:#3b82f6;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;color:#fff;overflow:hidden;border:2px solid rgba(255,255,255,0.15);cursor:pointer" onclick="document.getElementById('ha-avatar-file-input').click()">${escapeHtml(name ? name.charAt(0).toUpperCase() : '?')}</div>
+        <div style="position:absolute;bottom:0;right:0;background:#4f46e5;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:11px;cursor:pointer;border:2px solid var(--bg-body,#07071a)" onclick="document.getElementById('ha-avatar-file-input').click()">📷</div>
+      </div>
+      <div>
+        <div style="font-size:15px;font-weight:600;color:rgba(220,220,255,0.92)">${escapeHtml(name)}</div>
+        <div style="font-size:12px;color:rgba(140,140,190,0.55)">${role}</div>
+        <div style="font-size:11px;color:rgba(99,130,255,0.7);margin-top:3px;cursor:pointer" onclick="document.getElementById('ha-avatar-file-input').click()">📷 Изменить фото</div>
+      </div>
+    </div>
+    <input type="file" accept="image/*" id="ha-avatar-file-input" style="display:none" onchange="uploadHAAvatarInput(this)">
+    <div id="ha-avatar-upload-status" style="font-size:12px;color:rgba(140,140,190,0.7);margin-bottom:8px;min-height:16px;text-align:center"></div>
     <button onclick="closeUserMenu();openPermissionsSheet()" style="width:100%;padding:13px;border-radius:12px;border:1px solid rgba(255,255,255,0.10);background:rgba(255,255,255,0.05);color:rgba(200,200,230,0.85);font-size:15px;cursor:pointer;font-family:inherit;margin-bottom:8px;text-align:left">⚙️ Разрешения и устройство</button>
     ${HA_USER_ROLE === 'admin' ? `<button onclick="closeUserMenu();openUpdatesSheet()" style="width:100%;padding:13px;border-radius:12px;border:1px solid rgba(255,255,255,0.10);background:rgba(255,255,255,0.05);color:rgba(200,200,230,0.85);font-size:15px;cursor:pointer;font-family:inherit;margin-bottom:8px;text-align:left">🔄 Обновления</button>` : ''}
     ${HA_USER_ROLE === 'admin' ? `<button onclick="closeUserMenu();openFriendsApp()" style="width:100%;padding:13px;border-radius:12px;border:1px solid rgba(99,210,140,0.25);background:rgba(99,210,140,0.08);color:rgba(140,235,180,0.9);font-size:15px;cursor:pointer;font-family:inherit;margin-bottom:8px;text-align:left">👥 Контакты и звонки</button>` : ''}
@@ -4116,12 +4175,193 @@ function showUserMenu() {
   document.body.appendChild(backdrop);
   document.body.appendChild(div);
   requestAnimationFrame(function() { div.style.transform = 'translateY(0)'; });
+  // Load actual avatar after sheet animates in
+  if (HA_USERNAME) {
+    const avatarWrap = document.getElementById('ha-menu-avatar-wrap');
+    if (avatarWrap) {
+      const imgTest = new Image();
+      imgTest.onload = function() {
+        if (!avatarWrap) return;
+        avatarWrap.innerHTML = '';
+        const i = document.createElement('img');
+        i.src = imgTest.src;
+        i.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%';
+        avatarWrap.appendChild(i);
+      };
+      imgTest.src = '/ha-app/api/user-avatar/' + encodeURIComponent(HA_USERNAME) + '?_t=' + Date.now();
+    }
+  }
 }
 function closeUserMenu() {
   var sh = document.getElementById('user-menu-sheet');
   var bd = document.getElementById('user-menu-backdrop');
   if (sh) sh.style.transform = 'translateY(100%)';
   setTimeout(function() { if(sh)sh.remove(); if(bd)bd.remove(); }, 320);
+}
+
+// ── HA Avatar crop & upload ───────────────────────────────────────────────────
+var _haCropFile = null;
+var _haCropX = 0, _haCropY = 0, _haCropScale = 1;
+var _haCropDragging = false, _haCropLastX = 0, _haCropLastY = 0;
+var _haCropImgNW = 0, _haCropImgNH = 0;
+var _haCropWrapSize = 0;
+
+function uploadHAAvatarInput(input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';
+  _haCropFile = file;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const img = document.getElementById('ha-crop-image');
+    img.onload = function() {
+      _haCropImgNW = img.naturalWidth;
+      _haCropImgNH = img.naturalHeight;
+      const wrap = document.getElementById('ha-crop-wrap');
+      _haCropWrapSize = wrap.offsetWidth;
+      const fitScale = Math.max(_haCropWrapSize / _haCropImgNW, _haCropWrapSize / _haCropImgNH);
+      _haCropScale = fitScale;
+      _haCropX = (_haCropWrapSize - _haCropImgNW * fitScale) / 2;
+      _haCropY = (_haCropWrapSize - _haCropImgNH * fitScale) / 2;
+      _haCropApplyTransform();
+      document.getElementById('ha-crop-zoom').value = 1;
+    };
+    img.src = e.target.result;
+    document.getElementById('ha-crop-modal').classList.add('open');
+    _haCropAttachEvents();
+  };
+  reader.readAsDataURL(file);
+}
+
+function _haCropApplyTransform() {
+  const img = document.getElementById('ha-crop-image');
+  img.style.transform = 'translate(' + _haCropX + 'px,' + _haCropY + 'px) scale(' + _haCropScale + ')';
+  _haCropClamp();
+  img.style.transform = 'translate(' + _haCropX + 'px,' + _haCropY + 'px) scale(' + _haCropScale + ')';
+}
+
+function _haCropClamp() {
+  const w = _haCropImgNW * _haCropScale, h = _haCropImgNH * _haCropScale;
+  const s = _haCropWrapSize;
+  if (_haCropX > 0) _haCropX = 0;
+  if (_haCropY > 0) _haCropY = 0;
+  if (_haCropX + w < s) _haCropX = s - w;
+  if (_haCropY + h < s) _haCropY = s - h;
+}
+
+function hacropZoomChange(val) {
+  const s = _haCropWrapSize || document.getElementById('ha-crop-wrap').offsetWidth;
+  const minScale = Math.max(s / _haCropImgNW, s / _haCropImgNH);
+  const newScale = minScale + (minScale * 2 - minScale) * (parseFloat(val) - 1) / 2;
+  const cx = s / 2, cy = s / 2;
+  _haCropX = cx - (cx - _haCropX) * (newScale / _haCropScale);
+  _haCropY = cy - (cy - _haCropY) * (newScale / _haCropScale);
+  _haCropScale = newScale;
+  _haCropApplyTransform();
+}
+
+function _haCropAttachEvents() {
+  const wrap = document.getElementById('ha-crop-wrap');
+  wrap.replaceWith(wrap.cloneNode(true));
+  const w2 = document.getElementById('ha-crop-wrap');
+  w2.addEventListener('mousedown', function(e) {
+    _haCropDragging = true; _haCropLastX = e.clientX; _haCropLastY = e.clientY;
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', function(e) {
+    if (!_haCropDragging) return;
+    _haCropX += e.clientX - _haCropLastX; _haCropY += e.clientY - _haCropLastY;
+    _haCropLastX = e.clientX; _haCropLastY = e.clientY;
+    _haCropApplyTransform();
+  });
+  document.addEventListener('mouseup', function() { _haCropDragging = false; });
+  var _lastDist = 0, _lastTX = 0, _lastTY = 0;
+  w2.addEventListener('touchstart', function(e) {
+    if (e.touches.length === 1) {
+      _lastTX = e.touches[0].clientX; _lastTY = e.touches[0].clientY;
+    } else if (e.touches.length === 2) {
+      _lastDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
+                             e.touches[0].clientY - e.touches[1].clientY);
+    }
+    e.preventDefault();
+  }, { passive: false });
+  w2.addEventListener('touchmove', function(e) {
+    if (e.touches.length === 1) {
+      const dx = e.touches[0].clientX - _lastTX, dy = e.touches[0].clientY - _lastTY;
+      _haCropX += dx; _haCropY += dy;
+      _lastTX = e.touches[0].clientX; _lastTY = e.touches[0].clientY;
+      _haCropApplyTransform();
+    } else if (e.touches.length === 2) {
+      const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
+                              e.touches[0].clientY - e.touches[1].clientY);
+      if (_lastDist > 0) {
+        const zoomEl = document.getElementById('ha-crop-zoom');
+        const newVal = Math.min(3, Math.max(1, parseFloat(zoomEl.value) * (dist / _lastDist)));
+        zoomEl.value = newVal;
+        hacropZoomChange(newVal);
+      }
+      _lastDist = dist;
+    }
+    e.preventDefault();
+  }, { passive: false });
+  w2.addEventListener('touchend', function() { _lastDist = 0; });
+}
+
+function hacroppingCancel() {
+  document.getElementById('ha-crop-modal').classList.remove('open');
+  _haCropFile = null;
+}
+
+async function hacroppingApply() {
+  const wrap = document.getElementById('ha-crop-wrap');
+  const s = wrap.offsetWidth;
+  const canvas = document.createElement('canvas');
+  canvas.width = 512; canvas.height = 512;
+  const ctx = canvas.getContext('2d');
+  ctx.beginPath();
+  ctx.arc(256, 256, 256, 0, Math.PI * 2);
+  ctx.clip();
+  const img = document.getElementById('ha-crop-image');
+  const imgX = _haCropX * (512 / s), imgY = _haCropY * (512 / s);
+  const imgW = _haCropImgNW * _haCropScale * (512 / s), imgH = _haCropImgNH * _haCropScale * (512 / s);
+  ctx.drawImage(img, imgX, imgY, imgW, imgH);
+
+  document.getElementById('ha-crop-modal').classList.remove('open');
+  const statusEl = document.getElementById('ha-avatar-upload-status');
+  if (statusEl) statusEl.textContent = '⏳ Загружаю...';
+
+  canvas.toBlob(async function(blob) {
+    const fd = new FormData();
+    fd.append('avatar', blob, 'avatar.jpg');
+    try {
+      const res = await fetch('/ha-app/api/my-avatar', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + API_TOKEN, 'X-HA-User': HA_USERNAME },
+        body: fd,
+      });
+      const data = await res.json();
+      if (data.ok) {
+        if (statusEl) statusEl.textContent = '✅ Аватар обновлён';
+        const avatarWrap = document.getElementById('ha-menu-avatar-wrap');
+        if (avatarWrap) {
+          const freshImg = new Image();
+          freshImg.onload = function() {
+            avatarWrap.innerHTML = '';
+            const i = document.createElement('img');
+            i.src = freshImg.src;
+            i.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%';
+            avatarWrap.appendChild(i);
+          };
+          freshImg.src = '/ha-app/api/user-avatar/' + encodeURIComponent(HA_USERNAME) + '?_t=' + Date.now();
+        }
+        setTimeout(function() { if (statusEl) statusEl.textContent = ''; }, 3000);
+      } else {
+        if (statusEl) statusEl.textContent = '❌ ' + (data.error || 'Ошибка');
+      }
+    } catch(e) {
+      if (statusEl) statusEl.textContent = '❌ ' + (e.message || 'Ошибка');
+    }
+  }, 'image/jpeg', 0.9);
 }
 
 async function openFriendsApp() {
