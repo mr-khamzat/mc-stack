@@ -6094,8 +6094,8 @@ function renderFamilyCards() {
     const badgeHtml = isUnknown
       ? `<span class="family-card-badge away" style="opacity:0.5">👤 Без трекинга</span>`
       : `<span class="family-card-badge ${isHome?'home':'away'}">${isHome?'🏠 Дома':'🚗 Не дома'}</span>`;
-    // Кнопка настройки (только для admin и не для себя)
-    const configBtn = (isAdmin && !isSelf)
+    // Кнопка настройки (только для admin, включая себя)
+    const configBtn = isAdmin
       ? `<button onclick="openFamilyMemberConfig('${escapeAttr(username)}','${escapeAttr(name)}')" title="Настроить" style="background:none;border:none;color:rgba(100,100,160,0.5);font-size:14px;cursor:pointer;padding:2px 4px;line-height:1">⚙️</button>`
       : '';
     return `<div class="family-card ${isHome?'home':''}">
