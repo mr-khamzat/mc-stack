@@ -1279,45 +1279,80 @@ body::before {
   cursor: pointer; display: flex; align-items: center; justify-content: center;
 }
 
-/* ── Call overlay ── */
-/* ── Call overlay — audio ─────────────────────────────────── */
+/* ── Call overlay ─────────────────────────────────────────── */
 .call-overlay {
-  position: fixed; inset: 0; z-index: 10000; background: rgba(0,0,0,0.88);
-  display: flex; align-items: center; justify-content: center;
+  position: fixed; inset: 0; z-index: 10000;
+  display: flex; align-items: stretch; justify-content: stretch;
 }
-.call-box {
-  display: flex; flex-direction: column; align-items: center; gap: 14px;
-  background: rgba(20,20,40,0.95); border: 1px solid rgba(99,102,241,0.35);
-  border-radius: 28px; padding: 32px 28px; width: 90%; max-width: 340px;
-  position: relative;
+/* Audio call — fullscreen iOS-style */
+.call-audio-full {
+  position: relative; width: 100%; display: flex; flex-direction: column; overflow: hidden;
+  background: linear-gradient(160deg, #1a1a3e 0%, #0f1928 50%, #162032 100%);
 }
-.call-avatar-wrap { position: relative; }
-.call-avatar {
-  width: 80px; height: 80px; border-radius: 50%;
+.call-audio-bg {
+  position: absolute; inset: -20px; z-index: 0;
+  background-size: cover; background-position: center;
+  filter: blur(28px) brightness(0.25) saturate(0.7);
+  transform: scale(1.15);
+}
+.call-audio-top {
+  position: relative; z-index: 2; text-align: center;
+  padding: max(env(safe-area-inset-top, 0px), 54px) 24px 0;
+}
+.call-audio-top .call-name {
+  font-size: 30px; font-weight: 700; color: #fff;
+  text-shadow: 0 2px 12px rgba(0,0,0,0.6); margin-bottom: 6px;
+}
+.call-audio-top .call-status {
+  font-size: 15px; color: rgba(200,210,255,0.85);
+  text-shadow: 0 1px 6px rgba(0,0,0,0.5);
+}
+.call-audio-center {
+  position: relative; z-index: 2;
+  flex: 1; display: flex; align-items: center; justify-content: center;
+}
+.call-avatar-xl {
+  width: 240px; height: 240px; border-radius: 50%;
   background: linear-gradient(135deg, #6366f1, #8b5cf6);
   display: flex; align-items: center; justify-content: center;
-  font-size: 32px; font-weight: 700; color: #fff;
-  position: relative; overflow: hidden;
+  font-size: 95px; font-weight: 700; color: #fff;
+  overflow: hidden; position: relative; z-index: 2;
+  border: 4px solid rgba(255,255,255,0.4);
+  box-shadow: 0 0 0 12px rgba(255,255,255,0.06), 0 10px 50px rgba(0,0,0,0.6);
 }
-@keyframes callPulse {
-  0%,100% { transform: scale(1); opacity: 0.5; }
-  50%      { transform: scale(1.45); opacity: 0; }
+.call-avatar-xl img { width: 100%; height: 100%; object-fit: cover; }
+.call-pulse-outer, .call-pulse-mid {
+  position: absolute; border-radius: 50%;
+  background: rgba(255,255,255,0.07);
+  animation: callPulseOut 2.2s ease-out infinite; z-index: 1;
 }
-.call-pulse-ring {
-  position: absolute; inset: -8px; border-radius: 50%;
-  border: 2px solid rgba(99,102,241,0.5);
-  animation: callPulse 1.8s ease-in-out infinite;
+.call-pulse-outer { width: 340px; height: 340px; animation-delay: 0s; }
+.call-pulse-mid   { width: 290px; height: 290px; animation-delay: 0.55s; }
+@keyframes callPulseOut {
+  0%   { transform: scale(1);    opacity: 0.8; }
+  100% { transform: scale(1.3);  opacity: 0;   }
 }
+.call-audio-bottom {
+  position: relative; z-index: 2;
+  display: flex; justify-content: center; align-items: flex-start; gap: 56px;
+  padding: 24px 24px max(env(safe-area-inset-bottom, 0px), 44px);
+}
+.call-action-col {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+}
+.call-circle-btn {
+  width: 72px; height: 72px; border-radius: 50%; border: none;
+  font-size: 26px; cursor: pointer; touch-action: manipulation;
+  display: flex; align-items: center; justify-content: center;
+  transition: transform .15s; box-shadow: 0 4px 24px rgba(0,0,0,0.45);
+}
+.call-circle-red   { background: #ef4444; }
+.call-circle-green { background: #22c55e; }
+.call-circle-mute  { background: rgba(255,255,255,0.18); backdrop-filter: blur(8px); }
+.call-circle-btn:active { transform: scale(0.88); }
+.call-circle-label { font-size: 12px; color: rgba(220,220,255,0.8); font-weight: 500; text-align: center; }
 .call-name { font-size: 22px; font-weight: 700; color: #e2e8f0; }
 .call-status { font-size: 13px; color: rgba(150,150,200,0.8); }
-.call-buttons { display: flex; gap: 12px; margin-top: 6px; }
-.call-btn {
-  padding: 12px 24px; border-radius: 30px; border: none; font-size: 14px;
-  font-weight: 700; cursor: pointer; transition: transform .15s; touch-action: manipulation;
-}
-.call-btn-accept { background: linear-gradient(135deg, #22c55e, #16a34a); color: #fff; }
-.call-btn-reject { background: linear-gradient(135deg, #ef4444, #dc2626); color: #fff; }
-.call-btn:active { transform: scale(0.92); }
 
 /* ── Call overlay — video (fullscreen FaceTime style) ─────── */
 .call-overlay.is-video {
@@ -1325,11 +1360,19 @@ body::before {
 }
 .call-video-wrap {
   position: relative; width: 100%; height: 100%; overflow: hidden;
+  flex: 1; min-height: 0;
 }
 #call-remote-video {
   position: absolute; inset: 0; width: 100%; height: 100%;
-  object-fit: cover; background: #111;
+  object-fit: cover; background: #111; z-index: 0;
 }
+/* Аватар-заглушка пока нет удалённого видео */
+.call-video-placeholder {
+  position: absolute; inset: 0; z-index: 1;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(160deg, #1a1a3e 0%, #0f1928 50%, #162032 100%);
+}
+.call-video-placeholder.hidden { display: none; }
 #call-local-video {
   position: absolute; bottom: 110px; right: 14px;
   width: 90px; height: 120px; border-radius: 14px;
@@ -4745,6 +4788,7 @@ async function doHaLogin() {
       try { const sc = await api('/scenes'); homeAwayUpdateSub(sc); } catch(_){}
       if (!_statusIntervalId) _statusIntervalId = setInterval(loadStatus, 30000);
       startSSE();
+      _swStoreHaToken();
       // Feature 10: show onboarding on first login
       setTimeout(_showOnboarding, 600);
       // Проверяем push-подписку после успешного входа (с задержкой, чтобы не мешать загрузке)
@@ -4960,15 +5004,26 @@ async function _initGuestApp() {
     );
   }
   startSSE();
+  _swStoreHaToken();
   setTimeout(_checkPendingCall, 1200);
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.addEventListener('message', function(e) {
-      if (e.data && e.data.type === 'incoming-call') setTimeout(_checkPendingCall, 300);
+      if (!e.data) return;
+      if (e.data.type === 'incoming-call') {
+        if (e.data.auto_answer) _haAutoAnswer = true;
+        setTimeout(_checkPendingCall, 300);
+      } else if (e.data.type === 'call-rejected-by-sw') {
+        _stopCallAudio();
+        if (_rtcPeer) { _rtcPeer.close(); _rtcPeer = null; }
+        _rtcCallTarget = null; _rtcOfferSdp = null; _rtcIceQueue = [];
+        const overlay = document.getElementById('call-overlay');
+        if (overlay) overlay.remove();
+      }
     });
   }
-  if (new URLSearchParams(location.search).get('incoming_call')) {
-    setTimeout(_checkPendingCall, 800);
-  }
+  const _guestParams = new URLSearchParams(location.search);
+  if (_guestParams.get('auto_answer') === '1') { _haAutoAnswer = true; history.replaceState({}, '', location.pathname); }
+  if (_guestParams.get('incoming_call')) setTimeout(_checkPendingCall, 800);
 }
 
 async function _loadGuestWeather(lat, lon) {
@@ -5051,10 +5106,13 @@ async function _loadGuestWeather(lat, lon) {
 
 async function _loadGuestPrayers(lat, lon) {
   try {
-    var today = new Date();
-    var m = today.getMonth()+1, day = today.getDate(), y = today.getFullYear();
+    // Use Grozny/Moscow time (UTC+3) for correct date and past/next calculation
+    var mskOffset = 3 * 60; // UTC+3 in minutes
+    var nowUtcMs  = Date.now() + new Date().getTimezoneOffset() * 60000;
+    var mskDate   = new Date(nowUtcMs + mskOffset * 60000);
+    var m = mskDate.getMonth()+1, day = mskDate.getDate(), y = mskDate.getFullYear();
     var url = 'https://api.aladhan.com/v1/timings/'+day+'-'+m+'-'+y+
-              '?latitude='+lat+'&longitude='+lon+'&method=3';
+              '?latitude='+lat+'&longitude='+lon+'&method=3&school=1&timezonestring=Europe%2FMoscow';
     var res  = await fetch(url);
     var data = await res.json();
     var timings = data.data && data.data.timings;
@@ -5066,7 +5124,7 @@ async function _loadGuestPrayers(lat, lon) {
       {key:'Maghrib', name:'Магриб', icon:'🌆'},
       {key:'Isha',    name:'Иша',    icon:'🌙'},
     ];
-    var now = new Date(), nowMin = now.getHours()*60 + now.getMinutes(), nextIdx = -1;
+    var nowMin = mskDate.getHours()*60 + mskDate.getMinutes(), nextIdx = -1;
     var parsed = PRAYERS.map(function(p, i) {
       var t = timings[p.key] || '00:00', parts = t.split(':');
       var h = parseInt(parts[0])||0, min = parseInt(parts[1])||0;
@@ -5156,18 +5214,25 @@ async function init() {
   // Проверяем push-подписку после загрузки приложения
   setTimeout(_restorePushIfNeeded, 4000);
 
-  // Слушаем сообщения от Service Worker (входящий звонок при клике на push-уведомление)
+  // Слушаем сообщения от Service Worker
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.addEventListener('message', function(e) {
-      if (e.data && e.data.type === 'incoming-call') {
+      if (!e.data) return;
+      if (e.data.type === 'incoming-call') {
+        if (e.data.auto_answer) _haAutoAnswer = true;
         setTimeout(_checkPendingCall, 300);
+      } else if (e.data.type === 'call-rejected-by-sw') {
+        _stopCallAudio();
+        if (_rtcPeer) { _rtcPeer.close(); _rtcPeer = null; }
+        _rtcCallTarget = null; _rtcOfferSdp = null; _rtcIceQueue = [];
+        const overlay = document.getElementById('call-overlay');
+        if (overlay) overlay.remove();
       }
     });
   }
-  // Если приложение открыто по ссылке с incoming_call=1 — сразу проверить звонок
-  if (new URLSearchParams(location.search).get('incoming_call')) {
-    setTimeout(_checkPendingCall, 800);
-  }
+  const _mainParams = new URLSearchParams(location.search);
+  if (_mainParams.get('auto_answer') === '1') { _haAutoAnswer = true; history.replaceState({}, '', location.pathname); }
+  if (_mainParams.get('incoming_call')) setTimeout(_checkPendingCall, 800);
 }
 
 // ── Отправка команд в Home Assistant ─────────────────────────────────────
@@ -5899,7 +5964,15 @@ function _playHangupSound() {
 function _attachRemoteStream(stream) {
   // Video
   const rv = document.getElementById('call-remote-video');
-  if (rv) { rv.srcObject = stream; rv.play().catch(()=>{}); }
+  if (rv) {
+    rv.srcObject = stream;
+    rv.play().catch(()=>{});
+    // Скрываем аватар-заглушку когда remote видео заиграло
+    rv.onloadedmetadata = function() {
+      const ph = document.getElementById('call-video-placeholder');
+      if (ph) ph.classList.add('hidden');
+    };
+  }
   // Audio — always needed (audio-only calls + iOS requires explicit <audio>)
   let au = document.getElementById('call-remote-audio');
   if (!au) {
@@ -6175,15 +6248,21 @@ async function acceptCall() {
     await _sendCallSignal(_rtcCallTarget.username, 'answer', { sdp: ansDesc.sdp, type: ansDesc.type });
     _setCallStatus('🔄 Подключение...');
 
-    // Update buttons — hide accept, reveal camera switch
+    // Update buttons — hide accept, reveal camera switch / mute
     const acceptBtn = document.getElementById('call-accept-btn');
     if (acceptBtn) acceptBtn.style.display = 'none';
+    const acceptCol = document.getElementById('call-accept-col');
+    if (acceptCol) acceptCol.style.display = 'none';
+    const muteCol = document.getElementById('call-mute-col');
+    if (muteCol) muteCol.style.display = '';
     const videoAcceptBtn = document.getElementById('call-video-accept-btn');
     if (videoAcceptBtn) videoAcceptBtn.style.display = 'none';
     const cameraBtn = document.getElementById('call-camera-btn');
     if (cameraBtn) cameraBtn.style.display = '';
     const rejectBtn = document.getElementById('call-reject-btn');
-    if (rejectBtn) { rejectBtn.textContent = '⏹ Завершить'; rejectBtn.onclick = endCall; }
+    if (rejectBtn) { rejectBtn.textContent = '📵'; rejectBtn.onclick = endCall; }
+    const rejectLabel = document.getElementById('call-reject-label');
+    if (rejectLabel) rejectLabel.textContent = 'Завершить';
   } catch(e) {
     showToast('❌ ' + e.message);
     rejectCall();
@@ -6283,6 +6362,8 @@ function endCall() {
   if (au) { au.srcObject = null; au.remove(); }
 }
 
+let _haAutoAnswer = false;
+
 async function _checkPendingCall() {
   if (_rtcPeer) return;
   try {
@@ -6295,7 +6376,20 @@ async function _checkPendingCall() {
     _rtcIceQueue    = call.ice_candidates ? [...call.ice_candidates] : [];
     _rtcRemoteReady = false;
     _showCallUI('incoming', call.from_display || call.from_user, _rtcCallType, call.from_user);
+    // Авто-ответ при нажатии «Ответить» прямо в уведомлении
+    if (_haAutoAnswer) {
+      _haAutoAnswer = false;
+      setTimeout(function() { if (_rtcOfferSdp && !_rtcPeer) acceptCall(); }, 600);
+    }
   } catch(_) {}
+}
+
+// Сохраняем токен в SW IndexedDB для reject без открытия приложения
+function _swStoreHaToken() {
+  if (!API_TOKEN || !('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.ready.then(function(reg) {
+    if (reg.active) reg.active.postMessage({ type: 'store-ha-token', token: API_TOKEN, username: HA_USERNAME });
+  }).catch(function(){});
 }
 
 function _showCallUI(mode, name, type, username) {
@@ -6320,9 +6414,11 @@ function _showCallUI(mode, name, type, username) {
       <div class="call-video-wrap">
         <video id="call-remote-video" autoplay playsinline></video>
         <video id="call-local-video"  autoplay playsinline muted></video>
+        <div id="call-video-placeholder" class="call-video-placeholder">
+          <div class="call-avatar-xl" id="call-vid-avatar">${escapeHtml(initLetter)}</div>
+        </div>
         <div class="call-video-top">
           <div style="display:flex;align-items:center;gap:8px;justify-content:center">
-            <div id="call-vid-avatar" style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#8b5cf6);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:#fff;overflow:hidden;flex-shrink:0;border:2px solid rgba(255,255,255,0.3)">${escapeHtml(initLetter)}</div>
             <div class="call-name">${escapeHtml(name)}</div>
             <span id="call-quality" style="font-size:11px;letter-spacing:1px;font-weight:700"></span>
           </div>
@@ -6340,25 +6436,38 @@ function _showCallUI(mode, name, type, username) {
   } else {
     overlay.className = 'call-overlay';
     overlay.innerHTML = `
-      <div class="call-box">
-        <div class="call-avatar-wrap">
-          <div class="call-avatar" id="call-audio-avatar">${escapeHtml(initLetter)}</div>
-          <div class="call-pulse-ring"></div>
+      <div class="call-audio-full">
+        <div class="call-audio-bg" id="call-audio-bg"></div>
+        <div class="call-audio-top">
+          <div class="call-name">${escapeHtml(name)}</div>
+          <div style="display:flex;align-items:center;gap:8px;justify-content:center;margin-top:4px">
+            <div class="call-status" id="call-status">${statusText}</div>
+            <span id="call-quality" style="font-size:11px;letter-spacing:1px;font-weight:700;color:#fff"></span>
+          </div>
         </div>
-        <div class="call-name">${escapeHtml(name)}</div>
-        <div style="display:flex;align-items:center;gap:8px;justify-content:center">
-          <div class="call-status" id="call-status">${statusText}</div>
-          <span id="call-quality" style="font-size:11px;letter-spacing:1px;font-weight:700"></span>
+        <div class="call-audio-center">
+          <div class="call-pulse-outer"></div>
+          <div class="call-pulse-mid"></div>
+          <div class="call-avatar-xl" id="call-audio-avatar">${escapeHtml(initLetter)}</div>
         </div>
-        <div style="font-size:44px;margin:8px 0">🎙️</div>
-        <div class="call-buttons">
-          ${isIncoming ? `<button id="call-accept-btn" class="call-btn call-btn-accept" onclick="acceptCall()">✅ Принять</button>` : ''}
-          <button id="call-reject-btn" class="call-btn call-btn-reject"
-            onclick="${isIncoming ? 'rejectCall()' : 'endCall()'}">
-            ${isIncoming ? '❌ Отклонить' : '⏹ Завершить'}
-          </button>
+        <div class="call-audio-bottom">
+          <div class="call-action-col" id="call-mute-col" style="${isIncoming ? 'display:none' : ''}">
+            <button class="call-circle-btn call-circle-mute" id="call-mute-btn" onclick="_toggleMute()">🎤</button>
+            <span class="call-circle-label">Микрофон</span>
+          </div>
+          <div class="call-action-col">
+            <button id="call-reject-btn" class="call-circle-btn call-circle-red"
+              onclick="${isIncoming ? 'rejectCall()' : 'endCall()'}">📵</button>
+            <span class="call-circle-label" id="call-reject-label">${isIncoming ? 'Отклонить' : 'Завершить'}</span>
+          </div>
+          <div class="call-action-col" id="call-accept-col" style="${isIncoming ? '' : 'display:none'}">
+            <button id="call-accept-btn" class="call-circle-btn call-circle-green" onclick="acceptCall()">📞</button>
+            <span class="call-circle-label">Принять</span>
+          </div>
         </div>
       </div>`;
+    const bgEl = document.getElementById('call-audio-bg');
+    if (bgEl && username) bgEl.style.backgroundImage = `url('/ha-app/api/user-avatar/${encodeURIComponent(username)}?_t=${Date.now()}')`;
     if (username) _loadAvatarInto(document.getElementById('call-audio-avatar'), username);
   }
 }
