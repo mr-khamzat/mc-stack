@@ -2644,13 +2644,16 @@ body.fab-open .fab-backdrop { display: block; }
 .timeline-time { font-size:11px; color:#475569; flex-shrink:0; }
 
 /* ── Shopping redesign ─────────────────────────────────────────────────────── */
-.shop-tabs { display:flex; gap:4px; margin-bottom:12px; background:rgba(255,255,255,0.04); border-radius:12px; padding:4px; }
-.shop-tab {
-  flex:1; padding:8px 4px; background:none; border:none; border-radius:9px; color:#64748b;
-  font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s; font-family:inherit;
-}
-.shop-tab.active { background:rgba(99,102,241,0.25); color:#a5b4fc; }
-.shop-quick-row { display:flex; gap:8px; overflow-x:auto; padding-bottom:6px; margin-bottom:10px; scrollbar-width:none; }
+.shop-header-badge { display:inline-block; min-width:18px; height:18px; line-height:18px; border-radius:9px; background:var(--accent); color:#fff; font-size:11px; font-weight:700; text-align:center; padding:0 5px; margin-left:6px; vertical-align:middle; }
+.shop-filter-row { display:flex; gap:6px; overflow-x:auto; padding:12px 12px 8px; scrollbar-width:none; }
+.shop-filter-row::-webkit-scrollbar { display:none; }
+.shop-filter-chip { padding:6px 14px; border-radius:20px; border:1px solid rgba(255,255,255,0.10); background:rgba(255,255,255,0.04); color:#94a3b8; font-size:13px; font-weight:500; cursor:pointer; white-space:nowrap; transition:all 0.15s; font-family:inherit; }
+.shop-filter-chip.active { background:rgba(99,102,241,0.2); border-color:rgba(99,102,241,0.4); color:#a5b4fc; }
+.shop-progress-bar { height:3px; border-radius:2px; background:rgba(255,255,255,0.06); margin:0 12px 8px; overflow:hidden; }
+.shop-progress-fill { height:100%; border-radius:2px; background:linear-gradient(90deg,var(--accent),#34d399); transition:width 0.4s ease; }
+.shop-tabs { display:none; }
+.shop-tab { display:none; }
+.shop-quick-row { display:flex; gap:8px; overflow-x:auto; padding:0 12px 8px; scrollbar-width:none; }
 .shop-quick-row::-webkit-scrollbar { display:none; }
 .shop-quick-chip {
   display:flex; align-items:center; gap:5px; background:rgba(255,255,255,0.05);
@@ -2660,14 +2663,20 @@ body.fab-open .fab-backdrop { display: block; }
 .shop-quick-chip:active { background:rgba(99,102,241,0.2); transform:scale(0.96); }
 .shop-quick-chip.add-new { border-style:dashed; color:#6366f1; }
 .shop-item-row {
-  display:flex; align-items:center; gap:8px; padding:10px 0;
-  border-bottom:1px solid rgba(255,255,255,0.05); transition:opacity 0.3s, transform 0.3s;
+  display:flex; align-items:center; gap:10px; padding:11px 12px;
+  border-bottom:1px solid rgba(255,255,255,0.04); transition:opacity 0.3s, transform 0.3s;
 }
+.shop-item-row:last-child { border-bottom:none; }
 .shop-item-row.completing { opacity:0; transform:translateX(30px); }
-.shop-item-emoji { font-size:18px; width:24px; text-align:center; flex-shrink:0; }
+.shop-item-check { width:22px; height:22px; border-radius:50%; border:2px solid rgba(255,255,255,0.15); background:none; cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center; transition:all 0.15s; }
+.shop-item-check:active { transform:scale(0.88); }
+.shop-item-emoji { font-size:20px; width:26px; text-align:center; flex-shrink:0; }
 .shop-item-body { flex:1; min-width:0; }
 .shop-item-name { font-size:14px; color:#e2e8f0; }
 .shop-item-qty { font-size:11px; color:#6366f1; font-weight:600; margin-left:4px; }
+.shop-add-bar { display:flex; gap:8px; padding:10px 12px 4px; border-top:1px solid rgba(255,255,255,0.05); margin-top:4px; }
+.shop-add-input { flex:1; padding:10px 14px; border-radius:12px; border:1px solid rgba(255,255,255,0.10); background:rgba(255,255,255,0.05); color:#e2e8f0; font-size:14px; font-family:inherit; outline:none; }
+.shop-add-input:focus { border-color:rgba(99,102,241,0.5); background:rgba(99,102,241,0.06); }
 .shop-priority-btn { font-size:14px; cursor:pointer; flex-shrink:0; padding:2px; background:none; border:none; opacity:0.6; }
 .shop-priority-btn.urgent { opacity:1; }
 .shop-assign-badge { font-size:11px; background:rgba(99,102,241,0.15); color:#a5b4fc; border-radius:20px; padding:3px 9px; white-space:nowrap; flex-shrink:0; }
@@ -3080,7 +3089,6 @@ body.fab-open .fab-backdrop { display: block; }
     <div style="display:flex;align-items:center;gap:8px">
       <span class="last-updated" id="last-updated">—</span>
       <button id="edit-mode-btn" onclick="editModeToggle()" title="Редактировать разделы">✏️</button>
-      <button id="le-open-btn" onclick="leOpen()" title="Редактор интерфейса" style="font-size:16px">🎛️</button>
       <button id="theme-btn" onclick="themePickerToggle()" title="Сменить тему">🎨</button>
       <div id="user-badge" onclick="showUserMenu()" title="Аккаунт"
         style="display:flex;align-items:center;gap:6px;cursor:pointer;
@@ -3654,52 +3662,73 @@ body.fab-open .fab-backdrop { display: block; }
   <!-- SHOPPING LIST -->
   <div class="section" data-section-perm="shopping" data-page="family">
     <div class="section-header" onclick="toggleSection('sec-shopping-body'); if(!_shoppingLoaded) loadShopping()">
-      <span>🛒 Список покупок</span>
-      <span class="chevron">▾</span>
+      <div style="display:flex;align-items:center;gap:4px">
+        <span>🛒 Покупки</span>
+        <span class="shop-header-badge" id="shop-header-badge" style="display:none"></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <button onclick="event.stopPropagation();shopFocusAdd()" style="background:none;border:none;font-size:18px;cursor:pointer;padding:2px;line-height:1;opacity:0.7">＋</button>
+        <span class="chevron">▾</span>
+      </div>
     </div>
     <div class="section-body" id="sec-shopping-body">
-      <div class="section-content">
-        <!-- Tabs -->
-        <div class="shop-tabs">
-          <button class="shop-tab active" id="stab-list"     onclick="shopTab('list')">📋 Список</button>
-          <button class="shop-tab"        id="stab-assigned" onclick="shopTab('assigned')">👤 Назначено</button>
-          <button class="shop-tab"        id="stab-history"  onclick="shopTab('history')">📜 История</button>
-          <button class="shop-tab"        id="stab-stats"    onclick="shopTab('stats')">📊 Статистика</button>
-        </div>
-        <!-- Add item row (list tab only) -->
-        <div id="shop-add-row" style="display:flex;gap:8px;margin-bottom:10px">
-          <input id="shopping-new-input" type="text" placeholder="Добавить товар..." autocomplete="off"
-            style="flex:1;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.05);color:#e2e8f0;font-size:14px;font-family:inherit;outline:none"
-            onkeydown="if(event.key==='Enter')shopAddItem()">
-          <button class="btn btn-primary" style="padding:10px 14px" onclick="shopAddItem()">➕</button>
-          <button class="btn btn-neutral" style="padding:10px 12px" onclick="loadShopping()">🔄</button>
-        </div>
-        <!-- Quick items row -->
-        <div class="shop-quick-row" id="shop-quick-row"></div>
-        <!-- Bulk assign bar -->
-        <div id="shop-bulk-bar" style="display:none;margin-bottom:10px">
-          <button class="btn btn-primary" style="width:100%" onclick="shopAssignSelected()">
-            👥 Назначить выбранные (<span id="shop-sel-count">0</span>)
-          </button>
-        </div>
-        <!-- Tab panels -->
-        <div id="shop-panel-list">
-          <div id="shopping-items-list"><div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Откройте для загрузки</div></div>
-        </div>
-        <div id="shop-panel-assigned" style="display:none">
-          <div id="shopping-assignments-list"></div>
-        </div>
-        <div id="shop-panel-history" style="display:none">
-          <div id="shopping-history-list"><div style="color:#60608a;font-size:13px;text-align:center;padding:20px">Нажмите для загрузки</div></div>
-        </div>
-        <div id="shop-panel-stats" style="display:none">
-          <div id="shopping-stats-content"><div style="color:#60608a;font-size:13px;text-align:center;padding:20px">Нажмите для загрузки</div></div>
-        </div>
+      <!-- Hidden tab buttons (JS needs IDs) -->
+      <div style="display:none">
+        <button id="stab-list">list</button><button id="stab-assigned">assigned</button>
+        <button id="stab-history">history</button><button id="stab-stats">stats</button>
+      </div>
+      <!-- Filter chips -->
+      <div class="shop-filter-row">
+        <button class="shop-filter-chip active" id="sfil-list"     onclick="shopFilter('list')">📋 Список</button>
+        <button class="shop-filter-chip"        id="sfil-assigned" onclick="shopFilter('assigned')">👥 Назначено</button>
+        <button class="shop-filter-chip"        id="sfil-history"  onclick="shopFilter('history')">📜 История</button>
+        <button class="shop-filter-chip"        id="sfil-stats"    onclick="shopFilter('stats')">📊 Статистика</button>
+        <button class="shop-filter-chip" onclick="loadShopping()" style="margin-left:auto">🔄</button>
+      </div>
+      <!-- Progress bar (list view only) -->
+      <div class="shop-progress-bar" id="shop-progress-wrap" style="display:none">
+        <div class="shop-progress-fill" id="shop-progress-fill" style="width:0%"></div>
+      </div>
+      <!-- Quick items row -->
+      <div class="shop-quick-row" id="shop-quick-row"></div>
+      <!-- Bulk assign bar -->
+      <div id="shop-bulk-bar" style="display:none;padding:0 12px 8px">
+        <button class="btn btn-primary" style="width:100%" onclick="shopAssignSelected()">
+          👥 Назначить выбранные (<span id="shop-sel-count">0</span>)
+        </button>
+      </div>
+      <!-- Tab panels -->
+      <div id="shop-panel-list">
+        <div id="shopping-items-list"><div style="color:#60608a;font-size:13px;text-align:center;padding:16px">Откройте для загрузки</div></div>
+      </div>
+      <div id="shop-panel-assigned" style="display:none;padding:0 12px">
+        <div id="shopping-assignments-list"></div>
+      </div>
+      <div id="shop-panel-history" style="display:none;padding:0 12px">
+        <div id="shopping-history-list"><div style="color:#60608a;font-size:13px;text-align:center;padding:20px">Нажмите для загрузки</div></div>
+      </div>
+      <div id="shop-panel-stats" style="display:none;padding:0 12px">
+        <div id="shopping-stats-content"><div style="color:#60608a;font-size:13px;text-align:center;padding:20px">Нажмите для загрузки</div></div>
+      </div>
+      <!-- Add bar (bottom) -->
+      <div id="shop-add-row" class="shop-add-bar">
+        <input id="shopping-new-input" type="text" placeholder="Добавить товар..." autocomplete="off"
+          class="shop-add-input" onkeydown="if(event.key==='Enter')shopAddItem()">
+        <button class="btn btn-primary" style="padding:10px 16px;border-radius:12px;font-size:18px;line-height:1" onclick="shopAddItem()">＋</button>
       </div>
     </div>
   </div>
 
   <!-- SECURITY PANEL -->
+  <!-- Layout editor entry point — lives in Control tab -->
+  <div class="section" data-page="control" id="sec-layout-editor-entry" style="margin-bottom:4px">
+    <button id="le-open-btn" onclick="leOpen()" style="width:100%;padding:14px 18px;border-radius:14px;border:1px solid rgba(255,255,255,0.10);background:rgba(255,255,255,0.05);color:rgba(200,200,230,0.85);font-size:15px;cursor:pointer;font-family:inherit;text-align:left;display:flex;align-items:center;gap:10px">
+      <span style="font-size:20px">🎛️</span>
+      <div><div style="font-weight:600">Редактор интерфейса</div><div style="font-size:12px;color:rgba(255,255,255,0.45);margin-top:2px">Расположение разделов, иконки вкладок</div></div>
+      <span style="margin-left:auto;color:rgba(255,255,255,0.3);font-size:18px">›</span>
+    </button>
+  </div>
+
   <div class="section" data-page="control" id="sec-security-section">
     <div class="section-header" onclick="toggleSection('sec-security-body');loadSecurityPanel()">
       <span>🔒 Безопасность</span>
@@ -8222,9 +8251,16 @@ function _shopItemEmoji(name) {
   return '🛒';
 }
 
-// ── Shopping tabs ─────────────────────────────────────────────────────────────
+// ── Shopping tabs / filters ────────────────────────────────────────────────────
 let _shopCurrentTab = 'list';
 let _shopMetaCache  = {};   // uid → {priority, quantity}
+
+function shopFilter(tab) {
+  shopTab(tab);
+  ['list','assigned','history','stats'].forEach(t => {
+    document.getElementById('sfil-' + t)?.classList.toggle('active', t === tab);
+  });
+}
 
 function shopTab(tab) {
   _shopCurrentTab = tab;
@@ -8235,11 +8271,22 @@ function shopTab(tab) {
   });
   const addRow   = document.getElementById('shop-add-row');
   const quickRow = document.getElementById('shop-quick-row');
+  const progWrap = document.getElementById('shop-progress-wrap');
   if (addRow)   addRow.style.display   = tab === 'list' ? 'flex' : 'none';
   if (quickRow) quickRow.style.display = tab === 'list' ? 'flex' : 'none';
+  if (progWrap) progWrap.style.display = tab === 'list' ? '' : 'none';
   if (tab === 'history') loadShopHistory();
   if (tab === 'stats')   loadShopStats();
   if (tab === 'assigned' && _shoppingLoaded) renderShopAssigned();
+}
+
+function shopFocusAdd() {
+  const sec = document.getElementById('sec-shopping-body');
+  if (sec && !sec.classList.contains('open')) {
+    toggleSection('sec-shopping-body');
+    if (!_shoppingLoaded) loadShopping();
+  }
+  setTimeout(() => document.getElementById('shopping-new-input')?.focus(), 200);
 }
 
 async function loadShopQuick() {
@@ -8401,7 +8448,20 @@ async function loadShopping() {
 
     const assignedMap = {};
     (assignments||[]).forEach(a => { assignedMap[a.item_text] = a; });
-    const pending = (items||[]).filter(i => i.status !== 'completed');
+    const pending   = (items||[]).filter(i => i.status !== 'completed');
+    const completed = (items||[]).filter(i => i.status === 'completed');
+
+    // Badge + progress bar
+    const badge = document.getElementById('shop-header-badge');
+    if (badge) { badge.textContent = pending.length; badge.style.display = pending.length ? '' : 'none'; }
+    const fill = document.getElementById('shop-progress-fill');
+    const wrap = document.getElementById('shop-progress-wrap');
+    if (fill && wrap) {
+      const total = items.length;
+      const pct   = total > 0 ? Math.round(completed.length / total * 100) : 0;
+      fill.style.width = pct + '%';
+      wrap.style.display = (_shopCurrentTab === 'list' && total > 0) ? '' : 'none';
+    }
 
     // Sort: urgent first
     pending.sort((a,b) => ((_shopMetaCache[b.uid]||{}).priority||0) - ((_shopMetaCache[a.uid]||{}).priority||0));
@@ -11312,7 +11372,7 @@ var _LAYOUT_DEFAULTS = {
     {id:'prayers',  page:'more',    visible:true,  order:0, icon:'🕌', title:'Намаз'},
     {id:'weather',  page:'more',    visible:true,  order:1, icon:'🌤️', title:'Погода'},
     {id:'shopping', page:'family',  visible:true,  order:3, icon:'🛒', title:'Покупки'},
-    {id:'admin',    page:'data',    visible:false, order:3, icon:'👑', title:'Администрирование'},
+    {id:'admin',    page:'data',    visible:true,  order:3, icon:'👑', title:'Администрирование'},
   ],
   nav: [
     {id:'home',    icon:'🏠', label:'Главная'},
@@ -11339,7 +11399,7 @@ var _layoutCfg = null;
 function _layoutLoad() {
   if (_layoutCfg) return _layoutCfg;
   try {
-    var saved = localStorage.getItem('ha_layout_v2');
+    var saved = localStorage.getItem('ha_layout_v3');
     if (saved) { _layoutCfg = JSON.parse(saved); return _layoutCfg; }
   } catch(e) {}
   _layoutCfg = JSON.parse(JSON.stringify(_LAYOUT_DEFAULTS));
@@ -11347,7 +11407,7 @@ function _layoutLoad() {
 }
 
 function _layoutSave() {
-  try { localStorage.setItem('ha_layout_v2', JSON.stringify(_layoutCfg)); } catch(e) {}
+  try { localStorage.setItem('ha_layout_v3', JSON.stringify(_layoutCfg)); } catch(e) {}
 }
 
 function _getSectionEl(id) {
@@ -11576,7 +11636,7 @@ function leNavLabel(navId, val) {
 
 function leReset() {
   if (!confirm('Сбросить все настройки интерфейса к заводским?')) return;
-  localStorage.removeItem('ha_layout_v2');
+  localStorage.removeItem('ha_layout_v3');
   _layoutCfg = JSON.parse(JSON.stringify(_LAYOUT_DEFAULTS));
   applyLayout();
   leRender();
