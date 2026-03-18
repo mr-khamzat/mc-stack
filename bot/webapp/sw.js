@@ -1,5 +1,5 @@
 // Service Worker — Умный Дом PWA
-const CACHE = 'smarthome-v32';
+const CACHE = 'smarthome-v33';
 
 // ── IndexedDB helpers (хранение HA-токена для reject из SW) ───────────────
 const _IDB_NAME  = 'ha-sw';

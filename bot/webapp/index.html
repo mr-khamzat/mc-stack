@@ -2379,6 +2379,64 @@ body.fab-open .fab-items { pointer-events: all; opacity: 1; transform: none; }
 }
 body.fab-open .fab-backdrop { display: block; }
 
+/* ── Quick Sheet (FAB → slide-up panel) ─────────────────────────────────── */
+.qs-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.5); z-index: 400;
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+}
+.qs-overlay.open { display: block; }
+.quick-sheet {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: #0d0d24;
+  border-radius: 24px 24px 0 0;
+  z-index: 401; transform: translateY(110%);
+  transition: transform 0.34s cubic-bezier(0.32,0.72,0,1);
+  border-top: 1px solid rgba(255,255,255,0.09);
+  box-shadow: 0 -8px 40px rgba(0,0,0,0.6);
+  max-height: 82vh; overflow-y: auto;
+  padding-bottom: max(env(safe-area-inset-bottom,0px), 20px);
+}
+.quick-sheet.open { transform: translateY(0); }
+.qs-handle { width: 40px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.18); margin: 12px auto 4px; }
+.qs-title { font-size: 12px; font-weight: 700; color: rgba(120,120,180,0.5); text-transform: uppercase; letter-spacing: 0.8px; padding: 2px 20px 10px; }
+.qs-section { padding: 0 16px 16px; }
+.qs-section-label { font-size: 11px; color: rgba(120,120,180,0.45); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px; font-weight: 600; }
+.qs-lights-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
+.qs-light-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 10px 4px 8px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.07);
+  background: rgba(255,255,255,0.04); cursor: pointer;
+  font-size: 10px; color: rgba(130,130,180,0.6); font-family: inherit; font-weight: 600;
+  line-height: 1.2; text-align: center;
+  transition: all 0.15s; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+.qs-light-btn .qs-li { font-size: 20px; }
+.qs-light-btn.on { background: rgba(251,191,36,0.14); border-color: rgba(251,191,36,0.33); color: #fbbf24; }
+.qs-light-btn:active { transform: scale(0.88); }
+.qs-scenes-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+.qs-scenes-strip::-webkit-scrollbar { display: none; }
+.qs-scene-chip {
+  flex-shrink: 0; display: flex; align-items: center; gap: 6px;
+  padding: 8px 14px; border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.09); background: rgba(255,255,255,0.05);
+  color: rgba(200,200,240,0.85); font-size: 13px; font-weight: 600;
+  cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  transition: all 0.15s; font-family: inherit;
+}
+.qs-scene-chip:active { transform: scale(0.92); }
+.qs-actions-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.qs-action-btn {
+  padding: 13px 8px; border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.05);
+  color: rgba(200,200,240,0.85); font-size: 13px; font-weight: 600;
+  cursor: pointer; touch-action: manipulation; font-family: inherit;
+  transition: all 0.15s; -webkit-tap-highlight-color: transparent; text-align: center;
+}
+.qs-action-btn:active { transform: scale(0.93); background: rgba(255,255,255,0.1); }
+.qs-action-btn.danger { border-color: rgba(239,68,68,0.25); background: rgba(239,68,68,0.07); color: #fca5a5; }
+.qs-action-btn.indigo { border-color: rgba(99,102,241,0.28); background: rgba(99,102,241,0.08); color: #a5b4fc; }
+
 /* ── Timer sheet ────────────────────────────────────────────────────────── */
 .timer-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 902; -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
 .timer-overlay.open { display: block; }
@@ -2512,15 +2570,51 @@ body.fab-open .fab-backdrop { display: block; }
 .phone-chip.bat-ok   { background:rgba(52,211,153,0.1);  border-color:rgba(52,211,153,0.2);  color:#34d399; }
 .phone-chip.charging { background:rgba(99,102,241,0.1);  border-color:rgba(99,102,241,0.25); color:#a5b4fc; }
 
+/* ── Family presence bar ─────────────────────────────────────────────────── */
+#family-presence-bar {
+  display: flex; gap: 8px; overflow-x: auto; padding: 0 0 10px;
+  scrollbar-width: none;
+}
+#family-presence-bar::-webkit-scrollbar { display: none; }
+.fpb-pill {
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+  padding: 5px 12px 5px 6px; border-radius: 20px;
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07);
+  cursor: pointer; transition: border-color 0.2s, background 0.2s;
+  -webkit-tap-highlight-color: transparent;
+}
+.fpb-pill.home { background: rgba(52,211,153,0.07); border-color: rgba(52,211,153,0.22); }
+.fpb-av {
+  width: 24px; height: 24px; border-radius: 50%;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; color: #fff; flex-shrink: 0; position: relative;
+}
+.fpb-av.home { background: linear-gradient(135deg, #10b981, #059669); }
+.fpb-dot {
+  position: absolute; bottom: -1px; right: -1px;
+  width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid #0d0d24;
+  background: #4b5563;
+}
+.fpb-dot.home { background: #34d399; }
+.fpb-name { font-size: 12px; font-weight: 600; color: rgba(160,160,220,0.8); }
+.fpb-pill.home .fpb-name { color: #6ee7b7; }
+
 /* ── Family tabs ─────────────────────────────────────────────────────────── */
 .family-tabs-bar {
-  display:flex; gap:6px; margin-top:14px; background:rgba(255,255,255,0.04);
+  display:flex; gap:4px; margin-top:14px; background:rgba(255,255,255,0.04);
   border-radius:12px; padding:4px;
 }
 .family-tab-btn {
-  flex:1; padding:8px 6px; font-size:12px; font-weight:600; cursor:pointer;
-  border:none; border-radius:9px; background:transparent; color:rgba(150,150,200,0.7);
-  transition:all 0.18s; touch-action:manipulation;
+  flex:1; padding:8px 4px; font-size:11px; font-weight:600; cursor:pointer;
+  border:none; border-radius:9px; background:transparent; color:rgba(140,140,190,0.65);
+  transition:all 0.18s; touch-action:manipulation; position:relative; font-family:inherit;
+}
+.family-tab-btn .nav-badge {
+  position: absolute; top: 1px; right: 2px;
+  background: #ef4444; color: #fff; font-size: 9px; font-weight: 700;
+  border-radius: 20px; padding: 0 4px; min-width: 14px; line-height: 14px;
+  text-align: center; pointer-events: none;
 }
 .family-tab-btn.active { background:rgba(99,102,241,0.3); color:#c4b5fd; }
 .family-tab-pane { margin-top:12px; }
@@ -2913,6 +3007,8 @@ body.fab-open .fab-backdrop { display: block; }
     </div>
     <div class="section-body" id="sec-family-body">
       <div class="section-content">
+        <!-- Presence summary pills -->
+        <div id="family-presence-bar"></div>
         <!-- Family cards -->
         <div class="family-cards" id="family-list">
           <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div>
@@ -2924,10 +3020,10 @@ body.fab-open .fab-backdrop { display: block; }
         </div>
         <!-- Family tabs: Chat | Reminders | Photos | Calls -->
         <div class="family-tabs-bar">
-          <button class="family-tab-btn active" id="ftab-chat-btn" onclick="familyTab('chat');_updateChatBadge(0)" style="position:relative">💬 Чат<span id="nav-chat-badge" class="nav-badge" style="display:none">0</span></button>
-          <button class="family-tab-btn" id="ftab-remind-btn" onclick="familyTab('remind')">🔔</button>
-          <button class="family-tab-btn" id="ftab-photos-btn" onclick="familyTab('photos')">📸</button>
-          <button class="family-tab-btn" id="ftab-calls-btn" onclick="familyTab('calls')">📞</button>
+          <button class="family-tab-btn active" id="ftab-chat-btn" onclick="familyTab('chat');_updateChatBadge(0)">💬 Чат<span id="nav-chat-badge" class="nav-badge" style="display:none">0</span></button>
+          <button class="family-tab-btn" id="ftab-remind-btn" onclick="familyTab('remind')">🔔 Напом</button>
+          <button class="family-tab-btn" id="ftab-photos-btn" onclick="familyTab('photos')">📸 Фото</button>
+          <button class="family-tab-btn" id="ftab-calls-btn" onclick="familyTab('calls')">📞 Звонки<span id="nav-calls-badge" class="nav-badge" style="display:none">0</span></button>
         </div>
         <!-- Tab: Chat -->
         <div id="ftab-chat" class="family-tab-pane">
@@ -3403,6 +3499,34 @@ body.fab-open .fab-backdrop { display: block; }
     <div class="fab-items" id="fab-items"><!-- rendered by renderFab() --></div>
   </div>
 
+  <!-- ── Quick Sheet (FAB slide-up) ── -->
+  <div class="qs-overlay" id="qs-overlay" onclick="qsClose()"></div>
+  <div class="quick-sheet" id="quick-sheet">
+    <div class="qs-handle"></div>
+    <div class="qs-title">⚡ Быстрые действия</div>
+    <div class="qs-section">
+      <div class="qs-section-label">💡 Свет</div>
+      <div class="qs-lights-grid" id="qs-lights-grid">
+        <div style="color:#60608a;font-size:12px;text-align:center;grid-column:span 4;padding:8px">Загрузка...</div>
+      </div>
+    </div>
+    <div class="qs-section">
+      <div class="qs-section-label">🎬 Сцены</div>
+      <div class="qs-scenes-strip" id="qs-scenes-strip">
+        <div style="color:#60608a;font-size:12px;padding:4px">Загрузка...</div>
+      </div>
+    </div>
+    <div class="qs-section">
+      <div class="qs-section-label">⚡ Действия</div>
+      <div class="qs-actions-row">
+        <button class="qs-action-btn danger" onclick="qsAction('lights_off')">🔌 Весь выкл</button>
+        <button class="qs-action-btn" onclick="qsAction('vacuum')">🤖 Пылесос</button>
+        <button class="qs-action-btn indigo" onclick="qsAction('night')">🌙 Ночной</button>
+        <button class="qs-action-btn" onclick="qsAction('morning')">☀️ Утро</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Timer Sheet ── -->
   <div id="timer-overlay" class="timer-overlay" onclick="closeTimerSheet()"></div>
   <div id="timer-sheet" class="timer-sheet">
@@ -3791,6 +3915,7 @@ function applyStatus(d) {
 
   // --- Family section ---
   _lastFamilyHA = d.family || {};
+  _lastLights = d.lights || {};
   renderFamilyCards();
 
   // --- Lights section ---
@@ -6826,6 +6951,7 @@ async function loadScenes() {
   try {
     const scenes = await api('/scenes');
     _scenesLoaded = true;
+    _lastScenesData = scenes;
     homeAwayUpdateSub(scenes);
     const entries = Object.entries(scenes);
     // Filter out __home_away__ from regular scenes grid
@@ -7213,6 +7339,8 @@ async function runScene(id, btn) {
 
 // ── Family cards ──────────────────────────────────────────────────────────────
 let _lastFamilyHA  = {};   // {name: {state, lat, lon}} from HA status
+let _lastLights    = {};   // {entity: {state, name, icon}} from status
+let _lastScenesData = {};  // {id: {name, icon, description}} from /scenes
 let _familyExtra   = {};   // {statuses, note, cooking, reactions}
 let _familyLoaded  = false;
 let _familyPhone   = {};   // {username: {battery, battery_state, steps, activity, connection}}
@@ -7374,6 +7502,33 @@ function renderFamilyCards() {
       </div>
     </div>`;
   }).join('');
+  // Update presence bar
+  const pbEl = document.getElementById('family-presence-bar');
+  if (pbEl) {
+    pbEl.innerHTML = Object.entries(fam).map(([name, info]) => {
+      const state = (typeof info === 'object') ? info.state : info;
+      const isHome = state === 'home';
+      const initials = name.charAt(0).toUpperCase();
+      const username = webUsers[name] || webUsers[name.toLowerCase()] || name.toLowerCase();
+      return `<div class="fpb-pill ${isHome?'home':''}" onclick="document.getElementById('sec-family-body').style.display='';document.getElementById('family-list').scrollIntoView({behavior:'smooth',block:'nearest'})">
+        <div class="fpb-av ${isHome?'home':''}" id="fpb-av-${escapeAttr(username)}">${initials}<div class="fpb-dot ${isHome?'home':''}"></div></div>
+        <span class="fpb-name">${escapeHtml(name)}</span>
+      </div>`;
+    }).join('');
+    // Load avatars in pills
+    pbEl.querySelectorAll('[id^="fpb-av-"]').forEach(function(avEl) {
+      const uname = avEl.id.replace('fpb-av-', '');
+      const img = new Image();
+      img.onload = function() {
+        avEl.textContent = '';
+        const dot = document.createElement('div'); dot.className = 'fpb-dot' + (avEl.classList.contains('home') ? ' home' : '');
+        const i = document.createElement('img');
+        i.src = img.src; i.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:50%';
+        avEl.appendChild(i); avEl.appendChild(dot);
+      };
+      img.src = '/ha-app/api/user-avatar/' + encodeURIComponent(uname) + '?_t=' + _haAvatarVer;
+    });
+  }
   // Load avatars for each family member
   el.querySelectorAll('[data-av]').forEach(function(avatarEl) {
     const uname = avatarEl.dataset.av;
@@ -10668,7 +10823,7 @@ function renderFab() {
 }
 function fabToggle() {
   haptic(10);
-  document.body.classList.toggle('fab-open');
+  qsOpen();
 }
 function fabClose() { document.body.classList.remove('fab-open'); }
 async function fabAction(act) {
@@ -10723,6 +10878,102 @@ async function fabAction(act) {
     showToast('🤖 Пылесос домой');
   } else if (act === 'climate_off') {
     try { await api('/action', 'POST', {service:'climate.turn_off', entity_id:'climate.teplyi_pol_lodzhiia', extra:{}}); showToast('❄️ Климат выкл'); } catch(e) { showToast('❌ Ошибка'); }
+  }
+}
+
+// ── Quick Sheet ───────────────────────────────────────────────────────────────
+function qsOpen() {
+  haptic(10);
+  document.getElementById('qs-overlay').classList.add('open');
+  document.getElementById('quick-sheet').classList.add('open');
+  _qsLoadContent();
+}
+function qsClose() {
+  document.getElementById('qs-overlay').classList.remove('open');
+  document.getElementById('quick-sheet').classList.remove('open');
+}
+
+function _qsLoadContent() {
+  // Lights grid
+  var lgEl = document.getElementById('qs-lights-grid');
+  if (lgEl) {
+    var lights = _lastLights;
+    var entries = Object.entries(lights);
+    if (!entries.length) {
+      lgEl.innerHTML = '<div style="color:#60608a;font-size:12px;text-align:center;grid-column:span 4;padding:8px">Нет данных</div>';
+    } else {
+      lgEl.innerHTML = entries.map(function(kv) {
+        var entity = kv[0], info = kv[1];
+        var state   = typeof info === 'object' ? info.state : info;
+        var rawName = typeof info === 'object' ? (info.name || entity) : (entity);
+        var icon    = typeof info === 'object' ? (info.icon || '💡') : '💡';
+        var name    = rawName.replace(/^\S+\s/, '');
+        var isOn    = state === 'on';
+        return '<button class="qs-light-btn ' + (isOn ? 'on' : '') + '" onclick="qsToggleLight(\'' + escapeAttr(entity) + '\',this)">' +
+               '<span class="qs-li">' + icon + '</span>' +
+               '<span>' + escapeHtml(name) + '</span></button>';
+      }).join('');
+    }
+  }
+  // Scenes strip
+  var ssEl = document.getElementById('qs-scenes-strip');
+  if (ssEl) {
+    var scs = _lastScenesData;
+    var scEntries = Object.entries(scs).filter(function(kv) { return kv[0] !== '__home_away__'; });
+    if (!scEntries.length) {
+      // Try loading scenes if not yet loaded
+      if (!_scenesLoaded) {
+        ssEl.innerHTML = '<div style="color:#60608a;font-size:12px;padding:4px">Загрузка...</div>';
+        api('/scenes').then(function(s) { _lastScenesData = s; _scenesLoaded = true; _qsLoadContent(); }).catch(function() {});
+      } else {
+        ssEl.innerHTML = '<div style="color:#60608a;font-size:12px;padding:4px">Нет сцен</div>';
+      }
+    } else {
+      ssEl.innerHTML = scEntries.map(function(kv) {
+        var id = kv[0], sc = kv[1];
+        var grad = _sceneGradient(sc.icon || '🎬');
+        return '<button class="qs-scene-chip" style="border-color:' + grad.border + '" onclick="qsClose();runScene(\'' + escapeAttr(id) + '\',null)">' +
+               (sc.icon || '🎬') + ' ' + escapeHtml(sc.name || id) + '</button>';
+      }).join('');
+    }
+  }
+}
+
+async function qsToggleLight(entity, btn) {
+  var isOn = btn.classList.contains('on');
+  btn.classList.toggle('on', !isOn);
+  btn.classList.toggle('', isOn);
+  haptic(8);
+  try {
+    var info = _lastLights[entity] || {};
+    var domain = (typeof info === 'object' && info.domain) ? info.domain : 'light';
+    await api('/action', 'POST', {service: domain + (isOn ? '.turn_off' : '.turn_on'), entity_id: entity, extra: {}});
+    _lastLights[entity] = Object.assign({}, info, {state: isOn ? 'off' : 'on'});
+    setTimeout(loadStatus, 800);
+  } catch(e) { showToast('❌ Ошибка'); btn.classList.toggle('on', isOn); }
+}
+
+async function qsAction(act) {
+  qsClose();
+  haptic(12);
+  if (act === 'lights_off') {
+    await fabAction('lights_off');
+  } else if (act === 'vacuum') {
+    await fabAction('vacuum');
+  } else if (act === 'night') {
+    var entry = Object.entries(_lastScenesData).find(function(kv) {
+      var id = kv[0], sc = kv[1];
+      return /ноч|night/i.test(sc.name || id) || (sc.icon || '') === '🌙';
+    });
+    if (entry) { await fabAction('scene:' + entry[0]); }
+    else { showToast('⚠️ Сцена «Ночной» не найдена'); }
+  } else if (act === 'morning') {
+    var entry2 = Object.entries(_lastScenesData).find(function(kv) {
+      var id = kv[0], sc = kv[1];
+      return /утр|morn/i.test(sc.name || id) || (sc.icon || '') === '☀️';
+    });
+    if (entry2) { await fabAction('scene:' + entry2[0]); }
+    else { showToast('⚠️ Сцена «Утро» не найдена'); }
   }
 }
 
