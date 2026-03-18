@@ -1768,6 +1768,11 @@ body::before {
   transition: all 0.2s cubic-bezier(0.34,1.56,0.64,1);
   user-select: none;
   box-shadow: 0 0 22px rgba(99,102,241,0.1), 0 4px 16px rgba(0,0,0,0.32), 0 1px 0 rgba(167,139,250,0.1) inset;
+  position: relative; overflow: hidden;
+}
+.scene-btn-glow {
+  position: absolute; inset: 0; border-radius: inherit;
+  opacity: 0.08; pointer-events: none;
 }
 .scene-btn:active { transform: scale(0.92); opacity: 0.88; }
 .scene-btn .scene-icon { font-size: 30px; display: block; margin-bottom: 8px; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.45)); }
@@ -2810,10 +2815,13 @@ body.fab-open .fab-backdrop { display: block; }
                 <div class="status-metric-val" id="stat-temp">—°</div>
                 <div class="status-metric-lbl">Детская</div>
               </div>
-              <div class="status-metric-bar">
-                <div class="status-val-bar-bg">
-                  <div class="status-val-bar-fill" id="temp-bar-fill"></div>
+              <div style="flex:1;display:flex;flex-direction:column;gap:3px;min-width:0">
+                <div class="status-metric-bar">
+                  <div class="status-val-bar-bg">
+                    <div class="status-val-bar-fill" id="temp-bar-fill"></div>
+                  </div>
                 </div>
+                <svg id="temp-sparkline" width="100%" height="18" style="display:block"></svg>
               </div>
             </div>
             <div class="status-metric-card">
@@ -2967,6 +2975,22 @@ body.fab-open .fab-backdrop { display: block; }
         <div id="ftab-calls" class="family-tab-pane" style="display:none">
           <div id="call-history-list" style="display:flex;flex-direction:column;gap:6px;padding:4px 0"></div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ACTIVITY TIMELINE -->
+  <div class="section">
+    <div class="section-header" onclick="toggleSection('sec-timeline-body');loadTimeline()">
+      <span>⏱ Активность</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body" id="sec-timeline-body">
+      <div class="section-content">
+        <div id="activity-timeline-list">
+          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Откройте для загрузки</div>
+        </div>
+        <button class="btn btn-neutral" style="width:100%;margin-top:8px;font-size:12px" onclick="_timelineLoaded=false;loadTimeline()">🔄 Обновить</button>
       </div>
     </div>
   </div>
@@ -3733,6 +3757,7 @@ function applyStatus(d) {
     const col = t < 18 ? '#60a5fa' : t < 22 ? '#34d399' : t < 26 ? '#a3e635' : t < 29 ? '#f59e0b' : '#f87171';
     const bar = document.getElementById('temp-bar-fill');
     if (bar) { bar.style.width = pct.toFixed(1) + '%'; bar.style.background = col; }
+    _pushTempHistory(t);
   }
 
   // --- Humidity ---
@@ -6702,6 +6727,96 @@ function renderEnergyHourly(data) {
     </div>`;
 }
 
+// ── Sparkline (temperature history) ───────────────────────────────────────
+var _tempHistory = [];
+var _SPARKLINE_MAX = 24;
+
+function _pushTempHistory(t) {
+  _tempHistory.push(t);
+  if (_tempHistory.length > _SPARKLINE_MAX) _tempHistory.shift();
+  _drawSparkline();
+}
+
+function _drawSparkline() {
+  var svg = document.getElementById('temp-sparkline');
+  if (!svg || _tempHistory.length < 2) return;
+  var W = svg.getBoundingClientRect().width || 80, H = 18;
+  var mn = Math.min.apply(null, _tempHistory) - 0.5;
+  var mx = Math.max.apply(null, _tempHistory) + 0.5;
+  var rng = mx - mn || 1;
+  var pts = _tempHistory.map(function(v, i) {
+    var x = (i / (_tempHistory.length - 1)) * W;
+    var y = H - ((v - mn) / rng) * (H - 2) - 1;
+    return x.toFixed(1) + ',' + y.toFixed(1);
+  });
+  var last = _tempHistory[_tempHistory.length - 1];
+  var col = last < 18 ? '#60a5fa' : last < 22 ? '#34d399' : last < 26 ? '#a3e635' : last < 29 ? '#f59e0b' : '#f87171';
+  svg.innerHTML = '<polyline points="' + pts.join(' ') + '" fill="none" stroke="' + col + '" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/>';
+}
+
+// ── Activity timeline card ─────────────────────────────────────────────────
+var _timelineLoaded = false;
+
+async function loadTimeline() {
+  var box = document.getElementById('activity-timeline-list');
+  if (!box) return;
+  if (_timelineLoaded) return;
+  box.innerHTML = '<div style="text-align:center;padding:12px;color:#60608a;font-size:12px">Загрузка...</div>';
+  try {
+    var events = await api('/timeline');
+    _timelineLoaded = true;
+    if (!events || !events.length) {
+      box.innerHTML = '<div style="text-align:center;padding:12px;color:#60608a;font-size:12px">Нет активности</div>';
+      return;
+    }
+    var now = Date.now() / 1000;
+    box.innerHTML = events.slice(0, 20).map(function(ev) {
+      var diff = now - (ev.ts || 0);
+      var timeStr = diff < 60 ? 'только что'
+        : diff < 3600 ? Math.floor(diff/60) + ' мин'
+        : diff < 86400 ? Math.floor(diff/3600) + ' ч'
+        : new Date(ev.ts * 1000).toLocaleDateString('ru', {day:'numeric',month:'short'});
+      return '<div class="timeline-item">' +
+        '<div class="timeline-dot"></div>' +
+        '<div class="timeline-text">' + (ev.icon||'·') + ' ' + escapeHtml(ev.title||'') + '</div>' +
+        '<div class="timeline-time">' + escapeHtml(timeStr) + '</div>' +
+      '</div>';
+    }).join('');
+  } catch(e) {
+    box.innerHTML = '<div style="text-align:center;padding:12px;color:#ef4444;font-size:12px">Ошибка</div>';
+  }
+}
+
+// ── Scene gradient helper ──────────────────────────────────────────────────
+function _sceneGradient(icon) {
+  const c = icon && icon.codePointAt(0);
+  // Map emoji ranges / specific glyphs to color themes
+  const m = {
+    '🌙':'#6366f1,#4f46e5', '😴':'#6366f1,#4f46e5', '🌛':'#6366f1,#4f46e5', // night
+    '☀️':'#f59e0b,#d97706', '🌅':'#f97316,#ea580c', '🌄':'#f97316,#c2410c', // day/morning
+    '🎬':'#dc2626,#991b1b', '📽':'#dc2626,#991b1b', '🎥':'#dc2626,#991b1b', // cinema
+    '🏠':'#22c55e,#16a34a', '🏡':'#22c55e,#16a34a', '🏘':'#22c55e,#16a34a', // home
+    '🌊':'#0ea5e9,#0284c7', '🧘':'#0ea5e9,#0369a1', '☁️':'#64748b,#475569', // relax
+    '🚨':'#ef4444,#dc2626', '🔴':'#ef4444,#dc2626', '⚠️':'#f59e0b,#d97706', // alert
+    '🕌':'#14b8a6,#0d9488', '☪️':'#14b8a6,#0d9488', '🤲':'#14b8a6,#0f766e', // prayer
+    '🌿':'#84cc16,#65a30d', '🌱':'#84cc16,#65a30d', '🌺':'#ec4899,#db2777', // nature
+    '💡':'#fbbf24,#f59e0b', '🔆':'#fbbf24,#f59e0b', // lights
+    '🎵':'#a855f7,#9333ea', '🎶':'#a855f7,#9333ea', '🎸':'#a855f7,#9333ea', // music
+    '❄️':'#bae6fd,#7dd3fc', '❄':'#bae6fd,#7dd3fc', // cold
+    '🤖':'#94a3b8,#64748b', '⚙️':'#94a3b8,#64748b', // tech
+    '🎬':'#dc2626,#991b1b', // fallback cinema
+  };
+  const g = m[icon] || m[icon && icon[0]] || '99,102,241,#7c3aed';
+  const parts = (m[icon] || '99,102,241,#7c3aed').includes(',#')
+    ? (m[icon] || '#6366f1,#7c3aed').split(',')
+    : ['#6366f1','#7c3aed'];
+  const c1 = parts[0], c2 = parts[1] || parts[0];
+  return {
+    bg: `radial-gradient(circle at 30% 30%, ${c1}, ${c2})`,
+    border: c1 + '60'
+  };
+}
+
 // ── Scenes ─────────────────────────────────────────────────────────────────
 let _scenesLoaded = false;
 
@@ -6723,7 +6838,9 @@ async function loadScenes() {
     visibleEntries.forEach(([id, sc]) => {
       const d = document.createElement('div');
       d.className = 'scene-btn';
-      d.innerHTML = `<span class="scene-icon">${escapeHtml(sc.icon||'🎬')}</span><span class="scene-name">${escapeHtml(sc.name||id)}</span><span class="scene-desc">${escapeHtml(sc.description||'')}</span>`;
+      const grad = _sceneGradient(sc.icon||'🎬');
+      d.style.borderColor = grad.border;
+      d.innerHTML = `<div class="scene-btn-glow" style="background:${grad.bg}"></div><span class="scene-icon">${escapeHtml(sc.icon||'🎬')}</span><span class="scene-name">${escapeHtml(sc.name||id)}</span><span class="scene-desc">${escapeHtml(sc.description||'')}</span>`;
       d.onclick = () => runScene(id, d);
       // Edit button overlay
       const editBtn = document.createElement('button');

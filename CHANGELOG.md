@@ -5,6 +5,25 @@ Format: [version] — date | summary
 
 ---
 
+## [v2.4.0] — 2026-03-18
+
+### ✨ New — Friends App
+- **Online presence** — green dot on contact avatars; "онлайн" / "X мин. назад" status via SSE real-time events
+- **Contact sheet** — tap contact card to open bottom sheet with quick actions (call, video, message)
+- **Text chat** — 💬 Chat tab with conversation list and per-contact thread; 48h history; unread badge; real-time via SSE
+- **Live location** — 📍 Location tab; share GPS position for 15/30/60 min; Leaflet map shows all active locations; stop button; SSE location_update/location_stopped events
+- **Group admin panel** — group admins can approve / reject pending members directly in the app (PATCH /friends/api/my-group/members/:username)
+- **Friends prayer times fix** — now reads from same HA entities as main app via /friends/api/prayers endpoint, guaranteed matching times
+- **Call history per contact** — expandable history grouped by peer, last 48h; missed call badge on nav
+
+### ✨ New — HA App
+- **Scene gradient cards** — each scene button gets a unique color gradient based on its emoji (night=indigo, morning=orange, cinema=red, etc.)
+- **Sparkline chart** — mini temperature trend line under the room temp reading, auto-updates with each status poll
+- **Activity timeline** — new collapsible section showing recent activity log + call log (uses /ha-app/api/timeline)
+- **SW cache bump** — smarthome-v32 to invalidate cached assets
+
+---
+
 ## [v2.3.0] — 2026-03-18
 
 ### ✨ New
