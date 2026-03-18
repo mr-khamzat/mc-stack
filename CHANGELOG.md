@@ -5,6 +5,36 @@ Format: [version] — date | summary
 
 ---
 
+## [v2.6.0] — 2026-03-18
+
+### ✨ New — Navigation & Structure
+- **Bottom Navigation Bar** — fixed 5-tab nav (🏠 Главная / 👨‍👩‍👦 Семья / 💡 Управление / 📊 Данные / ☰ Ещё); active tab icon bounces with spring animation; sections routed by page via CSS
+
+### ✨ New — Dashboard (🏠 Главная)
+- **Widget grid** — 4 compact cards (Мощность + color glow / Температура / Свет X/Y / Кто дома X/Y) + wide Prayer times card; tap a widget navigates to relevant page
+- **Scenes strip** — horizontal quick-launch chips on home page
+- **Context banner** — smart time-aware suggestion: morning→☀️ Утро, late night→🌙 Ночной/выключить, everyone away→🚪 Away; dismiss button
+
+### ✨ New — 📊 Данные page
+- **Energy chart** — 24-hour bar chart of power consumption; data stored in localStorage; current hour highlighted; peak hour in red
+
+### ✨ New — 💡 Управление page
+- **Security panel** — 🔒 armed/disarmed status bar; presence grid (who's home/away); lights state grid; Home/Away toggle button
+
+### ✨ New — Geofencing
+- **Auto home/away** — 📍 toggle in theme picker; saves home coords on first enable; `watchPosition` triggers `homeAwayTap()` when crossing 200 m radius
+
+### ✨ New — Theme personalization
+- **Accent color picker** — 6 colors in theme panel (Индиго/Изумруд/Янтарь/Розовый/Голубой/Красный); changes `--accent`, `--accent2`, all glow vars; persists in localStorage
+
+### ✨ New — Animations & Haptics
+- **Ripple effect** — click ripple on buttons, widgets, nav tabs, scene chips
+- **Skeleton loaders** — shimmer placeholder cards on dashboard before data loads
+- **hapticToggle / hapticError / hapticSuccess** — richer vibration patterns
+- **SW cache bump** — smarthome-v34
+
+---
+
 ## [v2.5.0] — 2026-03-18
 
 ### ✨ New — Quick Bottom Sheet (FAB)

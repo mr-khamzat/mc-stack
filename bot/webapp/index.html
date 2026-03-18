@@ -2718,6 +2718,147 @@ body.fab-open .fab-backdrop { display: block; }
   pointer-events: none;
   user-select: none;
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   BOTTOM NAV + PAGES + NEW FEATURES  (v2.6.0)
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ── Bottom Navigation ─────────────────────────────────────────────── */
+.bottom-nav {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 200;
+  display: flex; align-items: stretch;
+  background: rgba(7,7,26,0.93);
+  border-top: 1px solid rgba(255,255,255,0.08);
+  backdrop-filter: blur(18px) saturate(1.6);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  height: calc(56px + env(safe-area-inset-bottom, 0px));
+}
+.bnav-tab {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px; padding: 6px 2px; cursor: pointer; touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent; border: none; background: none; font-family: inherit;
+  color: rgba(110,110,170,0.55); transition: color 0.18s; position: relative;
+}
+.bnav-tab .bnav-ic { font-size: 20px; line-height: 1; transition: transform 0.22s cubic-bezier(0.34,1.56,0.64,1); }
+.bnav-tab .bnav-lb { font-size: 10px; font-weight: 600; letter-spacing: 0.2px; }
+.bnav-tab.active { color: var(--accent); }
+.bnav-tab.active .bnav-ic { transform: scale(1.18) translateY(-1px); }
+.bnav-badge {
+  position: absolute; top: 5px; right: calc(50% - 18px);
+  background: #ef4444; color: #fff; font-size: 9px; font-weight: 700;
+  border-radius: 10px; padding: 0 4px; min-width: 14px; line-height: 14px;
+  text-align: center; display: none;
+}
+
+/* ── Page routing (body class controls visibility) ─────────────────── */
+#app { padding-bottom: calc(62px + env(safe-area-inset-bottom, 0px)); }
+#page-home { display: none; }
+#app.page-active-home    #page-home  { display: block; }
+#app.page-active-home    .section[data-page] { display: none !important; }
+#app.page-active-family  .section[data-page]:not([data-page="family"])  { display: none !important; }
+#app.page-active-control .section[data-page]:not([data-page="control"]) { display: none !important; }
+#app.page-active-data    .section[data-page]:not([data-page="data"])    { display: none !important; }
+#app.page-active-more    .section[data-page]:not([data-page="more"])    { display: none !important; }
+
+/* ── Dashboard (Home page) ─────────────────────────────────────────── */
+#page-home { padding: 8px 16px 4px; }
+.ctx-banner {
+  display: flex; align-items: center; gap: 10px;
+  background: linear-gradient(135deg, rgba(99,102,241,0.12), rgba(139,92,246,0.06));
+  border: 1px solid rgba(99,102,241,0.22); border-radius: 16px;
+  padding: 12px 14px; margin-bottom: 12px; position: relative;
+}
+.ctx-banner-text { flex: 1; font-size: 13px; color: rgba(200,200,255,0.85); line-height: 1.4; }
+.ctx-banner-action {
+  padding: 7px 14px; border-radius: 20px; border: none;
+  background: rgba(99,102,241,0.3); color: #c4b5fd; font-size: 12px; font-weight: 700;
+  cursor: pointer; font-family: inherit; touch-action: manipulation; white-space: nowrap;
+}
+.ctx-banner-close {
+  position: absolute; top: 8px; right: 10px; background: none; border: none;
+  color: rgba(150,150,200,0.4); font-size: 16px; cursor: pointer; line-height: 1; padding: 0;
+}
+.dash-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.dash-widget {
+  background: linear-gradient(160deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.01) 100%);
+  border: 0.5px solid rgba(255,255,255,0.08); border-top-color: rgba(255,255,255,0.14);
+  border-radius: 18px; padding: 14px 14px 12px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.28), 0 1px 0 rgba(255,255,255,0.06) inset;
+  cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  transition: transform 0.14s; position: relative; overflow: hidden;
+}
+.dash-widget:active { transform: scale(0.95); }
+.dash-widget.wide { grid-column: span 2; }
+.dw-icon { font-size: 22px; margin-bottom: 6px; line-height: 1; }
+.dw-val { font-size: 22px; font-weight: 700; color: #e2e8f0; line-height: 1.1; letter-spacing: -0.5px; }
+.dw-label { font-size: 10px; color: rgba(120,120,175,0.55); margin-top: 3px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+.dw-glow { position: absolute; inset: 0; border-radius: inherit; opacity: 0.07; pointer-events: none; }
+.dash-section-title { font-size: 11px; font-weight: 700; color: rgba(120,120,175,0.45); text-transform: uppercase; letter-spacing: 0.7px; margin: 14px 0 8px; }
+
+/* ── Energy Chart ──────────────────────────────────────────────────── */
+.energy-chart-wrap {
+  background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 14px; padding: 14px 12px 10px; margin-bottom: 10px;
+}
+.energy-chart-title { font-size: 11px; color: rgba(130,130,180,0.5); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; font-weight: 600; }
+.energy-bars { display: flex; align-items: flex-end; gap: 3px; height: 52px; }
+.energy-bar { flex: 1; border-radius: 3px 3px 0 0; min-height: 3px; background: rgba(99,102,241,0.35); transition: height 0.4s ease; }
+.energy-bar.peak    { background: rgba(239,68,68,0.55); }
+.energy-bar.current { background: rgba(99,102,241,0.85); box-shadow: 0 0 7px rgba(99,102,241,0.5); }
+.energy-chart-xaxis { display: flex; justify-content: space-between; margin-top: 4px; font-size: 9px; color: rgba(100,100,150,0.45); }
+
+/* ── Security Panel ────────────────────────────────────────────────── */
+.sec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
+.sec-sensor {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px;
+  background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+  font-size: 12px; font-weight: 600; color: rgba(180,180,220,0.8);
+}
+.sec-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: #34d399; }
+.sec-dot.open   { background: #ef4444; box-shadow: 0 0 6px rgba(239,68,68,0.5); }
+.sec-dot.motion { background: #fbbf24; animation: sec-blink 1s infinite; }
+@keyframes sec-blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+.sec-alarm-bar {
+  display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-radius: 12px;
+  background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.2);
+  margin-bottom: 10px; font-size: 13px; font-weight: 600; color: #34d399;
+}
+.sec-alarm-bar.armed { background: rgba(239,68,68,0.08); border-color: rgba(239,68,68,0.2); color: #f87171; }
+
+/* ── Geofencing chip ───────────────────────────────────────────────── */
+.geo-chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px;
+  border-radius: 20px; font-size: 11px; font-weight: 600; cursor: pointer;
+  background: rgba(52,211,153,0.1); border: 1px solid rgba(52,211,153,0.2); color: #34d399;
+  margin-left: 6px; touch-action: manipulation;
+}
+.geo-chip.off { background: rgba(100,116,139,0.1); border-color: rgba(100,116,139,0.2); color: #64748b; }
+
+/* ── Ripple ────────────────────────────────────────────────────────── */
+@keyframes ripple-anim { to { transform: scale(4); opacity: 0; } }
+.ripple-container { position: relative; overflow: hidden; }
+.ripple-fx {
+  position: absolute; border-radius: 50%; width: 32px; height: 32px; margin: -16px 0 0 -16px;
+  background: rgba(255,255,255,0.12); animation: ripple-anim 0.45s linear; pointer-events: none;
+}
+
+/* ── Skeleton loader ───────────────────────────────────────────────── */
+@keyframes shimmer { from{background-position:-200% center} to{background-position:200% center} }
+.skeleton {
+  background: linear-gradient(90deg,rgba(255,255,255,0.04) 25%,rgba(255,255,255,0.09) 50%,rgba(255,255,255,0.04) 75%);
+  background-size: 200% auto; animation: shimmer 1.6s linear infinite; border-radius: 14px;
+}
+
+/* ── Accent color dots ─────────────────────────────────────────────── */
+.accent-row { display: flex; gap: 8px; align-items: center; padding: 8px 4px 0; flex-wrap: wrap; }
+.accent-dot {
+  width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent;
+  cursor: pointer; transition: transform 0.18s, border-color 0.18s;
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent; flex-shrink: 0;
+}
+.accent-dot.active { border-color: rgba(255,255,255,0.85); transform: scale(1.22); }
+.accent-dot:active { transform: scale(0.88); }
 </style>
 <!-- Inline failsafe: remove loading after 5s even without JS -->
 <script>
@@ -2781,16 +2922,28 @@ body.fab-open .fab-backdrop { display: block; }
 <div id="app">
   <!-- Theme picker overlay -->
   <div id="theme-overlay" onclick="themePickerClose()"></div>
-  <div id="theme-picker" style="display:none">
-    <span style="font-size:11px;color:#64748b;white-space:nowrap">Тема:</span>
-    <div class="theme-dot theme-dot-cosmos" title="Космос"   onclick="themeSet('cosmos')"></div>
-    <div class="theme-dot theme-dot-oled"   title="OLED"     onclick="themeSet('oled')"></div>
-    <div class="theme-dot theme-dot-cyber"  title="Кибер"    onclick="themeSet('cyber')"></div>
-    <div class="theme-dot theme-dot-aurora" title="Аврора"   onclick="themeSet('aurora')"></div>
-    <button id="auto-theme-btn" onclick="autoThemeToggle()" title="Авто по времени"
-      style="padding:4px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);
-             background:rgba(255,255,255,0.05);cursor:pointer;font-size:12px;color:rgba(200,200,230,0.7);
-             flex-shrink:0;-webkit-tap-highlight-color:transparent">🌗 Авто</button>
+  <div id="theme-picker" style="display:none;flex-direction:column;gap:0">
+    <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+      <span style="font-size:11px;color:#64748b;white-space:nowrap">Тема:</span>
+      <div class="theme-dot theme-dot-cosmos" title="Космос"   onclick="themeSet('cosmos')"></div>
+      <div class="theme-dot theme-dot-oled"   title="OLED"     onclick="themeSet('oled')"></div>
+      <div class="theme-dot theme-dot-cyber"  title="Кибер"    onclick="themeSet('cyber')"></div>
+      <div class="theme-dot theme-dot-aurora" title="Аврора"   onclick="themeSet('aurora')"></div>
+      <button id="auto-theme-btn" onclick="autoThemeToggle()" title="Авто по времени"
+        style="padding:4px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);
+               background:rgba(255,255,255,0.05);cursor:pointer;font-size:12px;color:rgba(200,200,230,0.7);
+               flex-shrink:0;-webkit-tap-highlight-color:transparent">🌗 Авто</button>
+      <button class="geo-chip off" onclick="geoToggle()" id="geo-chip-btn">📍 Выкл</button>
+    </div>
+    <div class="accent-row">
+      <span style="font-size:10px;color:#64748b;white-space:nowrap">Акцент:</span>
+      <div class="accent-dot" style="background:#6366f1" title="Индиго"  onclick="accentSet('#6366f1','#8b5cf6')"></div>
+      <div class="accent-dot" style="background:#10b981" title="Изумруд" onclick="accentSet('#10b981','#059669')"></div>
+      <div class="accent-dot" style="background:#f59e0b" title="Янтарь"  onclick="accentSet('#f59e0b','#d97706')"></div>
+      <div class="accent-dot" style="background:#ec4899" title="Розовый" onclick="accentSet('#ec4899','#db2777')"></div>
+      <div class="accent-dot" style="background:#0ea5e9" title="Голубой" onclick="accentSet('#0ea5e9','#0284c7')"></div>
+      <div class="accent-dot" style="background:#ef4444" title="Красный" onclick="accentSet('#ef4444','#dc2626')"></div>
+    </div>
   </div>
 
   <!-- PTR indicator -->
@@ -2871,8 +3024,30 @@ body.fab-open .fab-backdrop { display: block; }
     </div>
   </div>
 
+  <!-- ── HOME PAGE (Dashboard) ── -->
+  <div id="page-home">
+    <div id="ctx-banner" style="display:none" class="ctx-banner">
+      <span id="ctx-banner-emoji" style="font-size:22px">⚡</span>
+      <div class="ctx-banner-text" id="ctx-banner-text"></div>
+      <button class="ctx-banner-action" id="ctx-banner-btn" onclick="_ctxAction()"></button>
+      <button class="ctx-banner-close" onclick="document.getElementById('ctx-banner').style.display='none'">✕</button>
+    </div>
+    <div class="dash-section-title">📊 Сейчас</div>
+    <div class="dash-grid" id="dash-grid">
+      <div class="dash-widget skeleton" style="height:88px"></div>
+      <div class="dash-widget skeleton" style="height:88px"></div>
+      <div class="dash-widget skeleton" style="height:88px"></div>
+      <div class="dash-widget skeleton" style="height:88px"></div>
+      <div class="dash-widget wide skeleton" style="height:60px"></div>
+    </div>
+    <div class="dash-section-title">🎭 Быстро</div>
+    <div id="dash-scenes" class="qs-scenes-strip" style="padding-bottom:12px">
+      <div style="color:#60608a;font-size:12px;padding:4px">Загрузка сцен...</div>
+    </div>
+  </div>
+
   <!-- 1. STATUS -->
-  <div class="section" data-section-perm="status">
+  <div class="section" data-section-perm="status" data-page="data">
     <div class="section-header" onclick="toggleSection('sec-status-body')">
       <div style="display:flex;align-items:center;gap:8px">
         <span class="status-live-dot" id="status-live-dot"></span>
@@ -3000,7 +3175,7 @@ body.fab-open .fab-backdrop { display: block; }
   </div>
 
   <!-- 2. FAMILY -->
-  <div class="section" data-section-perm="family">
+  <div class="section" data-section-perm="family" data-page="family">
     <div class="section-header" onclick="toggleSection('sec-family-body')">
       <span>👨‍👩‍👦 Семья</span>
       <span class="chevron">▾</span>
@@ -3076,7 +3251,7 @@ body.fab-open .fab-backdrop { display: block; }
   </div>
 
   <!-- ACTIVITY TIMELINE -->
-  <div class="section">
+  <div class="section" data-page="family">
     <div class="section-header" onclick="toggleSection('sec-timeline-body');loadTimeline()">
       <span>⏱ Активность</span>
       <span class="chevron">▾</span>
@@ -3092,7 +3267,7 @@ body.fab-open .fab-backdrop { display: block; }
   </div>
 
   <!-- PRESENCE STATS -->
-  <div class="section" data-section-perm="presence">
+  <div class="section" data-section-perm="presence" data-page="family">
     <div class="section-header" onclick="toggleSection('sec-presence-body'); if(!_presenceLoaded) loadPresenceStats()">
       <span>📊 Кто сколько дома (7 дней)</span>
       <span class="chevron">▾</span>
@@ -3107,7 +3282,7 @@ body.fab-open .fab-backdrop { display: block; }
   </div>
 
   <!-- FACES HISTORY -->
-  <div class="section" data-section-perm="faces">
+  <div class="section" data-section-perm="faces" data-page="data">
     <div class="section-header" onclick="toggleSection('sec-faces-body'); if(!_facesLoaded) loadFacesHistory()">
       <span>🚪 У двери — история</span>
       <span class="chevron">▾</span>
@@ -3121,15 +3296,26 @@ body.fab-open .fab-backdrop { display: block; }
     </div>
   </div>
 
-  <!-- ENERGY HEATMAP -->
-  <div class="section" data-section-perm="energy" style="display:none">
+  <!-- ENERGY CHART -->
+  <div class="section" data-section-perm="energy" data-page="data">
+    <div class="section-header" onclick="toggleSection('sec-energy-body');energyChartRender()">
+      <span>⚡ Энергопотребление</span>
+      <span class="chevron">▾</span>
+    </div>
     <div class="section-body" id="sec-energy-body">
-      <div class="section-content"><div id="energy-hourly-content"></div></div>
+      <div class="section-content">
+        <div class="energy-chart-wrap">
+          <div class="energy-chart-title">Мощность за 24ч (Вт)</div>
+          <div class="energy-bars" id="energy-bars"></div>
+          <div class="energy-chart-xaxis" id="energy-xaxis"></div>
+        </div>
+        <div id="energy-hourly-content"></div>
+      </div>
     </div>
   </div>
 
   <!-- 3. LIGHTS -->
-  <div class="section" data-section-perm="lights">
+  <div class="section" data-section-perm="lights" data-page="control">
     <div class="section-header" onclick="toggleSection('sec-lights-body')">
       <span>💡 Свет</span>
       <span class="chevron">▴</span>
@@ -3144,7 +3330,7 @@ body.fab-open .fab-backdrop { display: block; }
   </div>
 
   <!-- 4. CLIMATE -->
-  <div class="section" data-section-perm="climate">
+  <div class="section" data-section-perm="climate" data-page="control">
     <div class="section-header" onclick="toggleSection('sec-climate-body')">
       <span>🌡️ Климат</span>
       <span class="chevron">▾</span>
@@ -3194,7 +3380,7 @@ body.fab-open .fab-backdrop { display: block; }
   </div>
 
   <!-- 5. TV -->
-  <div class="section" data-section-perm="tv">
+  <div class="section" data-section-perm="tv" data-page="control">
     <div class="section-header" onclick="toggleSection('sec-tv-body')">
       <span>📺 Телевизор</span>
       <span class="chevron">▾</span>
@@ -3259,7 +3445,7 @@ body.fab-open .fab-backdrop { display: block; }
   </div>
 
   <!-- 6. VACUUM -->
-  <div class="section" data-section-perm="vacuum">
+  <div class="section" data-section-perm="vacuum" data-page="control">
     <div class="section-header" onclick="toggleSection('sec-vacuum-body')">
       <span>🤖 Пылесос</span>
       <span class="chevron">▾</span>
@@ -3282,7 +3468,7 @@ body.fab-open .fab-backdrop { display: block; }
   </div>
 
   <!-- 7. PRAYERS -->
-  <div class="section" id="prayers-section" data-section-perm="prayers">
+  <div class="section" id="prayers-section" data-section-perm="prayers" data-page="more">
     <div class="section-header" onclick="toggleSection('sec-prayers-body')">
       <span>🕌 Намаз</span>
       <span class="chevron">▾</span>
@@ -3318,7 +3504,7 @@ body.fab-open .fab-backdrop { display: block; }
   </div>
 
   <!-- 8. WEATHER -->
-  <div class="section" data-section-perm="weather">
+  <div class="section" data-section-perm="weather" data-page="more">
     <div class="section-header" onclick="toggleSection('sec-weather-body')">
       <span>🌤️ Погода — Грозный</span>
       <span class="chevron">▾</span>
@@ -3336,7 +3522,7 @@ body.fab-open .fab-backdrop { display: block; }
   <div id="dynamic-sections"></div>
 
   <!-- SCENES -->
-  <div class="section" data-section-perm="scenes">
+  <div class="section" data-section-perm="scenes" data-page="control">
     <div class="section-header" onclick="toggleSection('sec-scenes-body'); if(!_scenesLoaded) loadScenes()">
       <span>🎭 Сцены / Режимы</span>
       <span class="chevron">▾</span>
@@ -3351,7 +3537,7 @@ body.fab-open .fab-backdrop { display: block; }
   </div>
 
   <!-- SHOPPING LIST -->
-  <div class="section" data-section-perm="shopping">
+  <div class="section" data-section-perm="shopping" data-page="more">
     <div class="section-header" onclick="toggleSection('sec-shopping-body'); if(!_shoppingLoaded) loadShopping()">
       <span>🛒 Список покупок</span>
       <span class="chevron">▾</span>
@@ -3398,6 +3584,21 @@ body.fab-open .fab-backdrop { display: block; }
     </div>
   </div>
 
+  <!-- SECURITY PANEL -->
+  <div class="section" data-page="control" id="sec-security-section">
+    <div class="section-header" onclick="toggleSection('sec-security-body');loadSecurityPanel()">
+      <span>🔒 Безопасность</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body" id="sec-security-body">
+      <div class="section-content">
+        <div id="security-panel-content">
+          <div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Откройте для загрузки</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Sections merged into Admin — hidden stubs to preserve body IDs for JS refs -->
   <div class="section" style="display:none"><div class="section-body" id="sec-alerts-body"></div></div>
   <div class="section" style="display:none"><div class="section-body" id="sec-nightmode-body"></div></div>
@@ -3407,7 +3608,7 @@ body.fab-open .fab-backdrop { display: block; }
   <div class="section" style="display:none"><div class="section-body" id="sec-settings-body"></div></div>
 
   <!-- ADMIN PANEL — contains all merged sections as tabs -->
-  <div class="section" id="sec-admin" style="display:none">
+  <div class="section" id="sec-admin" style="display:none" data-page="more">
     <div class="section-header" onclick="toggleSection('sec-admin-body')">
       <span>👑 Администрирование</span>
       <span class="chevron" id="sec-admin-chevron">▾</span>
@@ -3551,6 +3752,31 @@ body.fab-open .fab-backdrop { display: block; }
                color:#fff;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit">Запустить</button>
     </div>
   </div>
+
+  <!-- ── Bottom Navigation ── -->
+  <nav class="bottom-nav" id="bottom-nav">
+    <button class="bnav-tab active" id="bnav-home" onclick="showPage('home')">
+      <span class="bnav-ic">🏠</span>
+      <span class="bnav-lb">Главная</span>
+    </button>
+    <button class="bnav-tab" id="bnav-family" onclick="showPage('family')">
+      <span class="bnav-ic">👨‍👩‍👦</span>
+      <span class="bnav-lb">Семья</span>
+      <span class="bnav-badge" id="bnav-family-badge"></span>
+    </button>
+    <button class="bnav-tab" id="bnav-control" onclick="showPage('control')">
+      <span class="bnav-ic">💡</span>
+      <span class="bnav-lb">Управление</span>
+    </button>
+    <button class="bnav-tab" id="bnav-data" onclick="showPage('data')">
+      <span class="bnav-ic">📊</span>
+      <span class="bnav-lb">Данные</span>
+    </button>
+    <button class="bnav-tab" id="bnav-more" onclick="showPage('more')">
+      <span class="bnav-ic">☰</span>
+      <span class="bnav-lb">Ещё</span>
+    </button>
+  </nav>
 
   <!-- ── Section Edit Sheet ── -->
   <div id="sec-edit-overlay" class="edit-overlay" onclick="closeSectionEditor()"></div>
@@ -4176,6 +4402,11 @@ function applyStatus(d) {
   const now2 = new Date();
   document.getElementById('last-updated').textContent =
     'обновлено ' + now2.getHours().toString().padStart(2,'0') + ':' + now2.getMinutes().toString().padStart(2,'0');
+
+  // Dashboard & energy chart
+  renderDashboard();
+  energyChartUpdate(d.power);
+  if (_currentPage === 'home') showContextBanner();
 }
 
 // ── Главный запрос данных ─────────────────────────────────────────────────
@@ -10571,6 +10802,351 @@ function autoThemeToggle() {
   else localStorage.setItem('ha_auto_theme', '1');
   applyAutoTheme();
 }
+
+// ══════════════════════════════════════════════════════════════════
+//  NEW FEATURES v2.6.0
+// ══════════════════════════════════════════════════════════════════
+
+// ── Pages / Bottom Nav ───────────────────────────────────────────────────────
+var _currentPage = 'home';
+var _PAGES = ['home','family','control','data','more'];
+
+function showPage(page) {
+  if (page === _currentPage) return;
+  _currentPage = page;
+  var app = document.getElementById('app');
+  _PAGES.forEach(function(p) { app.classList.remove('page-active-' + p); });
+  app.classList.add('page-active-' + page);
+  _PAGES.forEach(function(p) {
+    var tab = document.getElementById('bnav-' + p);
+    if (tab) tab.classList.toggle('active', p === page);
+  });
+  haptic(8);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (page === 'home')    { renderDashboard(); showContextBanner(); }
+  if (page === 'family')  { if (!_familyLoaded) loadFamilyExtra(); }
+  if (page === 'control') { if (!_scenesLoaded) loadScenes(); }
+  if (page === 'data')    { energyChartRender(); }
+  if (page === 'more')    { if (!_shoppingLoaded) loadShopping(); }
+}
+
+// Init: show home page on load
+(function() {
+  var app = document.getElementById('app');
+  if (app) app.classList.add('page-active-home');
+  // Load saved accent
+  try {
+    var saved = localStorage.getItem('ha_accent');
+    if (saved) { var ac = JSON.parse(saved); accentSet(ac.a1, ac.a2); }
+  } catch(e) {}
+})();
+
+// ── Dashboard ───────────────────────────────────────────────────────────────
+function renderDashboard() {
+  var d = window._statusData;
+  var grid = document.getElementById('dash-grid');
+  if (!grid) return;
+  if (!d) { return; }
+
+  var lightsOn = 0, lightsTotal = 0;
+  if (d.lights) { Object.values(d.lights).forEach(function(v) {
+    lightsTotal++;
+    if ((typeof v === 'object' ? v.state : v) === 'on') lightsOn++;
+  }); }
+
+  var homeCount = 0, totalCount = 0;
+  if (d.family) { Object.values(d.family).forEach(function(v) {
+    totalCount++;
+    if ((typeof v === 'object' ? v.state : v) === 'home') homeCount++;
+  }); }
+
+  var power = d.power != null ? Math.round(parseFloat(d.power)) + ' Вт' : '— Вт';
+  var powerColor = d.power > 3000 ? '#f87171' : d.power > 1500 ? '#fbbf24' : '#34d399';
+  var temp  = d.temp_detskaia != null ? parseFloat(d.temp_detskaia).toFixed(1) + '°' : '—°';
+  var wt    = (d.weather && d.weather.temp != null) ? parseFloat(d.weather.temp).toFixed(0) + '°' : '';
+
+  var nextPrayer = '';
+  if (window._lastPrayers) {
+    var now = new Date(); var nowMin = now.getHours() * 60 + now.getMinutes();
+    var pNames = {fajr:'Фаджр',dhuhr:'Зухр',asr:'Аср',maghrib:'Магриб',isha:'Иша'};
+    Object.entries(pNames).some(function(kv) {
+      var t = window._lastPrayers[kv[0]]; if (!t) return false;
+      var pts = t.split(':'); var pm = parseInt(pts[0])*60 + parseInt(pts[1]);
+      if (pm > nowMin) { nextPrayer = kv[1] + ' ' + t; return true; }
+      return false;
+    });
+    if (!nextPrayer) nextPrayer = 'Фаджр завтра';
+  }
+
+  grid.innerHTML =
+    '<div class="dash-widget" onclick="showPage(\'data\')">' +
+      '<div class="dw-glow" style="background:linear-gradient(135deg,' + powerColor + ',transparent)"></div>' +
+      '<div class="dw-icon">⚡</div>' +
+      '<div class="dw-val" style="color:' + powerColor + '">' + power + '</div>' +
+      '<div class="dw-label">Мощность</div>' +
+    '</div>' +
+    '<div class="dash-widget" onclick="showPage(\'data\')">' +
+      '<div class="dw-glow" style="background:linear-gradient(135deg,#60a5fa,transparent)"></div>' +
+      '<div class="dw-icon">🌡️</div>' +
+      '<div class="dw-val">' + temp + '</div>' +
+      '<div class="dw-label">Температура</div>' +
+    '</div>' +
+    '<div class="dash-widget" onclick="showPage(\'control\')">' +
+      '<div class="dw-glow" style="background:linear-gradient(135deg,#fbbf24,transparent)"></div>' +
+      '<div class="dw-icon">💡</div>' +
+      '<div class="dw-val">' + lightsOn + '<span style="font-size:13px;color:#64748b;font-weight:500">/' + lightsTotal + '</span></div>' +
+      '<div class="dw-label">Свет вкл</div>' +
+    '</div>' +
+    '<div class="dash-widget" onclick="showPage(\'family\')">' +
+      '<div class="dw-glow" style="background:linear-gradient(135deg,#34d399,transparent)"></div>' +
+      '<div class="dw-icon">🏠</div>' +
+      '<div class="dw-val" style="color:' + (homeCount > 0 ? '#34d399' : '#64748b') + '">' + homeCount + '<span style="font-size:13px;color:#64748b;font-weight:500">/' + totalCount + '</span></div>' +
+      '<div class="dw-label">Дома</div>' +
+    '</div>' +
+    (nextPrayer
+      ? '<div class="dash-widget wide" onclick="showPage(\'more\')">' +
+          '<div style="display:flex;align-items:center;gap:10px">' +
+            '<span style="font-size:20px">🕌</span>' +
+            '<div><div class="dw-val" style="font-size:15px">' + escapeHtml(nextPrayer) + '</div><div class="dw-label">Следующий намаз</div></div>' +
+            (wt ? '<span style="margin-left:auto;font-size:18px;color:#94a3b8">' + wt + '</span>' : '') +
+          '</div>' +
+        '</div>'
+      : '');
+
+  // Scenes quick strip
+  var dsEl = document.getElementById('dash-scenes');
+  if (dsEl && Object.keys(_lastScenesData).length) {
+    var scEntries = Object.entries(_lastScenesData).filter(function(kv) { return kv[0] !== '__home_away__'; });
+    if (scEntries.length) {
+      dsEl.innerHTML = scEntries.slice(0, 8).map(function(kv) {
+        var id = kv[0], sc = kv[1];
+        var grad = _sceneGradient(sc.icon || '🎬');
+        return '<button class="qs-scene-chip" style="border-color:' + grad.border + '" onclick="runScene(\'' + escapeAttr(id) + '\',null)">' +
+               (sc.icon || '🎬') + ' ' + escapeHtml(sc.name || id) + '</button>';
+      }).join('');
+    }
+  }
+}
+
+// ── Context Banner ──────────────────────────────────────────────────────────
+var _ctxActionFn = null;
+
+function showContextBanner() {
+  var banner = document.getElementById('ctx-banner');
+  if (!banner) return;
+  var h = new Date().getHours();
+  var d = window._statusData || {};
+  var ctx = null;
+
+  if (h >= 6 && h < 9) {
+    ctx = { emoji:'☀️', text:'Доброе утро! Запустить утренний сценарий?', btn:'Утро', act: function() { qsAction('morning'); } };
+  } else if (h >= 22 || h < 2) {
+    var lightsAnyOn = d.lights && Object.values(d.lights).some(function(v) { return (typeof v==='object'?v.state:v)==='on'; });
+    if (lightsAnyOn) {
+      ctx = { emoji:'🌙', text:'Поздно. Выключить весь свет?', btn:'Выключить', act: function() { qsAction('lights_off'); } };
+    }
+  } else if (d.family && Object.keys(d.family).length > 0) {
+    var allAway = Object.values(d.family).every(function(v) { return (typeof v==='object'?v.state:v) !== 'home'; });
+    if (allAway && h >= 9 && h < 20) {
+      ctx = { emoji:'🚪', text:'Все ушли из дома. Включить режим Away?', btn:'Уйти', act: function() { homeAwayTap(); } };
+    }
+  }
+
+  if (!ctx) { banner.style.display = 'none'; return; }
+  document.getElementById('ctx-banner-emoji').textContent = ctx.emoji;
+  document.getElementById('ctx-banner-text').textContent = ctx.text;
+  var btn = document.getElementById('ctx-banner-btn');
+  if (btn) btn.textContent = ctx.btn;
+  _ctxActionFn = ctx.act;
+  banner.style.display = 'flex';
+}
+
+function _ctxAction() {
+  document.getElementById('ctx-banner').style.display = 'none';
+  if (_ctxActionFn) _ctxActionFn();
+}
+
+// ── Energy Chart ────────────────────────────────────────────────────────────
+var _energyHistory = {};
+
+function energyChartUpdate(watts) {
+  if (watts == null) return;
+  var now = new Date();
+  var key = now.getFullYear() + '-' + now.getMonth() + '-' + now.getDate() + '-' + now.getHours();
+  _energyHistory[key] = parseFloat(watts);
+  var keys = Object.keys(_energyHistory);
+  if (keys.length > 48) { delete _energyHistory[keys[0]]; }
+  try { localStorage.setItem('ha_energy_hist', JSON.stringify(_energyHistory)); } catch(e) {}
+  energyChartRender();
+}
+
+function energyChartRender() {
+  var barsEl = document.getElementById('energy-bars');
+  var xEl    = document.getElementById('energy-xaxis');
+  if (!barsEl) return;
+  if (!Object.keys(_energyHistory).length) {
+    try { var s = localStorage.getItem('ha_energy_hist'); if (s) _energyHistory = JSON.parse(s); } catch(e) {}
+  }
+  var now = new Date();
+  var slots = [];
+  for (var i = 23; i >= 0; i--) {
+    var d2 = new Date(now.getTime() - i * 3600000);
+    var key = d2.getFullYear() + '-' + d2.getMonth() + '-' + d2.getDate() + '-' + d2.getHours();
+    slots.push({ hour: d2.getHours(), key: key, watts: _energyHistory[key] || 0, current: i === 0 });
+  }
+  var maxW = Math.max.apply(null, slots.map(function(s) { return s.watts; })) || 1;
+  barsEl.innerHTML = slots.map(function(s) {
+    var h = s.watts > 0 ? Math.max(4, Math.round(s.watts / maxW * 50)) : 4;
+    var cls = s.current ? 'current' : (s.watts > 0 && s.watts === maxW ? 'peak' : '');
+    return '<div class="energy-bar ' + cls + '" style="height:' + h + 'px" title="' + s.hour + ':00 — ' + s.watts + ' Вт"></div>';
+  }).join('');
+  if (xEl) xEl.innerHTML = '<span>0ч</span><span>6ч</span><span>12ч</span><span>18ч</span><span>сейчас</span>';
+}
+
+// ── Security Panel ──────────────────────────────────────────────────────────
+function loadSecurityPanel() {
+  var el = document.getElementById('security-panel-content');
+  if (!el) return;
+  var d = window._statusData || {};
+  var fam = d.family || {};
+  var anyHome = Object.values(fam).some(function(v) { return (typeof v==='object'?v.state:v)==='home'; });
+  var allAway = Object.keys(fam).length > 0 && !anyHome;
+
+  var html = '<div class="sec-alarm-bar' + (allAway ? ' armed' : '') + '">' +
+    '<span style="font-size:20px">' + (allAway ? '🔒' : '🔓') + '</span>' +
+    '<span>' + (allAway ? 'Все ушли — охрана' : anyHome ? 'Кто-то дома' : 'Нет данных') + '</span>' +
+    '<button onclick="homeAwayTap()" style="margin-left:auto;background:none;border:1px solid currentColor;border-radius:20px;padding:4px 12px;font-size:12px;cursor:pointer;color:inherit;font-family:inherit;font-weight:700">' +
+    (allAway ? '🏠 Домой' : '🚪 Уйти') + '</button></div>';
+
+  if (Object.keys(fam).length) {
+    html += '<div class="qs-section-label" style="margin-bottom:8px">👤 Присутствие</div><div class="sec-grid">';
+    Object.entries(fam).forEach(function(kv) {
+      var state = typeof kv[1]==='object' ? kv[1].state : kv[1];
+      var isHome = state === 'home';
+      html += '<div class="sec-sensor"><div class="sec-dot' + (isHome ? '' : ' open') + '"></div>' +
+        '<span>' + escapeHtml(kv[0]) + '</span>' +
+        '<span style="margin-left:auto;font-size:12px">' + (isHome ? '🏠' : '🚗') + '</span></div>';
+    });
+    html += '</div>';
+  }
+
+  if (d.lights && Object.keys(d.lights).length) {
+    html += '<div class="qs-section-label" style="margin:12px 0 8px">💡 Состояние света</div><div class="sec-grid">';
+    Object.entries(d.lights).forEach(function(kv) {
+      var info = kv[1]; var state = typeof info==='object' ? info.state : info;
+      var rawName = typeof info==='object' ? (info.name || kv[0]) : kv[0];
+      var icon = typeof info==='object' ? (info.icon || '💡') : '💡';
+      var isOn = state === 'on';
+      html += '<div class="sec-sensor"><span style="font-size:16px">' + icon + '</span>' +
+        '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(rawName.replace(/^\S+\s/,'')) + '</span>' +
+        '<div class="sec-dot" style="background:' + (isOn?'#fbbf24':'#374151') + ';box-shadow:' + (isOn?'0 0 6px rgba(251,191,36,0.5)':'none') + '"></div></div>';
+    });
+    html += '</div>';
+  }
+  el.innerHTML = html;
+}
+
+// ── Geofencing ──────────────────────────────────────────────────────────────
+var _geoWatchId = null;
+var _geoLastState = null;
+var _GEO_RADIUS_M = 200;
+
+function geoToggle() {
+  if (_geoWatchId !== null) { geoStop(); } else { geoStart(); }
+}
+
+function geoStart() {
+  if (!navigator.geolocation) { showToast('⚠️ Геолокация не поддерживается'); return; }
+  var homeCoords = null;
+  try { var s = localStorage.getItem('ha_home_coords'); if (s) homeCoords = JSON.parse(s); } catch(e) {}
+  if (!homeCoords) {
+    if (confirm('Сохранить текущее местоположение как «Дом» (радиус ' + _GEO_RADIUS_M + ' м)?')) {
+      navigator.geolocation.getCurrentPosition(function(pos) {
+        homeCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+        localStorage.setItem('ha_home_coords', JSON.stringify(homeCoords));
+        showToast('🏠 Точка «Дом» сохранена');
+        _geoStartWatch(homeCoords);
+      }, function() { showToast('❌ Не удалось получить геолокацию'); });
+    }
+    return;
+  }
+  _geoStartWatch(homeCoords);
+}
+
+function _geoStartWatch(homeCoords) {
+  showToast('📍 Геофенсинг включён');
+  _geoUpdateChip(true);
+  _geoWatchId = navigator.geolocation.watchPosition(
+    function(pos) { _geoOnPosition(pos, homeCoords); },
+    function(e)   { console.warn('Geo error:', e.message); },
+    { enableHighAccuracy: false, timeout: 30000, maximumAge: 60000 }
+  );
+}
+
+function geoStop() {
+  if (_geoWatchId !== null) { navigator.geolocation.clearWatch(_geoWatchId); _geoWatchId = null; }
+  _geoLastState = null;
+  _geoUpdateChip(false);
+  showToast('📍 Геофенсинг выключен');
+}
+
+function _geoOnPosition(pos, homeCoords) {
+  var dist = _geoDistanceM(pos.coords.latitude, pos.coords.longitude, homeCoords.lat, homeCoords.lon);
+  var isHome = dist <= _GEO_RADIUS_M;
+  if (_geoLastState === isHome) return;
+  _geoLastState = isHome;
+  showToast(isHome ? '🏠 Дома (авто, ' + Math.round(dist) + ' м)' : '🚪 Вышел из дома (авто)');
+  homeAwayTap();
+}
+
+function _geoDistanceM(lat1, lon1, lat2, lon2) {
+  var R = 6371000, d2r = Math.PI/180;
+  var dLat = (lat2-lat1)*d2r, dLon = (lon2-lon1)*d2r;
+  var a = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(lat1*d2r)*Math.cos(lat2*d2r)*Math.sin(dLon/2)*Math.sin(dLon/2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function _geoUpdateChip(active) {
+  var chip = document.getElementById('geo-chip-btn');
+  if (chip) { chip.className = 'geo-chip' + (active ? '' : ' off'); chip.textContent = active ? '📍 Авто' : '📍 Выкл'; }
+}
+
+// ── Accent Color ─────────────────────────────────────────────────────────────
+function accentSet(a1, a2) {
+  document.documentElement.style.setProperty('--accent',  a1);
+  document.documentElement.style.setProperty('--accent2', a2 || a1);
+  var hex = a1.replace('#','');
+  var r = parseInt(hex.slice(0,2),16), g = parseInt(hex.slice(2,4),16), b = parseInt(hex.slice(4,6),16);
+  document.documentElement.style.setProperty('--glow1', 'rgba('+r+','+g+','+b+',0.20)');
+  document.documentElement.style.setProperty('--glow2', 'rgba('+r+','+g+','+b+',0.12)');
+  document.documentElement.style.setProperty('--glow3', 'rgba('+r+','+g+','+b+',0.05)');
+  document.querySelectorAll('.accent-dot').forEach(function(d) {
+    d.classList.toggle('active', d.style.background === a1);
+  });
+  try { localStorage.setItem('ha_accent', JSON.stringify({a1:a1,a2:a2})); } catch(e) {}
+}
+
+// ── Ripple Effect ────────────────────────────────────────────────────────────
+function _addRipple(el, clientX, clientY) {
+  var rect = el.getBoundingClientRect();
+  var x = (clientX || rect.left + rect.width/2) - rect.left;
+  var y = (clientY || rect.top + rect.height/2) - rect.top;
+  var r = document.createElement('span');
+  r.className = 'ripple-fx';
+  r.style.left = x + 'px'; r.style.top = y + 'px';
+  el.classList.add('ripple-container');
+  el.appendChild(r);
+  r.addEventListener('animationend', function() { r.remove(); });
+}
+document.addEventListener('click', function(e) {
+  var t = e.target.closest('.btn,.dash-widget,.bnav-tab,.qs-action-btn,.qs-scene-chip,.ctx-banner-action');
+  if (t) _addRipple(t, e.clientX, e.clientY);
+}, { passive: true });
+
+// ── Enhanced haptic patterns ─────────────────────────────────────────────────
+function hapticToggle()  { try { if (navigator.vibrate) navigator.vibrate([10,25,10]); } catch(e) {} }
+function hapticError()   { try { if (navigator.vibrate) navigator.vibrate([60,30,60,30,100]); } catch(e) {} }
+function hapticSuccess() { try { if (navigator.vibrate) navigator.vibrate([10,20,30]); } catch(e) {} }
 
 // ── Status bar ─────────────────────────────────────────────────────────────
 function updateStatusBar(d) {
