@@ -4661,7 +4661,11 @@ let _haAvatarVer    = Date.now(); // bumped after avatar upload to bust cache
 // SECTION_PERM_MAP removed — sections now use data-section-perm attribute directly
 
 function applyRolePermissions(perms) {
-    if (HA_USER_ROLE === 'admin') return; // admin sees everything
+    if (HA_USER_ROLE === 'admin') {
+        // Clear any permission-based hiding so admin always sees all sections
+        document.querySelectorAll('[data-section-perm]').forEach(el => el.style.display = '');
+        return;
+    }
     if (!perms || typeof perms !== 'object') return;
     // Cache permissions in localStorage so they survive page reloads
     localStorage.setItem('ha_permissions', JSON.stringify(perms));
@@ -10831,6 +10835,7 @@ function admShow() {
     const sec = document.getElementById('sec-admin');
     if (sec) {
         sec.style.display = '';
+        sec.classList.remove('layout-hidden');
         admInitPerms();
     }
     const editBtn = document.getElementById('edit-mode-btn');
