@@ -5,6 +5,18 @@ Format: [version] — date | summary
 
 ---
 
+## [v2.7.0] — 2026-03-18
+
+### ✨ New — Interface Layout Editor
+- **🎛️ Full layout editor** — button in app header opens full-screen editor with 2 tabs: Sections and Navigation
+- **Section management** — show/hide any section, reassign between pages (🏠/👨‍👩‍👦/💡/📊/☰), reorder with ↑↓ arrows; 16 managed sections total
+- **Navigation customization** — change icon (emoji) and label for each of the 5 bottom nav tabs with live preview
+- **Persistent layout** — saved to `localStorage` as `ha_layout_v1`, survives reload; Reset button to restore defaults
+- **DOM-level reordering** — sections are physically reordered in the DOM via `insertBefore()`, preserving all event listeners and state
+- **SW cache bump** — smarthome-v35
+
+---
+
 ## [v2.6.0] — 2026-03-18
 
 ### ✨ New — Navigation & Structure

@@ -2721,7 +2721,121 @@ body.fab-open .fab-backdrop { display: block; }
 
 /* ══════════════════════════════════════════════════════════════════
    BOTTOM NAV + PAGES + NEW FEATURES  (v2.6.0)
+   LAYOUT EDITOR  (v2.7.0)
    ══════════════════════════════════════════════════════════════════ */
+
+/* ── Layout hidden (user-controlled) ──────────────────────────────── */
+.layout-hidden { display: none !important; }
+
+/* ── Layout Editor full-screen sheet ──────────────────────────────── */
+.le-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.55); z-index: 600;
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+}
+.le-overlay.open { display: block; }
+.le-sheet {
+  position: fixed; inset: 0; z-index: 601;
+  background: #0c0c22;
+  display: flex; flex-direction: column;
+  transform: translateY(100%);
+  transition: transform 0.34s cubic-bezier(0.32,0.72,0,1);
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.le-sheet.open { transform: translateY(0); }
+.le-hdr {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 18px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.07); flex-shrink: 0;
+}
+.le-hdr-title { font-size: 16px; font-weight: 700; color: #e2e8f0; flex: 1; }
+.le-hdr-btn {
+  padding: 6px 13px; border-radius: 20px; border: none; cursor: pointer;
+  font-size: 12px; font-weight: 700; font-family: inherit;
+  background: rgba(255,255,255,0.07); color: rgba(180,180,220,0.8);
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+.le-hdr-btn.danger { background: rgba(239,68,68,0.12); color: #f87171; }
+.le-hdr-btn.accent { background: rgba(99,102,241,0.22); color: #a5b4fc; }
+.le-tabs {
+  display: flex; gap: 0; padding: 0 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.06); flex-shrink: 0;
+}
+.le-tab {
+  padding: 10px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+  border: none; background: none; color: rgba(140,140,190,0.6); font-family: inherit;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  touch-action: manipulation; transition: color 0.15s, border-color 0.15s;
+}
+.le-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.le-body { flex: 1; overflow-y: auto; padding: 10px 16px 30px; }
+/* Section rows */
+.le-page-group { margin-bottom: 18px; }
+.le-page-label {
+  font-size: 10px; font-weight: 700; color: rgba(120,120,175,0.5);
+  text-transform: uppercase; letter-spacing: 0.7px; margin-bottom: 6px;
+}
+.le-row {
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px; padding: 10px 12px; margin-bottom: 6px;
+  touch-action: manipulation;
+}
+.le-vis-dot {
+  width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid rgba(255,255,255,0.2); cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.le-vis-dot.on  { background: #34d399; border-color: rgba(52,211,153,0.6); }
+.le-vis-dot.off { background: transparent; }
+.le-row-icon { font-size: 18px; flex-shrink: 0; cursor: pointer; }
+.le-row-name { flex: 1; font-size: 13px; font-weight: 600; color: rgba(190,190,230,0.85); min-width: 0; }
+.le-row.hidden-row .le-row-name { color: rgba(130,130,160,0.5); }
+.le-page-chips { display: flex; gap: 4px; flex-shrink: 0; }
+.le-chip {
+  width: 28px; height: 28px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.04); font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; touch-action: manipulation; transition: all 0.13s;
+  -webkit-tap-highlight-color: transparent;
+}
+.le-chip:active { transform: scale(0.86); }
+.le-chip.active { background: rgba(99,102,241,0.28); border-color: rgba(99,102,241,0.5); box-shadow: 0 0 8px rgba(99,102,241,0.25); }
+.le-chip.hide-chip { font-size: 11px; border-color: rgba(239,68,68,0.2); }
+.le-chip.hide-chip.active { background: rgba(239,68,68,0.2); border-color: rgba(239,68,68,0.5); }
+/* Order arrows */
+.le-arrows { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
+.le-arr {
+  width: 22px; height: 18px; border-radius: 5px; border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.04); color: rgba(160,160,200,0.7); font-size: 10px;
+  cursor: pointer; touch-action: manipulation; display: flex; align-items: center; justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+}
+.le-arr:active { background: rgba(255,255,255,0.12); }
+/* Icon editor row */
+.le-icon-edit {
+  display: flex; align-items: center; gap: 8px; padding: 4px 0;
+}
+.le-emoji-in {
+  width: 40px; height: 36px; text-align: center; font-size: 18px;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 9px; color: #e2e8f0; outline: none; font-family: inherit;
+}
+.le-label-in {
+  flex: 1; height: 36px; padding: 0 10px; font-size: 13px; font-weight: 600;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 9px; color: #e2e8f0; outline: none; font-family: inherit;
+}
+.le-nav-row {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+}
+.le-nav-preview {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  width: 52px; height: 48px; border-radius: 12px; flex-shrink: 0; gap: 2px;
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07);
+  font-size: 18px; color: var(--accent);
+}
+.le-nav-preview span { font-size: 9px; font-weight: 700; color: rgba(140,140,190,0.6); }
 
 /* ── Bottom Navigation ─────────────────────────────────────────────── */
 .bottom-nav {
@@ -2966,6 +3080,7 @@ body.fab-open .fab-backdrop { display: block; }
     <div style="display:flex;align-items:center;gap:8px">
       <span class="last-updated" id="last-updated">—</span>
       <button id="edit-mode-btn" onclick="editModeToggle()" title="Редактировать разделы">✏️</button>
+      <button id="le-open-btn" onclick="leOpen()" title="Редактор интерфейса" style="font-size:16px">🎛️</button>
       <button id="theme-btn" onclick="themePickerToggle()" title="Сменить тему">🎨</button>
       <div id="user-badge" onclick="showUserMenu()" title="Аккаунт"
         style="display:flex;align-items:center;gap:6px;cursor:pointer;
@@ -3751,6 +3866,21 @@ body.fab-open .fab-backdrop { display: block; }
                background:linear-gradient(135deg,var(--accent),var(--accent2));
                color:#fff;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit">Запустить</button>
     </div>
+  </div>
+
+  <!-- ── Layout Editor ── -->
+  <div class="le-overlay" id="le-overlay" onclick="leClose()"></div>
+  <div class="le-sheet" id="le-sheet">
+    <div class="le-hdr">
+      <span class="le-hdr-title">🎛️ Редактор интерфейса</span>
+      <button class="le-hdr-btn danger" onclick="leReset()">↺ Сброс</button>
+      <button class="le-hdr-btn accent" onclick="leClose()">✓ Готово</button>
+    </div>
+    <div class="le-tabs">
+      <button class="le-tab active" id="le-tab-sections" onclick="leTabSwitch('sections')">📋 Разделы</button>
+      <button class="le-tab" id="le-tab-nav"      onclick="leTabSwitch('nav')">🧭 Навигация</button>
+    </div>
+    <div class="le-body" id="le-body"></div>
   </div>
 
   <!-- ── Bottom Navigation ── -->
@@ -11152,6 +11282,308 @@ document.addEventListener('click', function(e) {
   var t = e.target.closest('.btn,.dash-widget,.bnav-tab,.qs-action-btn,.qs-scene-chip,.ctx-banner-action');
   if (t) _addRipple(t, e.clientX, e.clientY);
 }, { passive: true });
+
+// ══════════════════════════════════════════════════════════════════
+//  LAYOUT EDITOR  v2.7.0
+// ══════════════════════════════════════════════════════════════════
+
+var _LE_PAGE_ICONS  = { home:'🏠', family:'👨‍👩‍👦', control:'💡', data:'📊', more:'☰' };
+var _LE_PAGE_LABELS = { home:'Главная', family:'Семья', control:'Управление', data:'Данные', more:'Ещё' };
+
+var _LAYOUT_DEFAULTS = {
+  sections: [
+    {id:'status',   page:'data',    visible:true,  order:0, icon:'📊', title:'Статус'},
+    {id:'family',   page:'family',  visible:true,  order:0, icon:'👨‍👩‍👦', title:'Семья'},
+    {id:'timeline', page:'family',  visible:true,  order:1, icon:'⏱',  title:'Активность'},
+    {id:'presence', page:'family',  visible:true,  order:2, icon:'📊', title:'Кто дома'},
+    {id:'faces',    page:'data',    visible:true,  order:1, icon:'🚪', title:'У двери'},
+    {id:'energy',   page:'data',    visible:true,  order:2, icon:'⚡', title:'Энергия'},
+    {id:'lights',   page:'control', visible:true,  order:0, icon:'💡', title:'Свет'},
+    {id:'climate',  page:'control', visible:true,  order:1, icon:'🌡️', title:'Климат'},
+    {id:'tv',       page:'control', visible:false, order:2, icon:'📺', title:'Телевизор'},
+    {id:'vacuum',   page:'control', visible:true,  order:3, icon:'🤖', title:'Пылесос'},
+    {id:'scenes',   page:'control', visible:true,  order:4, icon:'🎭', title:'Сцены'},
+    {id:'security', page:'control', visible:true,  order:5, icon:'🔒', title:'Безопасность'},
+    {id:'prayers',  page:'more',    visible:true,  order:0, icon:'🕌', title:'Намаз'},
+    {id:'weather',  page:'more',    visible:true,  order:1, icon:'🌤️', title:'Погода'},
+    {id:'shopping', page:'more',    visible:true,  order:2, icon:'🛒', title:'Покупки'},
+    {id:'admin',    page:'more',    visible:false, order:3, icon:'👑', title:'Администрирование'},
+  ],
+  nav: [
+    {id:'home',    icon:'🏠', label:'Главная'},
+    {id:'family',  icon:'👨‍👩‍👦', label:'Семья'},
+    {id:'control', icon:'💡', label:'Управление'},
+    {id:'data',    icon:'📊', label:'Данные'},
+    {id:'more',    icon:'☰',  label:'Ещё'},
+  ]
+};
+
+var _SECT_BODY_IDS = {
+  'status':   'sec-status-body',   'family':   'sec-family-body',
+  'timeline': 'sec-timeline-body', 'presence': 'sec-presence-body',
+  'faces':    'sec-faces-body',    'energy':   'sec-energy-body',
+  'lights':   'sec-lights-body',   'climate':  'sec-climate-body',
+  'tv':       'sec-tv-body',       'vacuum':   'sec-vacuum-body',
+  'scenes':   'sec-scenes-body',   'security': 'sec-security-body',
+  'prayers':  'sec-prayers-body',  'weather':  'sec-weather-body',
+  'shopping': 'sec-shopping-body', 'admin':    'sec-admin-body',
+};
+
+var _layoutCfg = null;
+
+function _layoutLoad() {
+  if (_layoutCfg) return _layoutCfg;
+  try {
+    var saved = localStorage.getItem('ha_layout_v1');
+    if (saved) { _layoutCfg = JSON.parse(saved); return _layoutCfg; }
+  } catch(e) {}
+  _layoutCfg = JSON.parse(JSON.stringify(_LAYOUT_DEFAULTS));
+  return _layoutCfg;
+}
+
+function _layoutSave() {
+  try { localStorage.setItem('ha_layout_v1', JSON.stringify(_layoutCfg)); } catch(e) {}
+}
+
+function _getSectionEl(id) {
+  var bodyId = _SECT_BODY_IDS[id];
+  if (!bodyId) return null;
+  var body = document.getElementById(bodyId);
+  return body ? body.closest('.section') : null;
+}
+
+function applyLayout() {
+  var cfg = _layoutLoad();
+  // Sort: page group order → within-page order
+  var pgOrd = {home:0, family:1, control:2, data:3, more:4};
+  var sorted = cfg.sections.slice().sort(function(a, b) {
+    var pa = pgOrd[a.page] != null ? pgOrd[a.page] : 99;
+    var pb = pgOrd[b.page] != null ? pgOrd[b.page] : 99;
+    if (pa !== pb) return pa - pb;
+    return (a.order || 0) - (b.order || 0);
+  });
+
+  // Anchor: sections go right before .fab-backdrop in #app
+  var app = document.getElementById('app');
+  var anchor = document.querySelector('.fab-backdrop');
+
+  sorted.forEach(function(s) {
+    var el = _getSectionEl(s.id);
+    if (!el) return;
+    el.dataset.page = s.page;
+    if (s.visible) el.classList.remove('layout-hidden');
+    else           el.classList.add('layout-hidden');
+    if (anchor) app.insertBefore(el, anchor);
+  });
+
+  // Apply nav icons/labels
+  cfg.nav.forEach(function(n) {
+    var tab = document.getElementById('bnav-' + n.id);
+    if (!tab) return;
+    var ic = tab.querySelector('.bnav-ic');
+    var lb = tab.querySelector('.bnav-lb');
+    if (ic) ic.textContent = n.icon;
+    if (lb) lb.textContent = n.label;
+  });
+}
+
+// ── Layout Editor UI ─────────────────────────────────────────────────────────
+var _leTab = 'sections';
+
+function leOpen() {
+  _layoutLoad();
+  document.getElementById('le-overlay').classList.add('open');
+  document.getElementById('le-sheet').classList.add('open');
+  leTabSwitch('sections');
+  haptic(10);
+}
+
+function leClose() {
+  document.getElementById('le-overlay').classList.remove('open');
+  document.getElementById('le-sheet').classList.remove('open');
+}
+
+function leTabSwitch(tab) {
+  _leTab = tab;
+  ['sections','nav'].forEach(function(t) {
+    document.getElementById('le-tab-' + t).classList.toggle('active', t === tab);
+  });
+  leRender();
+}
+
+function leRender() {
+  var body = document.getElementById('le-body');
+  if (!body) return;
+  if (_leTab === 'sections') leRenderSections(body);
+  else leRenderNav(body);
+}
+
+function leRenderSections(body) {
+  var cfg = _layoutCfg;
+  var pgOrd = ['home','family','control','data','more'];
+  var pages = {};
+  pgOrd.forEach(function(p) { pages[p] = []; });
+
+  cfg.sections.forEach(function(s) {
+    if (pages[s.page]) pages[s.page].push(s);
+    else pages['more'].push(s);
+  });
+  pgOrd.forEach(function(p) { pages[p].sort(function(a,b) { return (a.order||0)-(b.order||0); }); });
+
+  var html = '<div style="font-size:12px;color:rgba(130,130,180,0.55);margin-bottom:12px;line-height:1.5">' +
+    '🔵 = видимый раздел. Тапни точку для скрытия/показа.<br>Чипы страниц — перенести раздел. ↑↓ — порядок внутри страницы.</div>';
+
+  pgOrd.forEach(function(page) {
+    var secs = pages[page];
+    html += '<div class="le-page-group">';
+    html += '<div class="le-page-label">' + _LE_PAGE_ICONS[page] + ' ' + _LE_PAGE_LABELS[page] + '</div>';
+    if (!secs.length) {
+      html += '<div style="color:#60608a;font-size:12px;padding:6px 0">— пусто —</div>';
+    }
+    secs.forEach(function(s) {
+      var isOn = s.visible !== false;
+      html += '<div class="le-row' + (isOn ? '' : ' hidden-row') + '" id="le-row-' + s.id + '">' +
+        '<div class="le-vis-dot ' + (isOn ? 'on' : 'off') + '" onclick="leToggleVis(\'' + s.id + '\')" title="' + (isOn ? 'Скрыть' : 'Показать') + '"></div>' +
+        '<span class="le-row-icon" onclick="lePickIcon(\'' + s.id + '\')" title="Сменить иконку">' + escapeHtml(s.icon) + '</span>' +
+        '<span class="le-row-name">' + escapeHtml(s.title) + '</span>' +
+        '<div class="le-page-chips">';
+      pgOrd.forEach(function(p) {
+        html += '<div class="le-chip' + (p === s.page ? ' active' : '') + '" onclick="leSetPage(\'' + s.id + '\',\'' + p + '\')" title="' + _LE_PAGE_LABELS[p] + '">' + _LE_PAGE_ICONS[p] + '</div>';
+      });
+      html += '</div>' +
+        '<div class="le-arrows">' +
+          '<button class="le-arr" onclick="leMoveUp(\'' + s.id + '\')">▲</button>' +
+          '<button class="le-arr" onclick="leMoveDown(\'' + s.id + '\')">▼</button>' +
+        '</div>' +
+      '</div>';
+    });
+    html += '</div>';
+  });
+
+  body.innerHTML = html;
+}
+
+function leRenderNav(body) {
+  var cfg = _layoutCfg;
+  var html = '<div style="font-size:12px;color:rgba(130,130,180,0.55);margin-bottom:14px;line-height:1.5">' +
+    'Измени иконку (один эмодзи) и название каждой вкладки навигации.</div>';
+
+  cfg.nav.forEach(function(n) {
+    html += '<div class="le-nav-row">' +
+      '<div class="le-nav-preview" id="le-nav-prev-' + n.id + '">' +
+        '<span class="le-np-ic">' + escapeHtml(n.icon) + '</span>' +
+        '<span>' + escapeHtml(n.label.slice(0,7)) + '</span>' +
+      '</div>' +
+      '<input class="le-emoji-in" id="le-ni-' + n.id + '" value="' + escapeHtml(n.icon) + '" maxlength="2" ' +
+        'oninput="leNavIcon(\'' + n.id + '\',this.value)">' +
+      '<input class="le-label-in" id="le-nl-' + n.id + '" value="' + escapeHtml(n.label) + '" maxlength="12" ' +
+        'placeholder="Название" oninput="leNavLabel(\'' + n.id + '\',this.value)">' +
+    '</div>';
+  });
+
+  body.innerHTML = html;
+}
+
+// ── Editor actions ───────────────────────────────────────────────────────────
+
+function leToggleVis(id) {
+  var s = _layoutCfg.sections.find(function(x) { return x.id === id; });
+  if (!s) return;
+  s.visible = !s.visible;
+  _layoutSave();
+  applyLayout();
+  leRender();
+  haptic(8);
+}
+
+function leSetPage(id, page) {
+  var s = _layoutCfg.sections.find(function(x) { return x.id === id; });
+  if (!s || s.page === page) return;
+  s.page = page;
+  // Append at end of target page
+  var maxOrd = 0;
+  _layoutCfg.sections.forEach(function(x) { if (x.page === page && x.id !== id) maxOrd = Math.max(maxOrd, x.order||0); });
+  s.order = maxOrd + 1;
+  _layoutSave();
+  applyLayout();
+  leRender();
+  haptic(8);
+}
+
+function leMoveUp(id) {
+  var s   = _layoutCfg.sections.find(function(x) { return x.id === id; });
+  if (!s) return;
+  var same = _layoutCfg.sections.filter(function(x) { return x.page === s.page; }).sort(function(a,b){ return (a.order||0)-(b.order||0); });
+  var idx  = same.findIndex(function(x) { return x.id === id; });
+  if (idx <= 0) return;
+  var prev = same[idx - 1];
+  var tmp  = s.order; s.order = prev.order; prev.order = tmp;
+  _layoutSave(); applyLayout(); leRender(); haptic(8);
+}
+
+function leMoveDown(id) {
+  var s   = _layoutCfg.sections.find(function(x) { return x.id === id; });
+  if (!s) return;
+  var same = _layoutCfg.sections.filter(function(x) { return x.page === s.page; }).sort(function(a,b){ return (a.order||0)-(b.order||0); });
+  var idx  = same.findIndex(function(x) { return x.id === id; });
+  if (idx >= same.length - 1) return;
+  var next = same[idx + 1];
+  var tmp  = s.order; s.order = next.order; next.order = tmp;
+  _layoutSave(); applyLayout(); leRender(); haptic(8);
+}
+
+function lePickIcon(id) {
+  var s = _layoutCfg.sections.find(function(x) { return x.id === id; });
+  if (!s) return;
+  var emoji = prompt('Введи эмодзи для раздела «' + s.title + '»:', s.icon);
+  if (!emoji) return;
+  s.icon = emoji.trim().slice(0, 2);
+  // Also update section header in DOM
+  var el = _getSectionEl(id);
+  if (el) {
+    var hdr = el.querySelector('.section-header span');
+    if (hdr) hdr.textContent = s.icon + ' ' + s.title;
+  }
+  _layoutSave();
+  leRender();
+  haptic(8);
+}
+
+function leNavIcon(navId, val) {
+  var n = _layoutCfg.nav.find(function(x) { return x.id === navId; });
+  if (!n) return;
+  n.icon = val.trim().slice(0, 2) || n.icon;
+  var prev = document.getElementById('le-nav-prev-' + navId);
+  if (prev) { var ic = prev.querySelector('.le-np-ic'); if (ic) ic.textContent = n.icon; }
+  _layoutSave();
+  applyLayout();
+}
+
+function leNavLabel(navId, val) {
+  var n = _layoutCfg.nav.find(function(x) { return x.id === navId; });
+  if (!n) return;
+  n.label = val;
+  var prev = document.getElementById('le-nav-prev-' + navId);
+  if (prev) { var lb = prev.querySelector('span:last-child'); if (lb) lb.textContent = val.slice(0,7); }
+  _layoutSave();
+  applyLayout();
+}
+
+function leReset() {
+  if (!confirm('Сбросить все настройки интерфейса к заводским?')) return;
+  localStorage.removeItem('ha_layout_v1');
+  _layoutCfg = JSON.parse(JSON.stringify(_LAYOUT_DEFAULTS));
+  applyLayout();
+  leRender();
+  showToast('↺ Интерфейс сброшен');
+}
+
+// Init layout on app start
+(function() {
+  _layoutLoad();
+  // Defer applyLayout so DOM is ready
+  setTimeout(applyLayout, 0);
+})();
 
 // ── Enhanced haptic patterns ─────────────────────────────────────────────────
 function hapticToggle()  { try { if (navigator.vibrate) navigator.vibrate([10,25,10]); } catch(e) {} }
