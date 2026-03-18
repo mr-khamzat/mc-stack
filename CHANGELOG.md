@@ -5,6 +5,25 @@ Format: [version] — date | summary
 
 ---
 
+## [v2.5.0] — 2026-03-18
+
+### ✨ New — Quick Bottom Sheet (FAB)
+- **⚡ FAB now opens a slide-up panel** instead of the old radial menu
+- **Lights grid** — toggle each light on/off directly from the sheet (live state, yellow glow when on)
+- **Scenes strip** — horizontal scroll with one-tap scene chips (color-coded gradient borders)
+- **Quick action row** — 4 buttons: 🔌 Весь выкл / 🤖 Пылесос / 🌙 Ночной / ☀️ Утро
+  - Night/Morning auto-finds a matching scene by name or emoji from loaded scenes
+
+### ✨ New — Family section redesign
+- **Presence summary bar** — compact horizontal pills at the top of the Семья section; each pill shows avatar + name + green (home) or grey (away) dot; avatars load automatically
+- **Full-text tab labels** — tabs now show 💬 Чат / 🔔 Напом / 📸 Фото / 📞 Звонки (instead of emoji-only)
+- **Badge slot on Звонки tab** — unread missed-call counter ready
+
+### 🔧 Changed
+- **SW cache bump** — smarthome-v33 to invalidate cached assets
+
+---
+
 ## [v2.4.0] — 2026-03-18
 
 ### ✨ New — Friends App
