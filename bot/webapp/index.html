@@ -10915,7 +10915,7 @@ function renderDashboard() {
 
   // Scenes quick strip
   var dsEl = document.getElementById('dash-scenes');
-  if (dsEl && Object.keys(_lastScenesData).length) {
+  if (dsEl) {
     var scEntries = Object.entries(_lastScenesData).filter(function(kv) { return kv[0] !== '__home_away__'; });
     if (scEntries.length) {
       dsEl.innerHTML = scEntries.slice(0, 8).map(function(kv) {
@@ -10924,6 +10924,16 @@ function renderDashboard() {
         return '<button class="qs-scene-chip" style="border-color:' + grad.border + '" onclick="runScene(\'' + escapeAttr(id) + '\',null)">' +
                (sc.icon || '🎬') + ' ' + escapeHtml(sc.name || id) + '</button>';
       }).join('');
+    } else if (!_scenesLoaded) {
+      // Сцены ещё не загружены — грузим сейчас для дашборда
+      dsEl.innerHTML = '<div style="color:#60608a;font-size:12px;padding:4px">Загрузка...</div>';
+      api('/scenes').then(function(s) {
+        _lastScenesData = s;
+        _scenesLoaded = true;
+        renderDashboard();
+      }).catch(function() { dsEl.innerHTML = ''; });
+    } else {
+      dsEl.innerHTML = '';
     }
   }
 }
