@@ -3652,7 +3652,7 @@ body.fab-open .fab-backdrop { display: block; }
   </div>
 
   <!-- SHOPPING LIST -->
-  <div class="section" data-section-perm="shopping" data-page="more">
+  <div class="section" data-section-perm="shopping" data-page="family">
     <div class="section-header" onclick="toggleSection('sec-shopping-body'); if(!_shoppingLoaded) loadShopping()">
       <span>🛒 Список покупок</span>
       <span class="chevron">▾</span>
@@ -3723,7 +3723,7 @@ body.fab-open .fab-backdrop { display: block; }
   <div class="section" style="display:none"><div class="section-body" id="sec-settings-body"></div></div>
 
   <!-- ADMIN PANEL — contains all merged sections as tabs -->
-  <div class="section" id="sec-admin" style="display:none" data-page="more">
+  <div class="section" id="sec-admin" style="display:none" data-page="data">
     <div class="section-header" onclick="toggleSection('sec-admin-body')">
       <span>👑 Администрирование</span>
       <span class="chevron" id="sec-admin-chevron">▾</span>
@@ -11311,8 +11311,8 @@ var _LAYOUT_DEFAULTS = {
     {id:'security', page:'control', visible:true,  order:5, icon:'🔒', title:'Безопасность'},
     {id:'prayers',  page:'more',    visible:true,  order:0, icon:'🕌', title:'Намаз'},
     {id:'weather',  page:'more',    visible:true,  order:1, icon:'🌤️', title:'Погода'},
-    {id:'shopping', page:'more',    visible:true,  order:2, icon:'🛒', title:'Покупки'},
-    {id:'admin',    page:'more',    visible:false, order:3, icon:'👑', title:'Администрирование'},
+    {id:'shopping', page:'family',  visible:true,  order:3, icon:'🛒', title:'Покупки'},
+    {id:'admin',    page:'data',    visible:false, order:3, icon:'👑', title:'Администрирование'},
   ],
   nav: [
     {id:'home',    icon:'🏠', label:'Главная'},
@@ -11339,7 +11339,7 @@ var _layoutCfg = null;
 function _layoutLoad() {
   if (_layoutCfg) return _layoutCfg;
   try {
-    var saved = localStorage.getItem('ha_layout_v1');
+    var saved = localStorage.getItem('ha_layout_v2');
     if (saved) { _layoutCfg = JSON.parse(saved); return _layoutCfg; }
   } catch(e) {}
   _layoutCfg = JSON.parse(JSON.stringify(_LAYOUT_DEFAULTS));
@@ -11347,7 +11347,7 @@ function _layoutLoad() {
 }
 
 function _layoutSave() {
-  try { localStorage.setItem('ha_layout_v1', JSON.stringify(_layoutCfg)); } catch(e) {}
+  try { localStorage.setItem('ha_layout_v2', JSON.stringify(_layoutCfg)); } catch(e) {}
 }
 
 function _getSectionEl(id) {
@@ -11576,7 +11576,7 @@ function leNavLabel(navId, val) {
 
 function leReset() {
   if (!confirm('Сбросить все настройки интерфейса к заводским?')) return;
-  localStorage.removeItem('ha_layout_v1');
+  localStorage.removeItem('ha_layout_v2');
   _layoutCfg = JSON.parse(JSON.stringify(_LAYOUT_DEFAULTS));
   applyLayout();
   leRender();
