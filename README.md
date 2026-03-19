@@ -99,7 +99,34 @@ PWA (устанавливается на телефон), поддержкой �
 
 ---
 
-## Вариант 1: VPS (Ubuntu 22.04 / 24.04)
+## ⚡ Быстрая установка (один скрипт)
+
+### На VPS или внутри готового LXC (Ubuntu 22.04 / 24.04)
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/mr-khamzat/mc-stack/main/install/setup.sh)
+```
+
+Скрипт установит все зависимости, спросит настройки и запустит бота.
+
+### На Proxmox — создать LXC и установить всё автоматически
+
+```bash
+# Запускать на хосте Proxmox (не в контейнере!)
+bash <(curl -fsSL https://raw.githubusercontent.com/mr-khamzat/mc-stack/main/install/proxmox-create-lxc.sh)
+```
+
+Скрипт создаст LXC контейнер (Ubuntu 24.04, 512MB RAM) и запустит установку внутри.
+
+### Добавить Cloudflare Tunnel (Mini App без белого IP — бесплатно)
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/mr-khamzat/mc-stack/main/install/setup-cloudflare.sh)
+```
+
+---
+
+## Вариант 1: VPS (Ubuntu 22.04 / 24.04) — ручная установка
 
 ### Шаг 1 — Получить код
 
