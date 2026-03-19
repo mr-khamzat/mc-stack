@@ -11913,10 +11913,15 @@ async function fabAction(act) {
   fabClose(); haptic(12);
   if (act.startsWith('scene:')) {
     var sceneId = act.slice(6);
-    try { await api('/action', 'POST', {service:'scene.turn_on', entity_id:sceneId, extra:{}}); showToast('🎬 Сцена активирована'); } catch(e) { showToast('❌ Ошибка'); }
+    // Используем API бота /scenes/{id}/run, а не HA сервис scene.turn_on
+    try {
+      const r = await api('/scenes/' + encodeURIComponent(sceneId) + '/run', 'POST', {});
+      showToast('🎬 ' + (r && r.scene ? r.scene : 'Сцена') + ' активирована');
+    } catch(e) { showToast('❌ Ошибка запуска сцены'); }
   } else if (act === 'lights_off') {
     for (var eid of Object.keys(LIGHTS_MAP)) {
-      try { await api('/action', { method:'POST', body: JSON.stringify({ service: LIGHTS_DOMAIN[eid] + '.turn_off', entity_id: eid, extra: {} }) }); } catch(e) {}
+      // Исправлен вызов api(): второй аргумент должен быть строкой 'POST', не объектом
+      try { await api('/action', 'POST', { service: (LIGHTS_DOMAIN[eid]||'switch') + '.turn_off', entity_id: eid, extra: {} }); } catch(e) {}
     }
     showToast('💡 Весь свет выключен');
     setTimeout(loadStatus, 800);
