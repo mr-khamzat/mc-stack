@@ -120,15 +120,15 @@ for i in {1..15}; do
     sleep 2
 done
 
-# ── Запустить setup.sh внутри контейнера ─────────────────────────────────────
+# ── Запустить install-ubuntu.sh внутри контейнера ────────────────────────────
 header "🚀 Запуск установки внутри контейнера"
 
-SETUP_URL="https://raw.githubusercontent.com/mr-khamzat/mc-stack/main/install/setup.sh"
+SETUP_URL="https://raw.githubusercontent.com/mr-khamzat/mc-stack/main/install/install-ubuntu.sh"
 
 info "Устанавливаем curl внутри контейнера..."
 pct exec "$CT_ID" -- bash -c "apt-get update -qq && apt-get install -y -qq curl"
 
-info "Запускаю setup.sh..."
+info "Запускаю install-ubuntu.sh..."
 pct exec "$CT_ID" -- bash -c "curl -fsSL '${SETUP_URL}' | bash"
 
 # ── Итог ──────────────────────────────────────────────────────────────────────
@@ -139,9 +139,11 @@ echo -e "  Пароль:   ${CYAN}$CT_PASSWORD${NC}  (сохрани!)"
 CT_REAL_IP=$(pct exec "$CT_ID" -- hostname -I 2>/dev/null | awk '{print $1}')
 echo -e "  IP:       ${CYAN}${CT_REAL_IP:-$CT_IP}${NC}"
 echo ""
-echo -e "Войти в контейнер:"
+echo -e "${BOLD}${GREEN}Открой в браузере для настройки:${NC}"
+echo -e "  ${CYAN}http://${CT_REAL_IP:-$CT_IP}/${NC}"
+echo ""
+echo -e "Введи токены на странице → бот запустится автоматически."
+echo ""
+echo -e "Войти в контейнер (если нужно):"
 echo -e "  ${YELLOW}pct exec $CT_ID -- bash${NC}"
 echo -e "  или: ${YELLOW}pct enter $CT_ID${NC}"
-echo ""
-echo -e "После настройки .env перезапустить бота:"
-echo -e "  ${YELLOW}pct exec $CT_ID -- systemctl restart ha-bot${NC}"
