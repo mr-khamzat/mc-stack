@@ -2200,15 +2200,9 @@ body.sections-edit-mode .dyn-section-header { cursor: default; }
 .theme-dot-aurora  { background: conic-gradient(from 180deg, #2dd4bf, #a78bfa, #f472b6, #2dd4bf); box-shadow: 0 0 10px rgba(167,139,250,0.55); }
 
 /* ── In-App Section Editor ─────────────────────────────────────────────────── */
-#edit-mode-btn {
-  padding: 4px 8px; border-radius: 8px;
-  border: 1px solid rgba(255,255,255,0.10); background: rgba(255,255,255,0.05);
-  cursor: pointer; font-size: 14px; color: rgba(255,255,255,0.55);
-  -webkit-tap-highlight-color: transparent; display: none; flex-shrink: 0;
-  transition: all 0.15s;
-}
-body.edit-mode #edit-mode-btn {
-  background: rgba(99,102,241,0.20); border-color: rgba(99,102,241,0.50); color: #a78bfa;
+@keyframes badge-pulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.6); }
+  50%      { box-shadow: 0 0 0 4px rgba(239,68,68,0); }
 }
 /* Disable accordion toggle in edit mode */
 body.edit-mode .section-header { pointer-events: none; }
@@ -3088,8 +3082,13 @@ body.fab-open .fab-backdrop { display: block; }
     </div>
     <div style="display:flex;align-items:center;gap:8px">
       <span class="last-updated" id="last-updated">—</span>
-      <button id="edit-mode-btn" onclick="editModeToggle()" title="Редактировать разделы">✏️</button>
-      <button id="theme-btn" onclick="themePickerToggle()" title="Сменить тему">🎨</button>
+      <div style="position:relative;flex-shrink:0">
+        <button id="theme-btn" onclick="themePickerToggle()" title="Сменить тему">🎨</button>
+        <span id="update-badge" onclick="updateBadgeClick(event)" title="Доступно обновление"
+          style="display:none;position:absolute;top:-3px;right:-3px;width:9px;height:9px;
+                 border-radius:50%;background:#ef4444;border:2px solid var(--bg-body,#07071a);
+                 cursor:pointer;animation:badge-pulse 2s infinite"></span>
+      </div>
       <div id="user-badge" onclick="showUserMenu()" title="Аккаунт"
         style="display:flex;align-items:center;gap:6px;cursor:pointer;
                background:rgba(255,255,255,0.07);border-radius:20px;
@@ -5127,6 +5126,30 @@ async function openPermissionsSheet() {
   requestAnimationFrame(function() { sheet.style.transform = 'translateY(0)'; });
 }
 
+// ── Значок уведомления об обновлении ─────────────────────────────────────────
+function updateBadgeClick(e) {
+  e.stopPropagation();
+  var badge = document.getElementById('update-badge');
+  if (badge) badge.style.display = 'none';
+  try { localStorage.setItem('ha_upd_dismissed', localStorage.getItem('ha_upd_sha') || ''); } catch(ex) {}
+  openUpdatesSheet();
+}
+
+async function checkUpdateBadge() {
+  try {
+    if (HA_USER_ROLE !== 'admin') return;
+    var info = await api('/check-update');
+    if (!info.has_update) return;
+    var sha = info.latest_sha || '';
+    try {
+      if (localStorage.getItem('ha_upd_dismissed') === sha) return;
+      localStorage.setItem('ha_upd_sha', sha);
+    } catch(ex) {}
+    var badge = document.getElementById('update-badge');
+    if (badge) badge.style.display = '';
+  } catch(ex) {}
+}
+
 // ── Обновления ────────────────────────────────────────────────────────────────
 async function openUpdatesSheet() {
   var existing = document.getElementById('upd-sheet');
@@ -5757,6 +5780,8 @@ async function init() {
   setTimeout(_checkPendingCall, 1200);
   // Проверяем push-подписку после загрузки приложения
   setTimeout(_restorePushIfNeeded, 4000);
+  // Тихая проверка обновлений — значок у кнопки темы (только для admin)
+  setTimeout(checkUpdateBadge, 6000);
 
   // Слушаем сообщения от Service Worker
   if ('serviceWorker' in navigator) {
@@ -11400,7 +11425,17 @@ function _layoutLoad() {
   if (_layoutCfg) return _layoutCfg;
   try {
     var saved = localStorage.getItem('ha_layout_v3');
-    if (saved) { _layoutCfg = JSON.parse(saved); return _layoutCfg; }
+    if (saved) {
+      _layoutCfg = JSON.parse(saved);
+      // Добавляем разделы из defaults, которых нет в сохранённом макете (миграция при обновлениях)
+      var existingIds = _layoutCfg.sections.map(function(s) { return s.id; });
+      _LAYOUT_DEFAULTS.sections.forEach(function(def) {
+        if (existingIds.indexOf(def.id) === -1) {
+          _layoutCfg.sections.push(JSON.parse(JSON.stringify(def)));
+        }
+      });
+      return _layoutCfg;
+    }
   } catch(e) {}
   _layoutCfg = JSON.parse(JSON.stringify(_LAYOUT_DEFAULTS));
   return _layoutCfg;
