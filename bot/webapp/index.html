@@ -2300,21 +2300,6 @@ body.edit-mode .sec-edit-btn { display: flex; }
 }
 .offline-banner.show { display: block; }
 
-/* ── Weather mini card ──────────────────────────────────────────────────── */
-.weather-mini {
-  display: flex; align-items: center; justify-content: space-between;
-  margin: 0 0 12px; padding: 14px 18px; border-radius: var(--r-xl);
-  background: linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 100%);
-  border: 0.5px solid rgba(255,255,255,0.10);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  cursor: pointer; -webkit-tap-highlight-color: transparent;
-}
-.weather-mini:active { background: rgba(255,255,255,0.09); }
-.wcm-left { display: flex; align-items: center; gap: 14px; }
-.wcm-icon { font-size: 38px; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.4)); line-height: 1; }
-.wcm-temp { font-size: 28px; font-weight: 700; color: #eaeaf8; line-height: 1; letter-spacing: -0.5px; }
-.wcm-cond { font-size: 11px; color: rgba(140,140,190,0.7); margin-top: 3px; }
-.wcm-right { display: flex; flex-direction: column; gap: 4px; text-align: right; font-size: 12px; color: rgba(140,140,190,0.65); }
 
 /* ── Pull-to-refresh ────────────────────────────────────────────────────── */
 #ptr-bar {
@@ -2877,6 +2862,11 @@ body.fab-open .fab-backdrop { display: block; }
 #app.page-active-control .section[data-page]:not([data-page="control"]) { display: none !important; }
 #app.page-active-data    .section[data-page]:not([data-page="data"])    { display: none !important; }
 #app.page-active-more    .section[data-page]:not([data-page="more"])    { display: none !important; }
+/* Пользовательские разделы (камеры и т.д.) — только на главной странице */
+#app.page-active-family  .dyn-section,
+#app.page-active-control .dyn-section,
+#app.page-active-data    .dyn-section,
+#app.page-active-more    .dyn-section { display: none !important; }
 
 /* ── Dashboard (Home page) ─────────────────────────────────────────── */
 #page-home { padding: 8px 16px 4px; }
@@ -3068,18 +3058,6 @@ body.fab-open .fab-backdrop { display: block; }
 
   <div class="app-header">
     <h1 style="font-size:22px;line-height:1;flex-shrink:0">🏠</h1>
-    <div id="header-weather" onclick="showSection('weather')" title="Погода"
-         style="display:none;flex:1;align-items:center;justify-content:center;gap:10px;cursor:pointer;padding:6px 12px;border-radius:14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);margin:0 10px;transition:background 0.2s,transform 0.15s;-webkit-tap-highlight-color:transparent"
-         ontouchstart="this.style.background='rgba(255,255,255,0.13)';this.style.transform='scale(0.96)'"
-         ontouchend="this.style.background='rgba(255,255,255,0.06)';this.style.transform=''"
-         onmousedown="this.style.background='rgba(255,255,255,0.13)';this.style.transform='scale(0.96)'"
-         onmouseup="this.style.background='rgba(255,255,255,0.06)';this.style.transform=''">
-      <span id="hw-icon" style="font-size:22px;line-height:1">🌤</span>
-      <div style="display:flex;flex-direction:column;align-items:flex-start;gap:1px">
-        <span id="hw-temp" style="font-size:18px;font-weight:700;color:#e2e8f0;line-height:1">--°</span>
-        <span id="hw-desc" style="font-size:10px;color:rgba(255,255,255,0.45);line-height:1">Погода</span>
-      </div>
-    </div>
     <div style="display:flex;align-items:center;gap:8px">
       <span class="last-updated" id="last-updated">—</span>
       <div style="position:relative;flex-shrink:0">
@@ -3131,20 +3109,6 @@ body.fab-open .fab-backdrop { display: block; }
     </div>
   </div>
 
-  <!-- WEATHER MINI CARD -->
-  <div class="weather-mini" id="weather-mini" style="display:none" onclick="toggleSection('sec-weather-body')">
-    <div class="wcm-left">
-      <span id="wcm-icon" class="wcm-icon">🌤️</span>
-      <div>
-        <div id="wcm-temp" class="wcm-temp">—°</div>
-        <div id="wcm-cond" class="wcm-cond">Погода</div>
-      </div>
-    </div>
-    <div class="wcm-right">
-      <span>💧 <span id="wcm-hum">—</span>%</span>
-      <span>💨 <span id="wcm-wind">—</span> км/ч</span>
-    </div>
-  </div>
 
   <!-- ── HOME PAGE (Dashboard) ── -->
   <div id="page-home">
@@ -10923,8 +10887,6 @@ function admShow() {
         sec.classList.remove('layout-hidden');
         admInitPerms();
     }
-    const editBtn = document.getElementById('edit-mode-btn');
-    if (editBtn) editBtn.style.display = 'flex';
 }
 
 // ── Themes ──────────────────────────────────────────────────────────────────
@@ -11834,31 +11796,9 @@ function _startWeatherAnim(heroEl, icon) {
   _wxAnimRAF = requestAnimationFrame(frame);
 }
 
-// ── Weather mini card ──────────────────────────────────────────────────────
+// ── Weather mini card (виджеты удалены, осталась только погода в статусбаре и раздел) ──
 function updateWeatherMini(w) {
-  if (!w) return;
-  var card = document.getElementById('weather-mini');
-  if (card) card.style.display = 'flex';
-  var parts = (w.condition || '').split(' ');
-  var wicon = parts[0] || '🌤️';
-  var el = document.getElementById('wcm-icon'); if (el) el.textContent = wicon;
-  el = document.getElementById('wcm-temp');   if (el) el.textContent = (w.temp != null ? Math.round(w.temp) : '?') + '°';
-  el = document.getElementById('wcm-cond');   if (el) el.textContent = parts.slice(1).join(' ') || 'Загрузка';
-  el = document.getElementById('wcm-hum');    if (el) el.textContent = w.humidity ?? '?';
-  el = document.getElementById('wcm-wind');   if (el) el.textContent = w.wind ?? '?';
-  // Feature 7: update header weather widget
-  var hw = document.getElementById('header-weather');
-  var hwIcon = document.getElementById('hw-icon');
-  var hwTemp = document.getElementById('hw-temp');
-  if (hw) {
-    var wasHidden = hw.style.display === 'none' || !hw.style.display;
-    hw.style.display = 'flex';
-    if (wasHidden) { hw.style.animation = 'none'; void hw.offsetWidth; hw.style.animation = 'fadeInScale 0.35s ease both'; }
-    if (hwIcon) hwIcon.textContent = wicon;
-    if (hwTemp) hwTemp.textContent = (w.temp != null ? Math.round(w.temp) : '--') + '°';
-    var hwDesc = document.getElementById('hw-desc');
-    if (hwDesc) hwDesc.textContent = w.condition || w.description || 'Погода';
-  }
+  // Нет активных виджетов — функция оставлена для совместимости с вызовами из loadStatus
 }
 
 // ── Offline mode ───────────────────────────────────────────────────────────
