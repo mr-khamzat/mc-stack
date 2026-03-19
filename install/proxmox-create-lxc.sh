@@ -125,6 +125,9 @@ header "🚀 Запуск установки внутри контейнера"
 
 SETUP_URL="https://raw.githubusercontent.com/mr-khamzat/mc-stack/main/install/setup.sh"
 
+info "Устанавливаем curl внутри контейнера..."
+pct exec "$CT_ID" -- bash -c "apt-get update -qq && apt-get install -y -qq curl"
+
 info "Запускаю setup.sh..."
 pct exec "$CT_ID" -- bash -c "curl -fsSL '${SETUP_URL}' | bash"
 
