@@ -52,8 +52,16 @@ apt-get update -qq
 info "Устанавливаем зависимости..."
 apt-get install -y -qq \
     python3 python3-pip python3-venv python3-dev \
-    git curl wget ca-certificates nginx \
+    git curl wget ca-certificates nginx openssh-server \
     build-essential libffi-dev libssl-dev pkg-config
+
+# ── SSH: включаем root-логин ───────────────────────────────────────────────────
+info "Настраиваем SSH..."
+sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/'       /etc/ssh/sshd_config
+sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+systemctl enable ssh
+systemctl restart ssh
+ok "SSH включён (root-доступ разрешён)"
 
 # Проверяем версию Python (нужен 3.11+)
 PY_VER=$(python3 --version 2>&1 | awk '{print $2}')
@@ -248,25 +256,35 @@ else
 fi
 
 # ── Итог ──────────────────────────────────────────────────────────────────────
-header "✅ Установка завершена"
-
 SERVER_IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "x.x.x.x")
 
-echo -e "${BOLD}${GREEN}Открой в браузере:${NC}"
 echo ""
+echo -e "${BOLD}${BLUE}╔══════════════════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}${BLUE}║          ✅  Установка завершена успешно!            ║${NC}"
+echo -e "${BOLD}${BLUE}╚══════════════════════════════════════════════════════╝${NC}"
+echo ""
+echo -e "${BOLD}┌─ Доступ по SSH ───────────────────────────────────────┐${NC}"
+echo -e "  Логин:    ${CYAN}root${NC}"
+echo -e "  Адрес:    ${CYAN}${SERVER_IP}${NC}   (порт 22)"
+echo -e "  Команда:  ${GREEN}ssh root@${SERVER_IP}${NC}"
+echo -e "${BOLD}└───────────────────────────────────────────────────────┘${NC}"
+echo ""
+echo -e "${BOLD}┌─ Настройка бота (шаг 1) ──────────────────────────────┐${NC}"
+echo -e "  Открой в браузере:"
 echo -e "  ${CYAN}http://${SERVER_IP}/${NC}"
+echo -e "  Введи токены → бот запустится автоматически"
+echo -e "${BOLD}└───────────────────────────────────────────────────────┘${NC}"
 echo ""
-echo -e "Введи токены на странице настройки → бот запустится автоматически."
+echo -e "${BOLD}┌─ Mini App после настройки ────────────────────────────┐${NC}"
+echo -e "  Локально:  ${CYAN}http://${SERVER_IP}/ha-app/${NC}"
+echo -e "  Telegram:  нужен HTTPS → настрой Cloudflare Tunnel (шаг 2)"
+echo -e "${BOLD}└───────────────────────────────────────────────────────┘${NC}"
 echo ""
-echo -e "${BOLD}Если бот уже запущен:${NC}"
-echo -e "  ${CYAN}http://${SERVER_IP}/ha-app/${NC}"
-echo ""
-echo -e "${YELLOW}⚠️  Для Telegram Mini App нужен HTTPS!${NC}"
-echo -e "  После настройки запусти Cloudflare Tunnel:"
+echo -e "${BOLD}┌─ Cloudflare Tunnel (шаг 2, для Telegram) ─────────────┐${NC}"
 echo -e "  ${YELLOW}bash <(curl -fsSL https://raw.githubusercontent.com/mr-khamzat/mc-stack/main/install/setup-cloudflare.sh)${NC}"
+echo -e "${BOLD}└───────────────────────────────────────────────────────┘${NC}"
 echo ""
 echo -e "${BOLD}Управление:${NC}"
-echo -e "  ${CYAN}systemctl status ha-bot${NC}        — статус бота"
-echo -e "  ${CYAN}journalctl -u ha-bot -f${NC}        — логи бота"
-echo -e "  ${CYAN}systemctl status ha-bot-setup${NC}  — статус мастера настройки"
-echo -e "  ${CYAN}nano ${INSTALL_DIR}/.env${NC}            — редактировать конфиг"
+echo -e "  ${CYAN}systemctl status ha-bot${NC}    — статус бота"
+echo -e "  ${CYAN}journalctl -u ha-bot -f${NC}    — логи"
+echo -e "  ${CYAN}nano ${INSTALL_DIR}/.env${NC}        — конфиг"
