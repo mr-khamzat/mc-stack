@@ -137,9 +137,12 @@ ok "VAPID ключи готовы"
 # ── Шаг 4: nginx ──────────────────────────────────────────────────────────────
 header "🌐 Шаг 4/5 — nginx реверс-прокси"
 
+WIZARD_PORT=8080
+
 cat > /etc/nginx/sites-available/ha-bot << NGINX
 # HA Home Bot — nginx конфиг
-# Проксирует все запросы на бот (порт $BOT_PORT)
+# /ha-app/ → ha-bot (порт $BOT_PORT)
+# /        → мастер настройки (порт $WIZARD_PORT)
 server {
     listen 80 default_server;
     server_name _;
@@ -147,25 +150,27 @@ server {
     access_log /var/log/nginx/ha-bot.access.log;
     error_log  /var/log/nginx/ha-bot.error.log;
 
-    # Мастер настройки и Mini App
-    location / {
-        proxy_pass         http://127.0.0.1:${BOT_PORT};
+    # Mini App и API бота — всегда на порту $BOT_PORT
+    location /ha-app/ {
+        proxy_pass         http://127.0.0.1:${BOT_PORT}/ha-app/;
         proxy_http_version 1.1;
-
-        # WebSocket и SSE
         proxy_set_header   Upgrade \$http_upgrade;
         proxy_set_header   Connection "upgrade";
         proxy_set_header   Host \$host;
         proxy_set_header   X-Real-IP \$remote_addr;
         proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
-
-        # Без буферизации (нужно для SSE / real-time)
         proxy_buffering    off;
         proxy_cache        off;
-
-        # Долгие соединения для SSE
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
+    }
+
+    # Мастер настройки — порт $WIZARD_PORT (запускается до ha-bot)
+    location / {
+        proxy_pass         http://127.0.0.1:${WIZARD_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
     }
 }
 NGINX
@@ -181,7 +186,7 @@ ok "nginx запущен"
 # ── Шаг 5: Systemd сервисы ────────────────────────────────────────────────────
 header "🔧 Шаг 5/5 — Systemd сервисы"
 
-# Сервис мастера настройки (запускается первым, пока нет .env)
+# Сервис мастера настройки (порт 8080, не конфликтует с ботом на 8766)
 cat > /etc/systemd/system/ha-bot-setup.service << EOF
 [Unit]
 Description=HA Home Bot — Мастер настройки (веб-интерфейс)
