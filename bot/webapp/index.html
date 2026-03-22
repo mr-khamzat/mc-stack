@@ -664,16 +664,42 @@ button:active, .family-ping-btn:active {
    ════════════════════════════════════════════════════════════════════════════ */
 html[data-layout="bubble"] .section { display: none !important; }
 html[data-layout="bubble"] #page-home > :not(.bbl-page) { display: none !important; }
-.bbl-page { display: none; padding-top: 6px; padding-bottom: 90px; }
+.bbl-page { display: none; padding-top: 6px; padding-bottom: 100px; position: relative; }
 html[data-layout="bubble"] .bbl-page.bbl-vis { display: block; }
+/* Bubble nav: центрированная таблетка */
 html[data-layout="bubble"] .bottom-nav {
-  border-radius: 26px !important; margin: 0 12px 14px !important; height: auto !important;
-  padding: 6px 4px !important; background: rgba(12,12,26,0.85) !important;
-  backdrop-filter: blur(28px) saturate(1.8) !important; -webkit-backdrop-filter: blur(28px) saturate(1.8) !important;
-  border-top: none !important; box-shadow: 0 8px 40px rgba(0,0,0,0.55), 0 1px 0 rgba(255,255,255,0.07) inset !important;
+  border-radius: 26px !important;
+  height: auto !important;
+  padding: 8px 8px !important;
+  background: rgba(10,10,22,0.92) !important;
+  backdrop-filter: blur(32px) saturate(2) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(2) !important;
+  border-top: none !important;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.08) inset !important;
+  /* Центрирование на десктопе */
+  left: 50% !important;
+  right: auto !important;
+  transform: translateX(-50%) !important;
+  width: calc(100% - 24px) !important;
+  max-width: 552px !important;
+  bottom: 12px !important;
 }
-html[data-layout="bubble"] .bnav-tab { border-radius: 20px !important; padding: 8px 6px !important; }
-html[data-layout="bubble"] .bnav-tab.active { background: rgba(99,102,241,0.18) !important; border-radius: 16px !important; }
+html[data-layout="bubble"] .bnav-tab {
+  border-radius: 16px !important;
+  padding: 10px 8px !important;
+  gap: 0 !important;
+  flex-direction: column !important;
+  justify-content: center !important;
+}
+html[data-layout="bubble"] .bnav-tab.active {
+  background: rgba(99,102,241,0.22) !important;
+  border-radius: 16px !important;
+}
+html[data-layout="bubble"] .bnav-lb { display: none !important; }
+html[data-layout="bubble"] .bnav-ic { font-size: 24px !important; line-height: 1 !important; }
+html[data-layout="bubble"] .bnav-tab.active .bnav-ic { transform: scale(1.2) !important; }
+/* FAB выше нижней навигации */
+html[data-layout="bubble"] .fab-wrap { bottom: 82px !important; }
 .layout-toggle-btn {
   padding: 4px 9px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12);
   background: rgba(255,255,255,0.05); cursor: pointer; font-size: 16px;
@@ -705,6 +731,8 @@ html[data-layout="bubble"] .bnav-tab.active { background: rgba(99,102,241,0.18) 
 .bbl-btn-sub { font-size: 12px; color: rgba(130,130,185,0.6); margin-top: 2px; }
 .bbl-btn-end { font-size: 18px; font-weight: 700; color: var(--accent); flex-shrink: 0; }
 .bbl-divider { height: 0.5px; background: rgba(255,255,255,0.07); margin: 0 16px; }
+.bbl-expand-body { display: none; }
+.bbl-expand-body.open { display: block; }
 .bbl-row { display: flex; gap: 10px; padding: 2px 12px 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
 .bbl-row::-webkit-scrollbar { display: none; }
 .bbl-chip {
@@ -4209,7 +4237,7 @@ body.fab-open .fab-backdrop { display: block; }
     <div class="bbl-persons-row" id="bbl-persons"></div>
     <div class="bbl-sep">Общение</div>
     <div class="bbl-card" style="padding:0">
-      <button class="bbl-btn" onclick="showPage('family');layoutToggle()">
+      <button class="bbl-btn" onclick="layoutToggle()">
         <div class="bbl-btn-icon">💬</div>
         <div class="bbl-btn-info"><div class="bbl-btn-name">Чат семьи</div><div class="bbl-btn-sub">Чат, фото, звонки, напоминания</div></div>
         <div class="bbl-btn-end">›</div>
@@ -4224,6 +4252,37 @@ body.fab-open .fab-backdrop { display: block; }
       <div style="display:flex;gap:8px;padding:10px 12px">
         <input id="bbl-shop-input" type="text" placeholder="Добавить товар..." class="shop-add-input" style="flex:1;margin:0" onkeydown="if(event.key==='Enter')bblShopAdd()" autocomplete="off">
         <button class="btn btn-primary" style="padding:8px 14px;border-radius:12px;font-size:18px;line-height:1" onclick="bblShopAdd()">＋</button>
+      </div>
+    </div>
+    <div class="bbl-sep">Активность</div>
+    <div class="bbl-card" style="padding:0">
+      <button class="bbl-btn" onclick="bblToggleExpand('bbl-timeline-body')">
+        <div class="bbl-btn-icon">⏱</div>
+        <div class="bbl-btn-info"><div class="bbl-btn-name">Лента активности</div><div class="bbl-btn-sub">Кто когда приходил</div></div>
+        <div class="bbl-btn-end" id="bbl-timeline-chevron">▾</div>
+      </button>
+      <div class="bbl-expand-body" id="bbl-timeline-body">
+        <div class="bbl-divider"></div>
+        <div id="bbl-timeline-list" style="padding:4px 0;max-height:280px;overflow-y:auto">
+          <div style="color:#60608a;font-size:13px;text-align:center;padding:12px">Загрузка...</div>
+        </div>
+        <div style="padding:8px 12px">
+          <button class="btn btn-neutral" style="width:100%;font-size:12px" onclick="_timelineLoaded=false;loadTimeline();setTimeout(function(){bblSyncTimeline()},1000)">🔄 Обновить</button>
+        </div>
+      </div>
+    </div>
+    <div class="bbl-sep">Присутствие</div>
+    <div class="bbl-card" style="padding:0">
+      <button class="bbl-btn" onclick="bblToggleExpand('bbl-presence-body')">
+        <div class="bbl-btn-icon">📊</div>
+        <div class="bbl-btn-info"><div class="bbl-btn-name">Кто сколько дома</div><div class="bbl-btn-sub">Статистика за 7 дней</div></div>
+        <div class="bbl-btn-end" id="bbl-presence-chevron">▾</div>
+      </button>
+      <div class="bbl-expand-body" id="bbl-presence-body">
+        <div class="bbl-divider"></div>
+        <div id="bbl-presence-content" style="padding:12px 14px">
+          <div style="color:#60608a;font-size:13px;text-align:center">Загрузка...</div>
+        </div>
       </div>
     </div>
   </div>
@@ -4330,6 +4389,34 @@ body.fab-open .fab-backdrop { display: block; }
         </div>
       </div>
     </div>
+    <div class="bbl-sep">График потребления</div>
+    <div class="bbl-card" style="padding:0">
+      <button class="bbl-btn" onclick="bblToggleExpand('bbl-echart-body')">
+        <div class="bbl-btn-icon">⚡</div>
+        <div class="bbl-btn-info"><div class="bbl-btn-name">Мощность за 24ч</div><div class="bbl-btn-sub">Почасовой график потребления</div></div>
+        <div class="bbl-btn-end" id="bbl-echart-chevron">▾</div>
+      </button>
+      <div class="bbl-expand-body" id="bbl-echart-body">
+        <div class="bbl-divider"></div>
+        <div id="bbl-echart-content" style="padding:12px">
+          <div style="color:#60608a;font-size:13px;text-align:center">Загрузка...</div>
+        </div>
+      </div>
+    </div>
+    <div class="bbl-sep">У двери — история</div>
+    <div class="bbl-card" style="padding:0">
+      <button class="bbl-btn" onclick="bblToggleExpand('bbl-faces-body')">
+        <div class="bbl-btn-icon">🚪</div>
+        <div class="bbl-btn-info"><div class="bbl-btn-name">Камера у двери</div><div class="bbl-btn-sub">Кто приходил недавно</div></div>
+        <div class="bbl-btn-end" id="bbl-faces-chevron">▾</div>
+      </button>
+      <div class="bbl-expand-body" id="bbl-faces-body">
+        <div class="bbl-divider"></div>
+        <div id="bbl-faces-content" style="padding:4px 0;max-height:340px;overflow-y:auto">
+          <div style="color:#60608a;font-size:13px;text-align:center;padding:12px">Загрузка...</div>
+        </div>
+      </div>
+    </div>
   </div>
   <!-- MORE -->
   <div class="bbl-page" id="bbl-more">
@@ -4344,6 +4431,20 @@ body.fab-open .fab-backdrop { display: block; }
     <div class="bbl-sep">Молитвы</div>
     <div class="bbl-card" style="padding:16px" id="bbl-prayers-card">
       <div style="color:#60608a;font-size:13px;text-align:center">Загрузка...</div>
+    </div>
+    <div class="bbl-sep">Инструменты</div>
+    <div class="bbl-card" style="padding:0">
+      <button class="bbl-btn" onclick="leOpen()">
+        <div class="bbl-btn-icon">🎛️</div>
+        <div class="bbl-btn-info"><div class="bbl-btn-name">Редактор интерфейса</div><div class="bbl-btn-sub">Разделы, иконки вкладок</div></div>
+        <div class="bbl-btn-end">›</div>
+      </button>
+      <div class="bbl-divider"></div>
+      <button class="bbl-btn" onclick="bblOpenAdmin()">
+        <div class="bbl-btn-icon">👑</div>
+        <div class="bbl-btn-info"><div class="bbl-btn-name">Администрирование</div><div class="bbl-btn-sub">Права, алерты, сервер, логи</div></div>
+        <div class="bbl-btn-end">›</div>
+      </button>
     </div>
   </div>
 
@@ -11415,6 +11516,14 @@ function bblShowPage(page) {
   if (el) el.classList.add('bbl-vis');
   if (page === 'family') bblLoadShoppingMini();
   if (page === 'more') { bblLoadMore(); bblLoadPrayers(); }
+  // Refresh open expanded sections on page revisit
+  if (page === 'family') {
+    if (document.getElementById('bbl-timeline-body') && document.getElementById('bbl-timeline-body').classList.contains('open')) bblSyncTimeline();
+    if (document.getElementById('bbl-presence-body') && document.getElementById('bbl-presence-body').classList.contains('open')) {
+      var src = document.getElementById('presence-content'), dst = document.getElementById('bbl-presence-content');
+      if (src && dst) dst.innerHTML = src.innerHTML;
+    }
+  }
 }
 
 function bblApply(d) {
@@ -11581,6 +11690,109 @@ function bblLoadPrayers() {
   var src = document.getElementById('sec-prayers-body');
   var dst = document.getElementById('bbl-prayers-card');
   if (src && dst && src.innerHTML.trim()) dst.innerHTML = src.innerHTML;
+}
+
+function bblToggleExpand(id) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  var isOpen = el.classList.toggle('open');
+  // rotate chevron
+  var chevId = id.replace('-body', '-chevron');
+  var chev = document.getElementById(chevId);
+  if (chev) chev.textContent = isOpen ? '▴' : '▾';
+  // load content on first open
+  if (isOpen) {
+    if (id === 'bbl-timeline-body') bblLoadTimeline();
+    if (id === 'bbl-presence-body') bblLoadPresence();
+    if (id === 'bbl-echart-body') bblLoadEnergyChart();
+    if (id === 'bbl-faces-body') bblLoadFaces();
+  }
+}
+
+function bblLoadTimeline() {
+  var dst = document.getElementById('bbl-timeline-list');
+  if (!dst) return;
+  dst.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:12px">Загрузка...</div>';
+  _timelineLoaded = false;
+  loadTimeline();
+  setTimeout(function bblSyncTl() {
+    var src = document.getElementById('activity-timeline-list');
+    if (src && src.innerHTML && !src.innerHTML.includes('Откройте') && !src.innerHTML.includes('Загрузка')) {
+      dst.innerHTML = src.innerHTML;
+    } else {
+      setTimeout(bblSyncTl, 500);
+    }
+  }, 500);
+}
+
+function bblSyncTimeline() {
+  var src = document.getElementById('activity-timeline-list');
+  var dst = document.getElementById('bbl-timeline-list');
+  if (src && dst && src.innerHTML) dst.innerHTML = src.innerHTML;
+}
+
+function bblLoadPresence() {
+  var dst = document.getElementById('bbl-presence-content');
+  if (!dst) return;
+  dst.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:10px">Загрузка...</div>';
+  _presenceLoaded = false;
+  loadPresenceStats();
+  setTimeout(function bblSyncPr() {
+    var src = document.getElementById('presence-content');
+    if (src && src.innerHTML && !src.innerHTML.includes('Загрузка') && !src.innerHTML.includes('Откройте')) {
+      dst.innerHTML = src.innerHTML;
+    } else {
+      setTimeout(bblSyncPr, 500);
+    }
+  }, 500);
+}
+
+function bblLoadEnergyChart() {
+  energyChartRender();
+  setTimeout(function bblSyncEc() {
+    var srcBars = document.getElementById('energy-bars');
+    var srcAxis = document.getElementById('energy-xaxis');
+    var srcHourly = document.getElementById('energy-hourly-content');
+    var dst = document.getElementById('bbl-echart-content');
+    if (!dst) return;
+    if (srcBars && srcBars.innerHTML && !srcBars.innerHTML.includes('Загрузка')) {
+      dst.innerHTML = '<div class="energy-chart-wrap">' +
+        '<div class="energy-chart-title">Мощность за 24ч (Вт)</div>' +
+        '<div class="energy-bars">' + srcBars.innerHTML + '</div>' +
+        '<div class="energy-chart-xaxis">' + (srcAxis ? srcAxis.innerHTML : '') + '</div>' +
+        '</div>' + (srcHourly ? srcHourly.innerHTML : '');
+    } else {
+      setTimeout(bblSyncEc, 600);
+    }
+  }, 600);
+}
+
+function bblLoadFaces() {
+  var dst = document.getElementById('bbl-faces-content');
+  if (!dst) return;
+  dst.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:12px">Загрузка...</div>';
+  _facesLoaded = false;
+  loadFacesHistory();
+  setTimeout(function bblSyncFc() {
+    var src = document.getElementById('faces-content');
+    if (src && src.innerHTML && !src.innerHTML.includes('Загрузка') && !src.innerHTML.includes('Откройте')) {
+      dst.innerHTML = src.innerHTML;
+    } else {
+      setTimeout(bblSyncFc, 500);
+    }
+  }, 500);
+}
+
+function bblOpenAdmin() {
+  layoutToggle();
+  setTimeout(function() {
+    showPage('data');
+    admShow();
+    setTimeout(function() {
+      var admin = document.getElementById('sec-admin');
+      if (admin) admin.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  }, 300);
 }
 
 setInterval(function() {
