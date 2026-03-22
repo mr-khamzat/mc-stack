@@ -659,6 +659,103 @@ button:active, .family-ping-btn:active {
   box-shadow: 0 0 10px rgba(167,139,250,0.6);
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   BUBBLE LAYOUT MODE  (data-layout="bubble")
+   ════════════════════════════════════════════════════════════════════════════ */
+html[data-layout="bubble"] .section { display: none !important; }
+html[data-layout="bubble"] #page-home > :not(.bbl-page) { display: none !important; }
+.bbl-page { display: none; padding-top: 6px; padding-bottom: 90px; }
+html[data-layout="bubble"] .bbl-page.bbl-vis { display: block; }
+html[data-layout="bubble"] .bottom-nav {
+  border-radius: 26px !important; margin: 0 12px 14px !important; height: auto !important;
+  padding: 6px 4px !important; background: rgba(12,12,26,0.85) !important;
+  backdrop-filter: blur(28px) saturate(1.8) !important; -webkit-backdrop-filter: blur(28px) saturate(1.8) !important;
+  border-top: none !important; box-shadow: 0 8px 40px rgba(0,0,0,0.55), 0 1px 0 rgba(255,255,255,0.07) inset !important;
+}
+html[data-layout="bubble"] .bnav-tab { border-radius: 20px !important; padding: 8px 6px !important; }
+html[data-layout="bubble"] .bnav-tab.active { background: rgba(99,102,241,0.18) !important; border-radius: 16px !important; }
+.layout-toggle-btn {
+  padding: 4px 9px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.05); cursor: pointer; font-size: 16px;
+  color: rgba(200,200,230,0.75); -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s, border-color 0.15s; flex-shrink: 0;
+}
+.layout-toggle-btn.active { background: rgba(99,102,241,0.2); border-color: rgba(99,102,241,0.45); color: #a78bfa; }
+.bbl-sep {
+  display: flex; align-items: center; gap: 10px; padding: 18px 16px 10px;
+  font-size: 11px; font-weight: 700; color: rgba(160,160,210,0.5);
+  text-transform: uppercase; letter-spacing: 0.8px; pointer-events: none;
+}
+.bbl-sep::before, .bbl-sep::after { content: ''; flex: 1; height: 0.5px; background: rgba(255,255,255,0.07); }
+.bbl-card { margin: 0 12px 8px; background: rgba(255,255,255,0.055); border: 0.5px solid rgba(255,255,255,0.10); border-radius: 20px; overflow: hidden; }
+.bbl-btn {
+  display: flex; align-items: center; gap: 14px; padding: 14px 16px; width: 100%;
+  background: none; border: none; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  text-align: left; font-family: inherit; transition: background 0.15s;
+}
+.bbl-btn:active { background: rgba(255,255,255,0.06); }
+.bbl-btn-icon {
+  width: 46px; height: 46px; border-radius: 50%; flex-shrink: 0;
+  background: rgba(255,255,255,0.08); display: flex; align-items: center;
+  justify-content: center; font-size: 22px; transition: background 0.2s;
+}
+.bbl-btn.on .bbl-btn-icon { background: rgba(251,191,36,0.28); box-shadow: 0 0 18px rgba(251,191,36,0.25); }
+.bbl-btn-info { flex: 1; min-width: 0; }
+.bbl-btn-name { font-size: 14px; font-weight: 600; color: rgba(220,220,255,0.9); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bbl-btn-sub { font-size: 12px; color: rgba(130,130,185,0.6); margin-top: 2px; }
+.bbl-btn-end { font-size: 18px; font-weight: 700; color: var(--accent); flex-shrink: 0; }
+.bbl-divider { height: 0.5px; background: rgba(255,255,255,0.07); margin: 0 16px; }
+.bbl-row { display: flex; gap: 10px; padding: 2px 12px 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+.bbl-row::-webkit-scrollbar { display: none; }
+.bbl-chip {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  flex-shrink: 0; width: 76px; padding: 12px 8px;
+  background: rgba(255,255,255,0.055); border: 0.5px solid rgba(255,255,255,0.10);
+  border-radius: 20px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: transform 0.15s, background 0.2s;
+}
+.bbl-chip:active { transform: scale(0.91); }
+.bbl-chip.on { background: rgba(251,191,36,0.15); border-color: rgba(251,191,36,0.35); }
+.bbl-chip-icon { width: 44px; height: 44px; border-radius: 50%; background: rgba(255,255,255,0.07); display: flex; align-items: center; justify-content: center; font-size: 21px; }
+.bbl-chip.on .bbl-chip-icon { background: rgba(251,191,36,0.28); }
+.bbl-chip-name { font-size: 10px; font-weight: 600; color: rgba(200,200,240,0.75); text-align: center; line-height: 1.25; word-break: break-word; }
+.bbl-chip-state { font-size: 9px; color: rgba(130,130,185,0.6); text-align: center; }
+.bbl-stat-chip {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  flex-shrink: 0; width: 84px; padding: 14px 8px;
+  background: rgba(255,255,255,0.055); border: 0.5px solid rgba(255,255,255,0.10);
+  border-radius: 20px; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: transform 0.15s;
+}
+.bbl-stat-chip:active { transform: scale(0.94); }
+.bbl-stat-icon { font-size: 22px; }
+.bbl-stat-val { font-size: 17px; font-weight: 800; color: rgba(220,220,255,0.95); }
+.bbl-stat-lbl { font-size: 10px; color: rgba(130,130,185,0.6); text-align: center; }
+.bbl-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 0 12px; }
+.bbl-metric { background: rgba(255,255,255,0.055); border: 0.5px solid rgba(255,255,255,0.10); border-radius: 20px; padding: 16px 14px; }
+.bbl-metric-icon { font-size: 26px; margin-bottom: 8px; }
+.bbl-metric-val { font-size: 28px; font-weight: 800; color: rgba(220,220,255,0.95); line-height: 1; }
+.bbl-metric-lbl { font-size: 11px; color: rgba(130,130,185,0.6); margin-top: 4px; }
+.bbl-energy-hero { margin: 0 12px 8px; background: rgba(255,255,255,0.055); border: 0.5px solid rgba(255,255,255,0.10); border-radius: 22px; padding: 20px; }
+.bbl-power-big { font-size: 46px; font-weight: 800; line-height: 1; background: linear-gradient(135deg, var(--accent), var(--accent2,#60a5fa)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.bbl-power-unit { font-size: 13px; color: rgba(160,160,210,0.6); font-weight: 600; margin-top: 2px; }
+.bbl-cost-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 16px; }
+.bbl-cost-item { background: rgba(255,255,255,0.04); border-radius: 14px; padding: 10px 6px; text-align: center; }
+.bbl-cost-val { font-size: 16px; font-weight: 800; color: rgba(220,220,255,0.95); }
+.bbl-cost-lbl { font-size: 10px; color: rgba(130,130,185,0.6); margin-top: 2px; }
+.bbl-persons-row { display: flex; gap: 12px; padding: 2px 12px 8px; overflow-x: auto; scrollbar-width: none; }
+.bbl-persons-row::-webkit-scrollbar { display: none; }
+.bbl-person { display: flex; flex-direction: column; align-items: center; gap: 6px; flex-shrink: 0; min-width: 64px; }
+.bbl-person-av { width: 54px; height: 54px; border-radius: 50%; background: rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: center; font-size: 28px; border: 2px solid rgba(255,255,255,0.08); transition: border-color 0.3s, background 0.3s; }
+.bbl-person.home .bbl-person-av { border-color: #34d399; background: rgba(52,211,153,0.14); }
+.bbl-person-name { font-size: 11px; font-weight: 600; color: rgba(200,200,240,0.8); }
+.bbl-person-st { font-size: 10px; color: rgba(130,130,185,0.6); }
+.bbl-dpad { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; padding: 4px 12px; }
+.bbl-dpad-btn { background: rgba(255,255,255,0.06); border: none; border-radius: 14px; padding: 16px 4px; font-size: 18px; color: rgba(220,220,255,0.9); cursor: pointer; -webkit-tap-highlight-color: transparent; display: flex; align-items: center; justify-content: center; transition: transform 0.12s, background 0.15s; font-family: inherit; }
+.bbl-dpad-btn:active { transform: scale(0.87); background: rgba(255,255,255,0.14); }
+.bbl-tv-row { display: flex; gap: 6px; padding: 6px 12px; }
+.bbl-tv-btn { flex: 1; background: rgba(255,255,255,0.06); border: none; border-radius: 12px; padding: 11px 4px; font-size: 18px; color: rgba(220,220,255,0.9); cursor: pointer; -webkit-tap-highlight-color: transparent; display: flex; align-items: center; justify-content: center; transition: transform 0.12s; font-family: inherit; }
+.bbl-tv-btn:active { transform: scale(0.87); }
+
 /* ── Section content padding ── */
 [data-theme="bubble"] .section-content { padding: 4px 16px 20px; }
 
@@ -3256,6 +3353,7 @@ body.fab-open .fab-backdrop { display: block; }
       <div class="theme-dot theme-dot-cyber"  title="Кибер"    onclick="themeSet('cyber')"></div>
       <div class="theme-dot theme-dot-aurora" title="Аврора"   onclick="themeSet('aurora')"></div>
       <div class="theme-dot theme-dot-bubble" title="Bubble"   onclick="themeSet('bubble')"></div>
+      <button class="layout-toggle-btn" id="layout-toggle-btn" onclick="layoutToggle()" title="Bubble-режим">⊞</button>
       <button id="auto-theme-btn" onclick="autoThemeToggle()" title="Авто по времени"
         style="padding:4px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);
                background:rgba(255,255,255,0.05);cursor:pointer;font-size:12px;color:rgba(200,200,230,0.7);
@@ -4095,6 +4193,160 @@ body.fab-open .fab-backdrop { display: block; }
     <div class="le-body" id="le-body"></div>
   </div>
 
+  <!-- ════ BUBBLE LAYOUT PAGES ════ -->
+  <!-- HOME -->
+  <div class="bbl-page bbl-vis" id="bbl-home">
+    <div class="bbl-sep">Сейчас</div>
+    <div class="bbl-row" id="bbl-stats-row"></div>
+    <div class="bbl-sep">Свет</div>
+    <div class="bbl-row" id="bbl-lights-quick"></div>
+    <div class="bbl-sep">Сцены</div>
+    <div class="bbl-row" id="bbl-scenes-quick"></div>
+  </div>
+  <!-- FAMILY -->
+  <div class="bbl-page" id="bbl-family">
+    <div class="bbl-sep">Дома сейчас</div>
+    <div class="bbl-persons-row" id="bbl-persons"></div>
+    <div class="bbl-sep">Общение</div>
+    <div class="bbl-card" style="padding:0">
+      <button class="bbl-btn" onclick="showPage('family');layoutToggle()">
+        <div class="bbl-btn-icon">💬</div>
+        <div class="bbl-btn-info"><div class="bbl-btn-name">Чат семьи</div><div class="bbl-btn-sub">Чат, фото, звонки, напоминания</div></div>
+        <div class="bbl-btn-end">›</div>
+      </button>
+    </div>
+    <div class="bbl-sep">Покупки</div>
+    <div class="bbl-card" style="padding:0">
+      <div id="bbl-shopping-mini" style="padding:4px 0;max-height:220px;overflow-y:auto">
+        <div style="color:#60608a;font-size:13px;text-align:center;padding:12px">Загрузка...</div>
+      </div>
+      <div class="bbl-divider"></div>
+      <div style="display:flex;gap:8px;padding:10px 12px">
+        <input id="bbl-shop-input" type="text" placeholder="Добавить товар..." class="shop-add-input" style="flex:1;margin:0" onkeydown="if(event.key==='Enter')bblShopAdd()" autocomplete="off">
+        <button class="btn btn-primary" style="padding:8px 14px;border-radius:12px;font-size:18px;line-height:1" onclick="bblShopAdd()">＋</button>
+      </div>
+    </div>
+  </div>
+  <!-- CONTROL -->
+  <div class="bbl-page" id="bbl-control">
+    <div class="bbl-sep">Свет</div>
+    <div class="bbl-row" id="bbl-lights-full"></div>
+    <div class="bbl-sep">Климат</div>
+    <div class="bbl-metrics" id="bbl-climate-grid"></div>
+    <div style="margin:10px 12px 8px">
+      <div class="bbl-card" style="margin:0;padding:0">
+        <div style="padding:14px 16px 10px">
+          <div style="font-size:12px;color:rgba(130,130,185,0.65);margin-bottom:10px">🔥 Уставка тёплого пола</div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <input id="bbl-clim-slider" type="range" min="20" max="45" step="0.5" style="flex:1;accent-color:var(--accent)" value="38" oninput="document.getElementById('bbl-clim-val').textContent=Math.round(this.value)" onchange="climateSliderCommit(this.value)">
+            <span id="bbl-clim-val" style="font-size:24px;font-weight:800;color:var(--accent);min-width:36px;text-align:right">—</span>
+            <span style="font-size:13px;color:rgba(130,130,185,0.6)">°C</span>
+          </div>
+        </div>
+        <div style="display:flex">
+          <button onclick="climateAction('on')" style="flex:1;padding:12px;font-size:14px;font-weight:700;background:rgba(248,113,113,0.15);border:none;border-radius:0 0 0 20px;color:#f87171;cursor:pointer;-webkit-tap-highlight-color:transparent;font-family:inherit">🔥 Вкл</button>
+          <button onclick="climateAction('off')" style="flex:1;padding:12px;font-size:14px;font-weight:700;background:rgba(96,165,250,0.12);border:none;border-radius:0 0 20px 0;color:#60a5fa;cursor:pointer;-webkit-tap-highlight-color:transparent;font-family:inherit">❄️ Выкл</button>
+        </div>
+      </div>
+    </div>
+    <div class="bbl-sep">Телевизор</div>
+    <div class="bbl-card" style="padding:0">
+      <button class="bbl-btn" id="bbl-tv-btn">
+        <div class="bbl-btn-icon">📺</div>
+        <div class="bbl-btn-info"><div class="bbl-btn-name">Телевизор</div><div class="bbl-btn-sub" id="bbl-tv-status">—</div></div>
+      </button>
+      <div class="bbl-divider"></div>
+      <div class="bbl-tv-row">
+        <button class="bbl-tv-btn" onclick="tvAction('on')">▶</button>
+        <button class="bbl-tv-btn" onclick="tvAction('vol_down')">🔉</button>
+        <button class="bbl-tv-btn" id="bbl-mute-btn" onclick="tvMuteToggle()">🔇</button>
+        <button class="bbl-tv-btn" onclick="tvAction('vol_up')">🔊</button>
+        <button class="bbl-tv-btn" onclick="tvAction('off')">⏹</button>
+      </div>
+      <div class="bbl-dpad">
+        <div></div><button class="bbl-dpad-btn" onclick="tvKey('up')">▲</button><div></div>
+        <button class="bbl-dpad-btn" onclick="tvKey('left')">◀</button>
+        <button class="bbl-dpad-btn" onclick="tvKey('ok')" style="border-radius:50%">OK</button>
+        <button class="bbl-dpad-btn" onclick="tvKey('right')">▶</button>
+        <div></div><button class="bbl-dpad-btn" onclick="tvKey('down')">▼</button><div></div>
+      </div>
+      <div style="display:flex;gap:6px;padding:4px 12px 10px">
+        <button class="bbl-tv-btn" onclick="tvKey('back')" style="font-size:13px">← Назад</button>
+        <button class="bbl-tv-btn" onclick="tvKey('home')">🏠</button>
+        <button class="bbl-tv-btn" onclick="tvKey('menu')" style="font-size:13px">☰</button>
+        <button class="bbl-tv-btn" onclick="tvAction('play')">▶️</button>
+        <button class="bbl-tv-btn" onclick="tvAction('pause')">⏸</button>
+      </div>
+      <div class="bbl-divider"></div>
+      <div style="display:flex;gap:8px;padding:10px 12px">
+        <button onclick="tvKey('youtube')" style="flex:1;padding:10px 4px;font-size:12px;border-radius:12px;border:none;background:rgba(255,0,0,0.15);color:#f87171;cursor:pointer;-webkit-tap-highlight-color:transparent;font-family:inherit">▶ YouTube</button>
+        <button onclick="tvKey('netflix')" style="flex:1;padding:10px 4px;font-size:12px;border-radius:12px;border:none;background:rgba(229,9,20,0.12);color:#f87171;cursor:pointer;-webkit-tap-highlight-color:transparent;font-family:inherit">🎬 Netflix</button>
+        <button onclick="tvKey('kinopoisk')" style="flex:1;padding:10px 4px;font-size:12px;border-radius:12px;border:none;background:rgba(255,165,0,0.12);color:#fbbf24;cursor:pointer;-webkit-tap-highlight-color:transparent;font-family:inherit">🎭 Кино</button>
+      </div>
+    </div>
+    <div class="bbl-sep">Пылесос</div>
+    <div class="bbl-card" style="padding:0">
+      <button class="bbl-btn">
+        <div class="bbl-btn-icon">🤖</div>
+        <div class="bbl-btn-info"><div class="bbl-btn-name">Пылесос</div><div class="bbl-btn-sub" id="bbl-vacuum-status">—</div></div>
+      </button>
+      <div style="display:flex">
+        <button onclick="vacuumAction('vacuum.start')" style="flex:1;padding:12px;font-size:13px;font-weight:700;background:rgba(52,211,153,0.15);border:none;border-radius:0 0 0 20px;color:#34d399;cursor:pointer;-webkit-tap-highlight-color:transparent;font-family:inherit">▶ Старт</button>
+        <button onclick="vacuumAction('vacuum.pause')" style="flex:1;padding:12px;font-size:13px;font-weight:700;background:rgba(251,191,36,0.12);border:none;color:#fbbf24;cursor:pointer;-webkit-tap-highlight-color:transparent;font-family:inherit">⏸ Пауза</button>
+        <button onclick="vacuumAction('vacuum.return_to_base')" style="flex:1;padding:12px;font-size:13px;font-weight:700;background:rgba(96,165,250,0.12);border:none;border-radius:0 0 20px 0;color:#60a5fa;cursor:pointer;-webkit-tap-highlight-color:transparent;font-family:inherit">🏠 База</button>
+      </div>
+    </div>
+    <div class="bbl-sep">Сцены</div>
+    <div class="bbl-row" id="bbl-scenes-ctrl"></div>
+  </div>
+  <!-- DATA -->
+  <div class="bbl-page" id="bbl-data">
+    <div class="bbl-sep">Электроэнергия</div>
+    <div class="bbl-energy-hero">
+      <div style="display:flex;align-items:flex-end;gap:8px;margin-bottom:4px">
+        <div class="bbl-power-big" id="bbl-power">—</div>
+        <div class="bbl-power-unit">Вт сейчас</div>
+      </div>
+      <div class="bbl-cost-grid">
+        <div class="bbl-cost-item"><div class="bbl-cost-val" id="bbl-cost-day">—</div><div class="bbl-cost-lbl">₽ сегодня</div></div>
+        <div class="bbl-cost-item"><div class="bbl-cost-val" id="bbl-cost-month">—</div><div class="bbl-cost-lbl">₽ месяц</div></div>
+        <div class="bbl-cost-item"><div class="bbl-cost-val" id="bbl-cost-forecast">—</div><div class="bbl-cost-lbl">₽ прогноз</div></div>
+      </div>
+    </div>
+    <div class="bbl-sep">Фазы</div>
+    <div class="bbl-card" style="padding:14px 16px" id="bbl-phases-card">
+      <div style="color:#60608a;font-size:13px;text-align:center">Ожидание данных...</div>
+    </div>
+    <div class="bbl-sep">Климат</div>
+    <div class="bbl-row" id="bbl-data-stats"></div>
+    <div class="bbl-sep">Намаз</div>
+    <div class="bbl-card" style="padding:16px" id="bbl-namaz-card">
+      <div style="display:flex;align-items:center;gap:14px">
+        <div style="font-size:36px">🕌</div>
+        <div>
+          <div style="font-size:17px;font-weight:700;color:rgba(220,220,255,0.95)" id="bbl-namaz-val">—</div>
+          <div style="font-size:12px;color:rgba(130,130,185,0.65);margin-top:2px" id="bbl-namaz-name">Следующий намаз</div>
+          <div class="namaz-progress-bg" style="margin-top:10px;width:160px"><div class="namaz-progress-fill" id="bbl-namaz-bar" style="width:0%"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- MORE -->
+  <div class="bbl-page" id="bbl-more">
+    <div class="bbl-sep">Безопасность</div>
+    <div class="bbl-card" style="padding:0" id="bbl-security-card">
+      <div style="padding:14px;color:#60608a;font-size:13px;text-align:center">Загрузка...</div>
+    </div>
+    <div class="bbl-sep">Погода — Грозный</div>
+    <div class="bbl-card" style="padding:14px 16px">
+      <div id="bbl-weather-content"><div style="color:#60608a;font-size:13px;text-align:center">Загрузка...</div></div>
+    </div>
+    <div class="bbl-sep">Молитвы</div>
+    <div class="bbl-card" style="padding:16px" id="bbl-prayers-card">
+      <div style="color:#60608a;font-size:13px;text-align:center">Загрузка...</div>
+    </div>
+  </div>
+
   <!-- ── Bottom Navigation ── -->
   <nav class="bottom-nav" id="bottom-nav">
     <button class="bnav-tab active" id="bnav-home" onclick="showPage('home')">
@@ -4749,6 +5001,7 @@ function applyStatus(d) {
   renderDashboard();
   energyChartUpdate(d.power);
   if (_currentPage === 'home') showContextBanner();
+  if (typeof bblApply === 'function' && _isBubble) bblApply(d);
 }
 
 // ── Главный запрос данных ─────────────────────────────────────────────────
@@ -7586,6 +7839,7 @@ async function loadScenes() {
     footer.style.cssText = 'grid-column:span 2;margin-top:6px;display:flex;flex-direction:column;gap:6px';
     footer.innerHTML = '<button class="btn btn-primary" style="width:100%" onclick="openNewSceneEditor()">➕ Новая сцена</button><button class="btn btn-neutral" style="width:100%" onclick="loadScenes()">🔄 Обновить</button>';
     grid.appendChild(footer);
+    if (typeof bblUpdateScenes === 'function' && _isBubble) bblUpdateScenes(scenes);
   } catch(e) {
     grid.innerHTML = '<div style="color:#ef4444;font-size:13px;text-align:center;padding:10px;grid-column:span 2">Ошибка: ' + escapeHtml(e.message) + '</div>';
   }
@@ -11142,6 +11396,202 @@ function themePickerClose() {
   if (o) o.style.display = 'none';
 }
 
+// ── Bubble Layout ──────────────────────────────────────────────────────────
+var _isBubble = (localStorage.getItem('ha_layout') === 'bubble');
+
+function layoutToggle() {
+  _isBubble = !_isBubble;
+  if (_isBubble) { document.documentElement.dataset.layout = 'bubble'; localStorage.setItem('ha_layout', 'bubble'); }
+  else { delete document.documentElement.dataset.layout; localStorage.removeItem('ha_layout'); }
+  var btn = document.getElementById('layout-toggle-btn');
+  if (btn) btn.classList.toggle('active', _isBubble);
+  bblShowPage(_currentPage || 'home');
+  if (_isBubble && window._statusData) bblApply(window._statusData);
+}
+
+function bblShowPage(page) {
+  document.querySelectorAll('.bbl-page').forEach(function(p) { p.classList.remove('bbl-vis'); });
+  var el = document.getElementById('bbl-' + page);
+  if (el) el.classList.add('bbl-vis');
+  if (page === 'family') bblLoadShoppingMini();
+  if (page === 'more') { bblLoadMore(); bblLoadPrayers(); }
+}
+
+function bblApply(d) {
+  if (!_isBubble) return;
+  var statsRow = document.getElementById('bbl-stats-row');
+  if (statsRow) {
+    var homeCount = 0, totalCount = 0;
+    if (d.family) Object.values(d.family).forEach(function(v) { totalCount++; if ((typeof v === 'object' ? v.state : v) === 'home') homeCount++; });
+    statsRow.innerHTML =
+      _bblStat('⚡', d.power != null ? Math.round(d.power) + ' Вт' : '—', 'Мощность', "showPage('data')") +
+      _bblStat('🌡️', d.temp_detskaia != null ? parseFloat(d.temp_detskaia).toFixed(1) + '°' : '—', 'Детская', "showPage('data')") +
+      _bblStat('🌤️', d.outdoor_temp != null ? Math.round(d.outdoor_temp) + '°' : '—', 'Улица', '') +
+      _bblStat('🏠', homeCount + '/' + totalCount, 'Дома', "showPage('family')") +
+      (d.humidity != null ? _bblStat('💧', d.humidity + '%', 'Влажность', '') : '');
+  }
+  if (d.lights) {
+    var lightsHtml = Object.entries(d.lights).map(function(kv) {
+      var entity = kv[0], info = kv[1];
+      var state = typeof info === 'object' ? info.state : info;
+      var rawName = typeof info === 'object' ? (info.name || entity) : entity;
+      var icon = typeof info === 'object' ? (info.icon || '💡') : '💡';
+      var name = rawName.replace(/^\S+\s/, '');
+      var isOn = state === 'on';
+      return '<div class="bbl-chip' + (isOn ? ' on' : '') + '" onclick="toggleLight(\'' + escapeAttr(entity) + '\')" id="bbllt-' + sanitizeId(entity) + '">' +
+        '<div class="bbl-chip-icon">' + icon + '</div>' +
+        '<div class="bbl-chip-name">' + escapeHtml(name) + '</div>' +
+        '<div class="bbl-chip-state">' + (isOn ? 'Вкл' : 'Выкл') + '</div></div>';
+    }).join('');
+    ['bbl-lights-quick', 'bbl-lights-full'].forEach(function(id) { var el = document.getElementById(id); if (el) el.innerHTML = lightsHtml; });
+  }
+  var climGrid = document.getElementById('bbl-climate-grid');
+  if (climGrid) {
+    climGrid.innerHTML =
+      _bblMetric('🏠', d.temp_detskaia != null ? parseFloat(d.temp_detskaia).toFixed(1) + '°' : '—', 'Детская') +
+      _bblMetric('🌤️', d.outdoor_temp != null ? Math.round(d.outdoor_temp) + '°' : '—', 'Улица') +
+      _bblMetric('💧', d.humidity != null ? d.humidity + '%' : '—', 'Влажность') +
+      _bblMetric('🔥', d.floor_temp != null ? parseFloat(d.floor_temp).toFixed(1) + '°' : '—', 'Тёплый пол');
+    if (d.floor_setpoint != null) {
+      var sl = document.getElementById('bbl-clim-slider'), vl = document.getElementById('bbl-clim-val');
+      if (sl) sl.value = d.floor_setpoint; if (vl) vl.textContent = Math.round(d.floor_setpoint);
+    }
+  }
+  var powerEl = document.getElementById('bbl-power');
+  if (powerEl) powerEl.textContent = d.power != null ? Math.round(d.power) : '—';
+  function _mirTxt(s, d2) { var se = document.getElementById(s), de = document.getElementById(d2); if (se && de) de.textContent = se.textContent; }
+  _mirTxt('stat-cost-day-b', 'bbl-cost-day');
+  _mirTxt('stat-cost-month', 'bbl-cost-month');
+  _mirTxt('stat-cost-forecast-b', 'bbl-cost-forecast');
+  var ds = document.getElementById('bbl-data-stats');
+  if (ds) {
+    ds.innerHTML =
+      _bblStat('🌡️', d.temp_detskaia != null ? parseFloat(d.temp_detskaia).toFixed(1) + '°' : '—', 'Детская', '') +
+      _bblStat('💧', d.humidity != null ? d.humidity + '%' : '—', 'Влажность', '') +
+      _bblStat('🔥', d.floor_temp != null ? parseFloat(d.floor_temp).toFixed(1) + '°' : '—', 'Тёплый пол', '');
+  }
+  if (d.phases && d.phases.length) {
+    var ph = document.getElementById('bbl-phases-card');
+    if (ph) {
+      var maxW = Math.max.apply(null, d.phases.map(function(p) { return parseFloat(p.power) || 0; })) || 1;
+      ph.innerHTML = d.phases.map(function(p) {
+        var w = parseFloat(p.power) || 0, pct = Math.round(w / maxW * 100);
+        var col = w > 3000 ? '#f87171' : w > 1500 ? '#fbbf24' : '#34d399';
+        return '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;margin-bottom:5px">' +
+          '<span style="font-size:12px;color:rgba(180,180,220,0.75)">' + escapeHtml(p.name || '') + '</span>' +
+          '<span style="font-size:13px;font-weight:700;color:' + col + '">' + Math.round(w) + ' Вт</span></div>' +
+          '<div style="height:6px;border-radius:3px;background:rgba(255,255,255,0.07)">' +
+          '<div style="height:6px;border-radius:3px;background:' + col + ';width:' + pct + '%"></div></div></div>';
+      }).join('');
+    }
+  }
+  if (d.tv) {
+    var tvSub = document.getElementById('bbl-tv-status');
+    var stMap = {on:'Включён',off:'Выключен',idle:'Ожидание',paused:'Пауза',playing:'Воспроизводит',standby:'Standby'};
+    if (tvSub) tvSub.textContent = (d.tv.title ? d.tv.title + ' — ' : '') + (stMap[d.tv.state] || d.tv.state);
+    var tvBtn = document.getElementById('bbl-tv-btn');
+    if (tvBtn) tvBtn.classList.toggle('on', ['on','playing','paused','idle'].indexOf(d.tv.state) !== -1);
+  }
+  if (d.vacuum) {
+    var vEl = document.getElementById('bbl-vacuum-status');
+    var vsMap = {docked:'🏠 На базе',idle:'💤 Ожидание',cleaning:'🧹 Уборка',paused:'⏸ Пауза',returning:'↩️ Возврат',error:'❌ Ошибка'};
+    if (vEl) vEl.textContent = vsMap[d.vacuum.state] || d.vacuum.state;
+  }
+  var persEl = document.getElementById('bbl-persons');
+  if (persEl && d.family) {
+    var emojiMap = {khamzat:'👨',aiza:'👩',sulim:'👦',kamila:'👧'};
+    persEl.innerHTML = Object.entries(d.family).map(function(kv) {
+      var name = kv[0], info = kv[1];
+      var state = typeof info === 'object' ? info.state : info;
+      var isHome = state === 'home';
+      return '<div class="bbl-person' + (isHome ? ' home' : '') + '">' +
+        '<div class="bbl-person-av">' + (emojiMap[name.toLowerCase()] || '👤') + '</div>' +
+        '<div class="bbl-person-name">' + escapeHtml(name) + '</div>' +
+        '<div class="bbl-person-st">' + (isHome ? '🏠 Дома' : '🚗 Вне') + '</div></div>';
+    }).join('');
+  }
+}
+
+function _bblStat(icon, val, lbl, onclick) {
+  return '<div class="bbl-stat-chip"' + (onclick ? ' onclick="' + onclick + '"' : '') + '>' +
+    '<div class="bbl-stat-icon">' + icon + '</div><div class="bbl-stat-val">' + val + '</div>' +
+    '<div class="bbl-stat-lbl">' + escapeHtml(lbl) + '</div></div>';
+}
+
+function _bblMetric(icon, val, lbl) {
+  return '<div class="bbl-metric"><div class="bbl-metric-icon">' + icon + '</div>' +
+    '<div class="bbl-metric-val">' + val + '</div><div class="bbl-metric-lbl">' + escapeHtml(lbl) + '</div></div>';
+}
+
+function bblUpdateScenes(scenes) {
+  var entries = Object.entries(scenes).filter(function(kv) { return kv[0] !== '__home_away__'; });
+  var html = entries.slice(0, 12).map(function(kv) {
+    var id = kv[0], sc = kv[1];
+    return '<div class="bbl-chip" onclick="runScene(\'' + escapeAttr(id) + '\',null)">' +
+      '<div class="bbl-chip-icon">' + escapeHtml(sc.icon || '🎬') + '</div>' +
+      '<div class="bbl-chip-name">' + escapeHtml(sc.name || id) + '</div></div>';
+  }).join('');
+  ['bbl-scenes-quick', 'bbl-scenes-ctrl'].forEach(function(id) { var el = document.getElementById(id); if (el) el.innerHTML = html; });
+}
+
+function bblLoadShoppingMini() {
+  api('/shopping').then(function(items) {
+    var el = document.getElementById('bbl-shopping-mini');
+    if (!el) return;
+    var pending = (items || []).filter(function(i) { return !i.done; });
+    if (!pending.length) { el.innerHTML = '<div style="color:#60608a;font-size:13px;text-align:center;padding:12px">Список пуст ✓</div>'; return; }
+    el.innerHTML = pending.slice(0, 8).map(function(item) {
+      return '<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:0.5px solid rgba(255,255,255,0.05)">' +
+        '<button onclick="bblShopCheck(\'' + escapeAttr(item.id) + '\')" style="width:22px;height:22px;border-radius:50%;background:rgba(255,255,255,0.07);border:0.5px solid rgba(255,255,255,0.15);cursor:pointer;-webkit-tap-highlight-color:transparent;flex-shrink:0"></button>' +
+        '<span style="font-size:14px;color:rgba(220,220,255,0.85);flex:1">' + escapeHtml(item.name || '') + '</span></div>';
+    }).join('') + (pending.length > 8 ? '<div style="color:#60608a;font-size:12px;text-align:center;padding:8px">+ ещё ' + (pending.length - 8) + '</div>' : '');
+  }).catch(function() {});
+}
+
+function bblShopCheck(id) {
+  api('/shopping/' + id + '/toggle', 'POST', {}).then(function() { bblLoadShoppingMini(); loadShopping(); }).catch(function() {});
+}
+
+function bblShopAdd() {
+  var inp = document.getElementById('bbl-shop-input');
+  if (!inp || !inp.value.trim()) return;
+  var name = inp.value.trim(); inp.value = '';
+  api('/shopping', 'POST', {name: name}).then(function() { bblLoadShoppingMini(); loadShopping(); }).catch(function() {});
+}
+
+function bblLoadMore() {
+  var bblW = document.getElementById('bbl-weather-content');
+  var mainW = document.getElementById('weather-content');
+  if (bblW && mainW && mainW.innerHTML && !mainW.innerHTML.includes('Загрузка')) bblW.innerHTML = mainW.innerHTML;
+  var secEl = document.getElementById('bbl-security-card');
+  if (secEl) {
+    var d = window._statusData || {};
+    var fam = d.family || {};
+    var anyHome = Object.values(fam).some(function(v) { return (typeof v === 'object' ? v.state : v) === 'home'; });
+    var allAway = Object.keys(fam).length > 0 && !anyHome;
+    secEl.innerHTML = '<button class="bbl-btn" onclick="homeAwayTap()">' +
+      '<div class="bbl-btn-icon" style="' + (allAway ? 'background:rgba(248,113,113,0.2)' : 'background:rgba(52,211,153,0.15)') + '">' + (allAway ? '🔒' : '🔓') + '</div>' +
+      '<div class="bbl-btn-info"><div class="bbl-btn-name">' + (allAway ? 'Все ушли — охрана' : anyHome ? 'Кто-то дома' : 'Нет данных') + '</div>' +
+      '<div class="bbl-btn-sub">' + (allAway ? 'Нажать — режим «Дома»' : 'Нажать — режим «Ушёл»') + '</div></div>' +
+      '<div class="bbl-btn-end">' + (allAway ? '🏠' : '🚪') + '</div></button>';
+  }
+}
+
+function bblLoadPrayers() {
+  var src = document.getElementById('sec-prayers-body');
+  var dst = document.getElementById('bbl-prayers-card');
+  if (src && dst && src.innerHTML.trim()) dst.innerHTML = src.innerHTML;
+}
+
+setInterval(function() {
+  if (!_isBubble) return;
+  function _m(s, d) { var se = document.getElementById(s), de = document.getElementById(d); if (se && de) de.textContent = se.textContent; }
+  _m('namaz-countdown', 'bbl-namaz-val');
+  _m('namaz-prayer-name', 'bbl-namaz-name');
+  var sp = document.getElementById('namaz-progress'), dp = document.getElementById('bbl-namaz-bar');
+  if (sp && dp) dp.style.width = sp.style.width;
+}, 1000);
+
 // Apply saved theme immediately
 (function() {
   const saved = localStorage.getItem('ha_theme') || 'cosmos';
@@ -11215,6 +11665,7 @@ function showPage(page) {
   });
   haptic(8);
   window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (_isBubble) bblShowPage(page);
   if (page === 'home')    { renderDashboard(); showContextBanner(); }
   if (page === 'family')  { if (!_familyLoaded) loadFamilyExtra(); }
   if (page === 'control') { if (!_scenesLoaded) loadScenes(); }
@@ -11226,6 +11677,13 @@ function showPage(page) {
 (function() {
   var app = document.getElementById('app');
   if (app) app.classList.add('page-active-home');
+  // Restore bubble layout
+  if (_isBubble) {
+    document.documentElement.dataset.layout = 'bubble';
+    var lb = document.getElementById('layout-toggle-btn');
+    if (lb) lb.classList.add('active');
+    bblShowPage('home');
+  }
   // Load saved accent
   try {
     var saved = localStorage.getItem('ha_accent');
