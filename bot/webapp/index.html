@@ -5789,7 +5789,6 @@ async function callService(service, entity_id) {
 async function callAction(btnEl, service, entity_id, extra = {}) {
   if (btnEl) {
     btnEl.classList.add('pending');
-    if (btnEl.classList.contains('light-btn')) btnEl.classList.add('pending');
   }
   try {
     const result = await api('/action', 'POST', { service, entity_id, extra });
@@ -9677,13 +9676,6 @@ function closeCameraModal() {
   _camModal = null;
 }
 
-function retryCamera(url) {
-  const img = document.getElementById('cam-modal-img');
-  const err = document.getElementById('cam-modal-err');
-  if (img) { img.src = url + '&t=' + Date.now(); }
-  if (err) err.style.display = 'none';
-}
-
 function retryCameraModal(eid) {
   closeCameraModal();
   openCameraModal(eid);
@@ -12009,7 +12001,8 @@ async function qsToggleLight(entity, btn) {
   haptic(8);
   try {
     var info = _lastLights[entity] || {};
-    var domain = (typeof info === 'object' && info.domain) ? info.domain : 'light';
+    var domain = (typeof info === 'object' && info.domain) ? info.domain
+               : (entity.startsWith('switch.') ? 'switch' : 'light');
     await api('/action', 'POST', {service: domain + (isOn ? '.turn_off' : '.turn_on'), entity_id: entity, extra: {}});
     _lastLights[entity] = Object.assign({}, info, {state: isOn ? 'off' : 'on'});
     setTimeout(loadStatus, 800);

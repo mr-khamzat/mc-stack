@@ -169,37 +169,9 @@ SCENES_FILE        = Path("/opt/ha-bot/scenes.json")
 FACES_LOG_FILE     = Path("/opt/ha-bot/faces_log.json")
 NIGHT_MODE_FILE    = Path("/opt/ha-bot/night_mode.json")
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ██  БЛОК 8: БАЗА ДАННЫХ SQLite
-# ───────────────────────────────────────────────────────────────────────────────
-# Все данные бота хранятся в одном SQLite файле: /opt/ha-bot/ha_bot.db
-#
-# Таблицы:
-#   devices          — устройства (entity_id, название, иконка, раздел)
-#   sections         — разделы панели (свет, климат, камеры...)
-#   scenes           — пользовательские сцены
-#   config           — настройки (алерты, ночной режим...)
-#   activity_log     — журнал действий (последние 500 записей)
-#   faces_log        — история распознавания лиц (последние 200)
-#   family_users     — пользователи бота (Telegram ID, роль, имя)
-#   webapp_users     — пользователи Mini App (логин, роль, права)
-#   push_subscriptions — подписки на Web Push уведомления
-#   shopping_*       — данные списка покупок
-#   family_*         — статусы, заметки, реакции, кулинарное расписание
-#   reminders        — напоминания с push-уведомлениями
-#   chat_messages    — история чата в Mini App
-#   photos           — фотографии в галерее
-#   call_log         — история звонков WebRTC
-#   invite_tokens    — одноразовые ссылки-приглашения
-#   cooking_schedule — расписание готовки по дням
-#
-# ✏️ ЧТО МЕНЯТЬ:
-#   Менять структуру БД не нужно — она создаётся автоматически при первом запуске.
-#   Путь к файлу БД: DB_FILE = Path("/opt/ha-bot/ha_bot.db") (выше в коде).
-#   Бэкап автоматически отправляется в Telegram каждую ночь в 3:00.
-# ═══════════════════════════════════════════════════════════════════════════════
+# ── SQLite: глобальное подключение + блокировка для записи ────────────────────
 _DB: sqlite3.Connection | None = None
-_DB_LOCK = threading.Lock()  # блокировка для безопасной записи из разных потоков
+_DB_LOCK = threading.Lock()
 
 def _db() -> sqlite3.Connection:
     global _DB
@@ -482,56 +454,25 @@ def _db_migrate():
         except Exception as e:
             log.error(f"DB migrate night_mode: {e}")
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ██  БЛОК 3: НАСТРОЙКИ АЛЕРТОВ ПО УМОЛЧАНИЮ
-# ───────────────────────────────────────────────────────────────────────────────
-# Эти значения применяются при первом запуске бота.
-# После первого запуска значения сохраняются в БД и меняются через:
-#   • Telegram-бот: /alerts
-#   • Mini App: раздел Алерты → Настройки
-#   • API: POST /ha-app/api/alerts
-#
-# ✏️ ЧТО МЕНЯТЬ:
-#   power_threshold   — порог мощности в Вт. Если потребление превысит это
-#                       значение — придёт уведомление в Telegram. (3000 = 3 кВт)
-#   temp_min/max      — диапазон нормальной температуры в комнате.
-#                       Выход за границы → уведомление.
-#   quiet_hours_start — с этого часа алерты НЕ отправляются (тихий режим).
-#   quiet_hours_end   — до этого часа алерты молчат. (23→7 = с 23:00 до 7:00)
-#
-#   entity_power      — сенсор суммарной мощности дома (sensor.*)
-#   entity_temp       — сенсор температуры (sensor.*)
-#   entity_hum        — сенсор влажности (sensor.*)
-#   entity_inet       — бинарный сенсор интернета (binary_sensor.*)
-#                       on = интернет есть, off = интернет пропал
-#
-#   enabled.power     — включить/выключить алерт по мощности (True/False)
-#   enabled.temp      — алерт по температуре
-#   enabled.person    — уведомление когда кто-то пришёл/ушёл домой
-#   enabled.namaz     — напоминание о намазе за 10 минут
-#   enabled.morning   — утренний брифинг в 8:00 (погода, энергия, намаз)
-#   enabled.frigate   — уведомление при детекции на камере Frigate
-#   enabled.inet      — уведомление при потере интернета
-# ═══════════════════════════════════════════════════════════════════════════════
 _ALERTS_DEFAULTS = {
-    "power_threshold":   3000,    # Порог мощности в Вт (сигнал если выше)
-    "temp_min":          18,      # Минимально допустимая температура °C
-    "temp_max":          27,      # Максимально допустимая температура °C
-    "quiet_hours_start": 23,      # Начало тихого часа (час, 0-23)
-    "quiet_hours_end":   7,       # Конец тихого часа (час, 0-23)
+    "power_threshold":   3000,
+    "temp_min":          18,
+    "temp_max":          27,
+    "quiet_hours_start": 23,
+    "quiet_hours_end":   7,
     # Настраиваемые entity_id сенсоров (можно менять через API /api/alerts)
     "entity_power":      "sensor.moshchnost_vsego_doma",
     "entity_temp":       "sensor.temp_detskaia_temperature",
     "entity_hum":        "sensor.temp_detskaia_humidity",
     "entity_inet":       "binary_sensor.keenetic_gateway_wan_status_2",
     "enabled": {
-        "power":   True,   # Алерт превышения мощности
-        "temp":    True,   # Алерт выхода температуры за диапазон
-        "person":  True,   # Уведомление о приходе/уходе домочадцев
-        "namaz":   True,   # Напоминание о намазе за 10 минут
-        "morning": True,   # Утренний брифинг в 8:00
-        "frigate": True,   # Уведомление при детекции на камере
-        "inet":    True,   # Уведомление при потере интернета
+        "power":   True,
+        "temp":    True,
+        "person":  True,
+        "namaz":   True,
+        "morning": True,
+        "frigate": True,
+        "inet":    True,
     }
 }
 
@@ -558,34 +499,13 @@ def _alerts_save(cfg: dict):
     except Exception as e:
         log.error(f"alerts_save: {e}")
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ██  БЛОК 4: СЦЕНЫ ПО УМОЛЧАНИЮ
-# ───────────────────────────────────────────────────────────────────────────────
-# Сцены — это наборы действий которые выполняются одной кнопкой.
-# Например "Спать" выключает весь свет, "Кино" приглушает его и включает TV.
-#
-# Эти сцены применяются при первом запуске. Потом их можно изменить:
-#   • Telegram-бот: /scenes
-#   • Mini App: раздел Сцены → редактировать
-#   • Напрямую: docker exec или изменить словарь ниже и перезапустить бота
-#
-# ✏️ КАК ДОБАВИТЬ СВОЮ СЦЕНУ:
-#   1. Добавить новый ключ в словарь (например "morning": {...})
-#   2. В "actions" перечислить нужные entity_id и service
-#   3. service = "light.turn_on" | "light.turn_off" | "switch.turn_on" |
-#               "switch.turn_off" | "media_player.turn_on" и т.д.
-#   4. В "extra" можно передать дополнительные параметры:
-#      {"brightness_pct": 50}  — яркость лампы в процентах (0-100)
-#      {"color_temp": 400}     — цветовая температура (153=холодный, 500=тёплый)
-#      {"rgb_color": [255,0,0]}— цвет лампы (RGB)
-# ═══════════════════════════════════════════════════════════════════════════════
+# ── Сцены / Режимы ────────────────────────────────────────────────────────────
 _SCENES_DEFAULTS = {
     "sleep": {
         "name": "Спать",
         "icon": "🌙",
         "description": "Выключить весь свет",
         "actions": [
-            # Перечисли entity_id всех своих ламп/выключателей
             {"entity_id": "light.svet_krovat",            "service": "light.turn_off"},
             {"entity_id": "switch.vykliuchatel_kukhnia",  "service": "switch.turn_off"},
             {"entity_id": "switch.kabinet_svet_pk_left",  "service": "switch.turn_off"},
@@ -725,56 +645,22 @@ def _sect_save(d: dict):
     except Exception as e:
         log.error(f"sections_save: {e}")
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ██  БЛОК 10: КЕШ ПОГОДЫ И ПРОЧИХ ДАННЫХ
-# ───────────────────────────────────────────────────────────────────────────────
-# Чтобы не спамить запросами к HA и внешним API при каждом открытии бота/сайта,
-# данные кешируются в памяти на определённое время.
-#
-# ✏️ КАКИЕ КЕШ-TTL МОЖНО МЕНЯТЬ:
-#   _WEATHER_CACHE_TTL = 600    — погода: раз в 10 минут (Open-Meteo бесплатный)
-#   _FAMILY_CACHE_TTL  = 120    — список person.* из HA: раз в 2 минуты
-#   _STATUS_CACHE_TTL  = 5      — API /status: раз в 5 секунд (для Mini App)
-#
-# Уменьшать _WEATHER_CACHE_TTL ниже 300 не рекомендуется — Open-Meteo имеет
-# ограничения по количеству запросов в минуту (бесплатный план).
-# ═══════════════════════════════════════════════════════════════════════════════
+# ── Кеш погоды ────────────────────────────────────────────────────────────────
+# Погода обновляется не чаще чем раз в 10 минут чтобы не спамить Open-Meteo API
 _weather_cache: dict | None = None
 _weather_cache_ts: float = 0.0
 _WEATHER_CACHE_TTL = 600  # TTL кеша погоды: 600 сек = 10 минут
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ██  БЛОК 1: КООРДИНАТЫ И ЧАСОВОЙ ПОЯС
-# ───────────────────────────────────────────────────────────────────────────────
-# Используются для получения погоды через Open-Meteo (бесплатно, без ключа).
-#
-# ✏️ ЧТО МЕНЯТЬ:
-#   LAT, LON  — координаты твоего города. Найти можно на maps.google.com
-#               (правый клик → «Что здесь?» → первая строка)
-#   TIMEZONE  — часовой пояс. Полный список: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
-#               Примеры: "Europe/Moscow", "Asia/Almaty", "Europe/Kiev"
-# ═══════════════════════════════════════════════════════════════════════════════
-LAT, LON  = 43.31, 45.69   # Грозный (Чечня) — замени на свои координаты
-TIMEZONE  = "Europe/Moscow"  # Часовой пояс — используется в погоде и графиках
+# ── Координаты для Open-Meteo ──────────────────────────────────────────────────
+# Open-Meteo — бесплатный API погоды без ключей, работает по координатам
+LAT, LON  = 43.31, 45.69   # Грозный (Чечня)
+TIMEZONE  = "Europe/Moscow"  # Часовой пояс для отображения времени
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ██  БЛОК 2: ID КЛЮЧЕВЫХ СУЩНОСТЕЙ HOME ASSISTANT
-# ───────────────────────────────────────────────────────────────────────────────
-# Эти entity_id бот использует напрямую — вне системы управления устройствами.
-#
-# ✏️ ЧТО МЕНЯТЬ:
-#   TV_EID    — entity_id твоего телевизора.
-#               Найти: HA → Настройки → Устройства и службы → Объекты →
-#               фильтр по "media_player"
-#   NAMAZ_EID — таймер намаза. Если нет — закомментируй строки намаза в коде.
-#   SHOP_EID  — список покупок (todo entity). Можно создать в HA:
-#               Настройки → Помощники → Создать → Список дел
-#
-# Узнать entity_id: в HA нажми на устройство → три точки → Информация объекта
-# ═══════════════════════════════════════════════════════════════════════════════
-TV_EID    = "media_player.android_tv"            # Телевизор (media_player.*)
-NAMAZ_EID = "timer.namaz_obratnyi_otschet"       # Таймер намаза (timer.*)
-SHOP_EID  = "todo.shopping_list"                 # Список покупок (todo.*)
+# ── ID сущностей Home Assistant ───────────────────────────────────────────────
+# Замени на реальные entity_id из своего HA (Настройки → Устройства → Объекты)
+TV_EID    = "media_player.android_tv"            # Телевизор
+NAMAZ_EID = "timer.namaz_obratnyi_otschet"       # Таймер намаза
+SHOP_EID  = "todo.shopping_list"                 # Список покупок
 
 # ── Кеш списка членов семьи ────────────────────────────────────────────────────
 # Список person.* сущностей обновляется раз в час — они меняются редко
@@ -816,25 +702,10 @@ class DeviceMgmt(StatesGroup):
     rename_wait — ждём новое название устройства от пользователя."""
     rename_wait = State()   # ожидаем новое имя устройства
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ██  БЛОК 7: ФУНКЦИИ ВЗАИМОДЕЙСТВИЯ С HOME ASSISTANT (REST API)
-# ───────────────────────────────────────────────────────────────────────────────
-# Все функции ha_* — обёртки над HTTP запросами к HA REST API.
+# ── Home Assistant REST API ────────────────────────────────────────────────────
+# Все функции ha_* — обёртки над HTTP запросами к HA API.
 # HA_URL и HA_TOKEN берутся из .env файла.
 # Документация HA REST API: https://developers.home-assistant.io/docs/api/rest/
-#
-# Доступные функции:
-#   ha_get(path)                          — получить данные (состояние, история...)
-#   ha_post(path, data)                   — отправить команду (вызвать сервис)
-#   ha_state(entity_id)                   — получить состояние ("on"/"off"/"22.5"...)
-#   ha_attr(entity_id, attr, default)     — получить атрибут сущности
-#   ha_call(domain, service, entity_id)   — управление устройством
-#   ha_history(entity_id, hours)          — история значений для графика
-#
-# ✏️ ЧТО МЕНЯТЬ:
-#   Эти функции трогать не нужно — они универсальны для любого HA.
-#   Если HA за самоподписанным SSL — _ha_cs() уже отключает проверку сертификата.
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def _ha_cs(**kw) -> aiohttp.ClientSession:
     """ClientSession с IPv4-only и без проверки SSL (сертификат crazedns.ru — wildcard,
@@ -1079,30 +950,13 @@ async def ha_ws_get_todo_items(entity_id: str) -> list:
         log.error(f"WS todo {entity_id}: {e}")
     return []
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ██  БЛОК 6: АВТОРИЗАЦИЯ И РОЛИ ПОЛЬЗОВАТЕЛЕЙ
-# ───────────────────────────────────────────────────────────────────────────────
-# Система ролей определяет что может делать каждый пользователь бота:
+# ── Авторизация и роли пользователей ──────────────────────────────────────────
+# Система ролей:
+#   owner  — главный администратор (ADMIN_ID из .env), полный доступ
+#   admin  — администратор добавленный через /invite, полный доступ
+#   viewer — только просмотр, не может управлять устройствами
 #
-#   owner  — главный администратор. Задаётся через ADMIN_ID в .env.
-#            Единственный кто может добавлять/удалять других пользователей.
-#            Получает все алерты и брифинги.
-#
-#   admin  — полный доступ к боту. Добавляется через /invite admin.
-#            Может управлять устройствами, видит все разделы.
-#
-#   viewer — только просмотр. Добавляется через /invite viewer.
-#            Видит статус, погоду, намаз — но не может ничем управлять.
-#            Кнопки управления для viewer скрыты.
-#
-#   guest  — гость Mini App. Создаётся через /invite (без аргументов).
-#            Видит только то что ему разрешил owner (через /guests).
-#            Не имеет доступа к боту напрямую.
-#
-# ✏️ ЧТО МЕНЯТЬ:
-#   Роли не нужно менять в коде — управляй ими через бота (/users, /invite).
-#   Если хочешь изменить что видит viewer — отредактируй family_kb() ниже.
-# ═══════════════════════════════════════════════════════════════════════════════
+# Проверки вызываются в начале каждого обработчика команды.
 
 def is_admin(uid: int) -> bool:
     """Проверить: является ли пользователь главным администратором.
@@ -1335,28 +1189,13 @@ PRAYERS_RU = {
 }
 PRAYERS_ORDER = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ██  БЛОК 5: ВРЕМЕНА НАМАЗА — СУЩНОСТИ HA
-# ───────────────────────────────────────────────────────────────────────────────
-# Бот читает времена намаза из input_datetime сущностей Home Assistant.
-# Это позволяет автоматически обновлять расписание через HA (например через
-# автоматизацию или вручную в режиме Настройки → Помощники).
-#
-# ✏️ ЧТО МЕНЯТЬ:
-#   Замени значения на реальные entity_id из своего HA.
-#   Сущности должны быть типа input_datetime (Помощники → Дата/Время).
-#   Их можно создать в HA: Настройки → Помощники → Создать → Дата/Время
-#   и назвать как угодно — главное прописать entity_id ниже.
-#
-#   Если намаз не нужен — можно оставить как есть, функция просто вернёт
-#   "расписание недоступно" если сущности не найдены в HA.
-# ═══════════════════════════════════════════════════════════════════════════════
+# HA input_datetime entities for prayer times (manually set by user in HA)
 _HA_PRAYER_EIDS = {
-    "Fajr":    "input_datetime.namaz_fadzhr",   # Фаджр (утренняя)
-    "Dhuhr":   "input_datetime.namaz_zukhr",    # Зухр (полуденная)
-    "Asr":     "input_datetime.namaz_asr",      # Аср (послеполуденная)
-    "Maghrib": "input_datetime.namaz_magrib",   # Магриб (вечерняя)
-    "Isha":    "input_datetime.namaz_isha",     # Иша (ночная)
+    "Fajr":    "input_datetime.namaz_fadzhr",
+    "Dhuhr":   "input_datetime.namaz_zukhr",
+    "Asr":     "input_datetime.namaz_asr",
+    "Maghrib": "input_datetime.namaz_magrib",
+    "Isha":    "input_datetime.namaz_isha",
 }
 
 _prayer_cache: dict = {"date": None, "timings": None}
@@ -1560,18 +1399,7 @@ def _build_auto_kb(autos: list) -> InlineKeyboardMarkup:
     builder.adjust(1)
     return builder.as_markup()
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ██  БЛОК 9: ГЛАВНАЯ КЛАВИАТУРА TELEGRAM БОТА
-# ───────────────────────────────────────────────────────────────────────────────
-# Кнопки которые видит admin при открытии бота.
-# Viewers видят сокращённую клавиатуру (family_kb() — только просмотр).
-#
-# ✏️ ЧТО МЕНЯТЬ:
-#   Можно добавить/убрать кнопки — каждый KeyboardButton это одна кнопка.
-#   Кнопки в одном списке [] = одна строка. Максимум 3 кнопки в строке
-#   чтобы текст не обрезался на маленьких экранах.
-#   Последняя кнопка (web_app=...) открывает Mini App — не удаляй её.
-# ═══════════════════════════════════════════════════════════════════════════════
+# ── Главная клавиатура ────────────────────────────────────────────────────────
 def main_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="💡 Свет"),     KeyboardButton(text="⚡ Энергия"),  KeyboardButton(text="🌡️ Климат")],
@@ -2082,30 +1910,7 @@ async def status_refresh(cb: CallbackQuery):
     ]])
     await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ██  БЛОК 11: УПРАВЛЕНИЕ УСТРОЙСТВАМИ
-# ───────────────────────────────────────────────────────────────────────────────
-# Система управления устройствами состоит из двух частей:
-#
-# 1. _DEVICES_DEFAULTS — устройства которые добавляются при первом запуске.
-#    После первого запуска конфиг живёт в SQLite и меняется через /devices.
-#
-# 2. Авто-обнаружение (_refresh_lights) — сканирует все light.* и switch.* в HA
-#    и автоматически добавляет новые устройства в конфиг. Запускается при старте.
-#
-# ✏️ ЧТО МЕНЯТЬ:
-#   В _DEVICES_DEFAULTS замени entity_id на свои устройства.
-#   Структура каждой записи:
-#     "entity_id":  строка вида "domain.name" из HA
-#     "name":       отображаемое название (можно на русском)
-#     "icon":       эмодзи-иконка рядом с названием
-#     "section":    в какой раздел попадёт ("lights", "cameras", "hidden"...)
-#     "enabled":    True = показывать, False = скрыть
-#     "order":      порядок отображения (меньше = выше в списке)
-#
-# После первого запуска менять этот словарь бесполезно — данные уже в БД.
-# Используй /devices в боте или Mini App → Настройки → Устройства.
-# ═══════════════════════════════════════════════════════════════════════════════
+# ── 💡 Свет + 🛠 Управление устройствами ─────────────────────────────────────
 # Defaults — первый запуск или если devices.json не содержит эти entity
 _DEVICES_DEFAULTS: dict = {
     "light.svet_krovat":           {"name": "Кровать",        "icon": "🛏️", "section": "lights",   "enabled": True,  "order": 1},
@@ -3414,7 +3219,7 @@ async def fri_clip(cb: CallbackQuery):
     await cb.answer("🎬 Скачиваю клип...")
     try:
         async with _ha_cs() as sess:
-            async with sess.get(clip_url, headers=HA_HEADERS, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            async with sess.get(clip_url, headers=HA_HEADERS, timeout=aiohttp.ClientTimeout(total=60)) as resp:
                 if resp.status == 200:
                     data = await resp.read()
                     camera  = entry.get("camera","cam")
@@ -3651,41 +3456,6 @@ _alert_state = {
     "person_img_ts":           None,   # последний timestamp image.cam_a6810678_person
 }
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ██  БЛОК 12: ФОНОВЫЕ ЗАДАЧИ
-# ───────────────────────────────────────────────────────────────────────────────
-# Бот запускает несколько фоновых задач параллельно с основным polling:
-#
-#   alert_loop()           — каждые 60 сек проверяет алерты (мощность, темп,
-#                            намаз, присутствие, камеры, интернет).
-#
-#   _ha_state_watch_loop() — WebSocket к HA. Получает все изменения состояний
-#                            в реальном времени и рассылает SSE всем клиентам
-#                            Mini App. Обеспечивает живые обновления без polling.
-#
-#   _frigate_event_loop()  — слушает WebSocket HA на события Frigate
-#                            (детекция людей, объектов). Сохраняет в кеш для
-#                            отображения в разделе Камеры Mini App.
-#
-#   _reminders_check_loop()— каждые 60 сек проверяет напоминания в БД.
-#                            При наступлении времени — push-уведомление + Telegram.
-#
-#   db_backup_loop()       — каждый день в 03:00 МСК делает SQLite бэкап
-#                            и отправляет admin в Telegram как файл.
-#
-#   morning_briefing_loop()— каждый день в 08:00 МСК отправляет краткую сводку:
-#                            погода, потребление энергии, расписание намаза.
-#
-#   ssl_check_loop()       — каждый день в 10:00 МСК проверяет SSL сертификаты.
-#                            Уведомляет за 14 дней до истечения.
-#
-#   _chat_cleanup_loop()   — удаляет сообщения чата старше 3 дней.
-#
-# ✏️ ЧТО МЕНЯТЬ:
-#   Время фоновых задач (08:00, 03:00 и т.д.) — ищи sleep_until() внутри
-#   каждой функции. Временная зона — MSK (UTC+3).
-#   Порог алертов и entity_id — через API /alerts или Mini App.
-# ═══════════════════════════════════════════════════════════════════════════════
 async def alert_loop():
     """Фоновая задача: проверка алертов каждую минуту.
 
@@ -3809,12 +3579,10 @@ async def _check_alerts():
                                    (now_utc - last_ts).total_seconds() >= PERSON_NOTIF_COOLDOWN)
                     if state == "home" and cooldown_ok:
                         await bot.send_message(ADMIN_ID, f"🏠 <b>{name}</b> дома!", parse_mode="HTML")
-                        asyncio.create_task(push_notify(None, "🏠 Дома", f"{name} вернулся домой", "/ha-app/"))
                         _activity_log("person_home", name)
                         _alert_state["persons_notif_ts"][eid] = now_utc
                     elif prev == "home" and cooldown_ok:
                         await bot.send_message(ADMIN_ID, f"🚗 <b>{name}</b> ушёл(а)", parse_mode="HTML")
-                        asyncio.create_task(push_notify(None, "🚗 Ушёл", f"{name} покинул дом", "/ha-app/"))
                         _activity_log("person_away", name)
                         _alert_state["persons_notif_ts"][eid] = now_utc
                 _alert_state["persons"][eid] = state
@@ -4681,7 +4449,8 @@ async def _web_activity_clear(request: aiohttp_web.Request) -> aiohttp_web.Respo
 
 # ── Web Push (VAPID) ──────────────────────────────────────────────────────────
 
-async def push_notify(username: str | None, title: str, body: str, url: str = "/ha-app/", tag: str = "ha-notify") -> int:
+async def push_notify(username: str | None, title: str, body: str, url: str = "/ha-app/", tag: str = "ha-notify",
+                      extra: dict | None = None, ttl: int = 3600) -> int:
     """Send Web Push notification to all subscriptions for username (or all if None).
     Returns count of successful sends."""
     log.info(f"push_notify: called for username={username!r} title={title!r}")
@@ -4707,7 +4476,10 @@ async def push_notify(username: str | None, title: str, body: str, url: str = "/
         return 0
 
     sent = 0
-    data = json.dumps({"title": title, "body": body, "url": url, "tag": tag}, ensure_ascii=False)
+    payload = {"title": title, "body": body, "url": url, "tag": tag}
+    if extra:
+        payload.update(extra)
+    data = json.dumps(payload, ensure_ascii=False)
     dead_endpoints: list[str] = []
     for row in rows:
         try:
@@ -4717,7 +4489,7 @@ async def push_notify(username: str | None, title: str, body: str, url: str = "/
                 data=data,
                 vapid_private_key=str(VAPID_PRIVATE_PEM_FILE),
                 vapid_claims=VAPID_CLAIMS,
-                ttl=3600,
+                ttl=ttl,
             )
             sent += 1
         except Exception as e:
@@ -5439,14 +5211,10 @@ async def _ha_state_watch_loop():
       2. Рассылает SSE-событие всем подключённым клиентам Mini App
 
     Это обеспечивает РЕАЛЬНОЕ ВРЕМЯ в Mini App без polling.
-    Браузер не опрашивает сервер каждые N секунд — он получает события мгновенно.
-    Пример: включил свет в HA → через ~100мс кнопка в Mini App стала жёлтой.
+    Браузер не опрашивает сервер каждые N секунд — он получает push-уведомления.
 
-    При обрыве соединения — автоматически переподключается (экспоненциальный backoff).
+    При обрыве соединения — автоматически переподключается через 5 секунд.
     Требует: библиотека websockets (pip install websockets).
-
-    ✏️ ЧТО МЕНЯТЬ: обычно ничего. Если HA на HTTP (не HTTPS) — убедись что
-    HA_URL начинается с "http://" и WebSocket будет "ws://".
     """
     ha_ws = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
     ssl_ctx = _ssl.create_default_context()
@@ -7219,6 +6987,7 @@ async def _frigate_notify(entry: dict):
                f"{label_str} · {score}%\n"
                f"📷 {camera} · {ts_str}")
     snap_url = entry.get("snapshot_url", "")
+    photo_sent = False
     if snap_url:
         try:
             async with _ha_cs() as sess:
@@ -7230,13 +6999,49 @@ async def _frigate_notify(entry: dict):
                             BufferedInputFile(data, filename="detection.jpg"),
                             caption=caption, parse_mode="HTML"
                         )
-                        return
+                        photo_sent = True
         except Exception as e:
             log.warning(f"Frigate notify photo: {e}")
-    try:
-        await bot.send_message(ADMIN_ID, caption, parse_mode="HTML")
-    except Exception as e:
-        log.warning(f"Frigate notify msg: {e}")
+    if not photo_sent:
+        try:
+            await bot.send_message(ADMIN_ID, caption, parse_mode="HTML")
+        except Exception as e:
+            log.warning(f"Frigate notify msg: {e}")
+    # Schedule clip: wait 40s for Frigate to finish writing, then send video
+    asyncio.create_task(_frigate_clip_later(entry))
+
+
+async def _frigate_clip_later(entry: dict):
+    """Отправить видеоклип в Telegram через 40с после детекции.
+    Ждём пока Frigate запишет файл на диск, затем забираем clip.mp4."""
+    await asyncio.sleep(40)
+    eid = entry.get("id", "")
+    if not eid:
+        return
+    label_map = {"person": "👤 Человек", "car": "🚗 Авто", "dog": "🐕 Собака", "cat": "🐱 Кот"}
+    label_str = label_map.get(entry.get("label", ""), f"📦 {entry.get('label', '')}")
+    ts_str = datetime.fromtimestamp(entry.get("ts", 0), tz=MSK).strftime("%d.%m %H:%M:%S")
+    for clip_url in [
+        f"{HA_URL}/api/frigate/api/events/{eid}/clip.mp4",
+        f"{HA_URL}/api/frigate/notifications/{eid}/clip.mp4",
+    ]:
+        try:
+            async with _ha_cs() as sess:
+                async with sess.get(clip_url, headers=HA_HEADERS,
+                                    timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        if len(data) > 5_000:
+                            await bot.send_video(
+                                ADMIN_ID,
+                                BufferedInputFile(data, "clip.mp4"),
+                                caption=f"🎬 <b>{label_str}</b> · {ts_str}",
+                                parse_mode="HTML",
+                            )
+                            return
+        except Exception as e:
+            log.debug(f"frigate clip_later {clip_url}: {e}")
+    log.warning(f"frigate: no clip data for event {eid[:20]}")
 
 
 async def _frigate_event_loop():
@@ -7296,8 +7101,8 @@ async def _frigate_event_loop():
                             if img_d:
                                 img_tok = img_d.get("attributes", {}).get("access_token", "")
                                 snapshot_url = f"{HA_URL}/api/image_proxy/{img_eid}?token={img_tok}"
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            log.debug(f"frigate snapshot_url build: {e}")
                         is_new = not any(e.get("id") == eid for e in _frigate_events)
                         entry = {
                             "id": eid, "camera": camera, "label": label,
@@ -8392,6 +8197,26 @@ async def _web_timeline(request: aiohttp_web.Request) -> aiohttp_web.Response:
     return aiohttp_web.Response(text=json.dumps(result, ensure_ascii=False),
                                 content_type="application/json", headers=_CORS_HEADERS)
 
+async def _web_thresholds(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET/PUT /ha-app/api/thresholds — user-configurable notification thresholds."""
+    if not _check_token(request):
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    if request.method == "PUT":
+        body = await request.json()
+        allowed = {"power_max", "temp_min", "temp_max", "humidity_max"}
+        data = {k: v for k, v in body.items() if k in allowed}
+        with _DB_LOCK:
+            c = _db()
+            c.execute("INSERT OR REPLACE INTO config (key,value) VALUES (?,?)",
+                      ("alert_thresholds", json.dumps(data)))
+            c.commit()
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+    row = _db().execute("SELECT value FROM config WHERE key='alert_thresholds'").fetchone()
+    data = json.loads(row["value"]) if row else {}
+    return aiohttp_web.Response(text=json.dumps(data, ensure_ascii=False),
+                                content_type="application/json", headers=_CORS_HEADERS)
+
 
 def _timeline_fmt(action: str, detail: str, username: str) -> tuple[str, str]:
     """Format activity_log row into (icon, title) for timeline."""
@@ -8525,7 +8350,10 @@ async def _web_call_signal(request: aiohttp_web.Request) -> aiohttp_web.Response
                 c2.execute("DELETE FROM call_log WHERE id NOT IN (SELECT id FROM call_log ORDER BY id DESC LIMIT 5)")
                 c2.commit()
             _call_sessions[f"{from_user}:{to_user}"] = {"id": cid, "answered_at": None}
-            asyncio.create_task(push_notify(to_user, f"📞 {display} звонит", "Нажмите чтобы ответить", "/ha-app/", tag="incoming-call"))
+            asyncio.create_task(push_notify(to_user, f"📞 {display} звонит", "Нажмите чтобы ответить",
+                                            "/ha-app/", tag="incoming-call",
+                                            extra={"from_user": from_user, "from_display": display},
+                                            ttl=30))
         elif sig_type == "ice":
             # Store ICE candidates so callee can get them via /call/pending
             # (needed when callee opens app from push notification after ICE was broadcast via SSE)
@@ -8580,6 +8408,9 @@ import hashlib as _hashlib
 
 _FR_SSE_CLIENTS: set = set()
 _FR_PENDING_CALLS: dict = {}
+_FR_CALL_SESSIONS: dict = {}   # session_id -> {caller, callee, call_type, started_at}
+_FR_ONLINE_USERS:  dict = {}   # username -> set of Queue objects (active SSE tabs)
+_FR_LAST_SEEN:     dict = {}   # username -> float timestamp
 
 # ── DB migrations ─────────────────────────────────────────────────────────────
 _FR_MIGRATIONS = [
@@ -8621,6 +8452,39 @@ _FR_MIGRATIONS = [
     "ALTER TABLE fr_users ADD COLUMN group_role TEXT NOT NULL DEFAULT ''",
     # migration: extra groups access (JSON list of group IDs)
     "ALTER TABLE fr_users ADD COLUMN extra_groups TEXT NOT NULL DEFAULT '[]'",
+    # migration: online status — last_seen unix timestamp
+    "ALTER TABLE fr_users ADD COLUMN last_seen REAL NOT NULL DEFAULT 0",
+    # migration: text chat messages (48h TTL)
+    """CREATE TABLE IF NOT EXISTS fr_messages (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        from_user   TEXT NOT NULL,
+        to_user     TEXT NOT NULL,
+        text        TEXT NOT NULL DEFAULT '',
+        created_at  REAL NOT NULL,
+        read_at     REAL
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_fr_msg_pair ON fr_messages(from_user, to_user)",
+    # migration: live location sharing
+    """CREATE TABLE IF NOT EXISTS fr_locations (
+        username    TEXT PRIMARY KEY,
+        lat         REAL NOT NULL,
+        lon         REAL NOT NULL,
+        expires_at  REAL NOT NULL,
+        updated_at  REAL NOT NULL
+    )""",
+    # migration: call history log (48h TTL)
+    """CREATE TABLE IF NOT EXISTS fr_call_log (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id  TEXT NOT NULL UNIQUE,
+        caller      TEXT NOT NULL,
+        callee      TEXT NOT NULL,
+        call_type   TEXT NOT NULL DEFAULT 'audio',
+        status      TEXT NOT NULL DEFAULT 'ringing',
+        started_at  REAL NOT NULL,
+        answered_at REAL,
+        ended_at    REAL,
+        duration_sec INTEGER
+    )""",
 ]
 
 def _fr_db_init():
@@ -8712,8 +8576,15 @@ async def _fr_events(request):
     username = _fr_auth(request)
     if not username:
         return aiohttp_web.Response(status=401, text="Unauthorized")
+    import time as _t
     queue = asyncio.Queue(maxsize=50)
     _FR_SSE_CLIENTS.add(queue)
+    # Track online presence
+    if username not in _FR_ONLINE_USERS:
+        _FR_ONLINE_USERS[username] = set()
+    _FR_ONLINE_USERS[username].add(queue)
+    _FR_LAST_SEEN[username] = _t.time()
+    _fr_sse_broadcast(json.dumps({"type": "user_online", "username": username}, ensure_ascii=False))
     resp = aiohttp_web.StreamResponse(headers={
         "Content-Type":  "text/event-stream",
         "Cache-Control": "no-cache",
@@ -8724,13 +8595,25 @@ async def _fr_events(request):
         while True:
             try:
                 data = await asyncio.wait_for(queue.get(), timeout=25)
-                await resp.write(f"data: {data}\n\n".encode())
+                try:
+                    _evt_type = json.loads(data).get("type", "message")
+                except Exception:
+                    _evt_type = "message"
+                await resp.write(f"event: {_evt_type}\ndata: {data}\n\n".encode())
             except asyncio.TimeoutError:
+                _FR_LAST_SEEN[username] = _t.time()
                 await resp.write(b": ping\n\n")
     except Exception:
         pass
     finally:
         _FR_SSE_CLIENTS.discard(queue)
+        if username in _FR_ONLINE_USERS:
+            _FR_ONLINE_USERS[username].discard(queue)
+            if not _FR_ONLINE_USERS[username]:
+                del _FR_ONLINE_USERS[username]
+                _FR_LAST_SEEN[username] = _t.time()
+                _fr_sse_broadcast(json.dumps({"type": "user_offline", "username": username,
+                                              "last_seen": _FR_LAST_SEEN[username]}, ensure_ascii=False))
     return resp
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -8913,9 +8796,12 @@ async def _fr_contacts(request):
                 f"WHERE u.username != ? AND u.group_id IN ({ph}) AND u.status='active' ORDER BY u.display_name",
                 [username] + allowed
             ).fetchall()
+    import time as _t
     result = [{"username": r["username"], "display_name": r["display_name"],
                "status": r["status"], "group_id": r["group_id"],
-               "group_name": r["group_name"] or "", "last_login": r["last_login"]}
+               "group_name": r["group_name"] or "", "last_login": r["last_login"],
+               "online": r["username"] in _FR_ONLINE_USERS,
+               "last_seen": _FR_LAST_SEEN.get(r["username"], 0)}
               for r in rows]
     return aiohttp_web.Response(text=json.dumps(result, ensure_ascii=False),
                                 content_type="application/json", headers=_CORS_HEADERS)
@@ -8926,19 +8812,35 @@ async def _fr_call_signal(request):
     if not username:
         return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
     try:
-        body     = await request.json()
-        to_user  = body.get("to_user", "")
-        sig_type = body.get("type", "")
-        payload  = body.get("payload", {})
-        if not to_user or not sig_type:
+        body        = await request.json()
+        to_user     = body.get("to_user", "")
+        to_users    = body.get("to_users", [])   # list for group calls
+        sig_type    = body.get("type", "")
+        payload     = body.get("payload", {})
+        group_call_id = body.get("group_call_id", "")
+        if (not to_user and not to_users) or not sig_type:
             return aiohttp_web.Response(status=400, text='{"error":"missing fields"}',
                                         content_type="application/json", headers=_CORS_HEADERS)
         display = _fr_user(username)
         display = display["display_name"] if display else username
+        # For group calls, broadcast individual event to each target
+        targets = to_users if to_users else [to_user]
         event_data = json.dumps({"type": "fr_call_signal", "from_user": username,
-                                 "from_display": display, "to_user": to_user,
+                                 "from_display": display,
+                                 "to_user": to_user or (to_users[0] if to_users else ""),
+                                 "to_users": to_users,
+                                 "group_call_id": group_call_id,
                                  "signal_type": sig_type, "payload": payload}, ensure_ascii=False)
-        _fr_sse_broadcast(event_data)
+        # If group offer — send to each target with their own to_user field
+        if to_users and sig_type == "offer":
+            for _tu in to_users:
+                _gdata = json.dumps({"type": "fr_call_signal", "from_user": username,
+                                     "from_display": display, "to_user": _tu,
+                                     "to_users": to_users, "group_call_id": group_call_id,
+                                     "signal_type": sig_type, "payload": payload}, ensure_ascii=False)
+                _fr_sse_broadcast(_gdata)
+        else:
+            _fr_sse_broadcast(event_data)
         # Also deliver to HA SSE clients so admin in HA app receives friends calls
         _ha_dead = set()
         for _hq in list(_sse_clients):
@@ -8946,23 +8848,84 @@ async def _fr_call_signal(request):
             except Exception: _ha_dead.add(_hq)
         _sse_clients.difference_update(_ha_dead)
         import time as _time
+        import uuid as _uuid
+        now = _time.time()
         if sig_type == "offer":
+            session_id = str(_uuid.uuid4())
+            call_type  = payload.get("callType", "audio")
             _FR_PENDING_CALLS[to_user] = {
                 "from_user": username, "from_display": display, "payload": payload,
-                "call_type": payload.get("callType", "audio"),
+                "call_type": call_type,
                 "ice_candidates": [],
-                "expires_at": _time.time() + 60,
+                "expires_at": now + 60,
+                "session_id": session_id,
             }
-            call_type_label = "📹 Входящий видеозвонок" if payload.get("callType") == "video" else "📞 Входящий звонок"
+            _FR_CALL_SESSIONS[session_id] = {
+                "caller": username, "callee": to_user,
+                "call_type": call_type, "started_at": now,
+            }
+            with _DB_LOCK:
+                _db().execute(
+                    "INSERT OR IGNORE INTO fr_call_log (session_id,caller,callee,call_type,status,started_at) VALUES (?,?,?,?,?,?)",
+                    (session_id, username, to_user, call_type, "ringing", now))
+                _db().commit()
+            call_type_label = "📹 Входящий видеозвонок" if call_type == "video" else "📞 Входящий звонок"
             asyncio.create_task(push_notify(
                 to_user, f"{call_type_label}", f"{display} вызывает вас",
-                "/friends/?incoming_call=1", tag="fr-incoming-call"
+                "/friends/?incoming_call=1", tag="fr-incoming-call",
+                extra={"from_user": username, "from_display": display},
+                ttl=30,
             ))
         elif sig_type == "ice":
             if to_user in _FR_PENDING_CALLS and payload.get("candidate"):
                 _FR_PENDING_CALLS[to_user]["ice_candidates"].append(payload["candidate"])
-        elif sig_type in ("answer", "reject", "hangup"):
+        elif sig_type == "answer":
+            session_id = (_FR_PENDING_CALLS.get(to_user) or {}).get("session_id")
+            if session_id:
+                if session_id in _FR_CALL_SESSIONS:
+                    _FR_CALL_SESSIONS[session_id]["answered_at"] = now
+                with _DB_LOCK:
+                    _db().execute(
+                        "UPDATE fr_call_log SET status='answered', answered_at=? WHERE session_id=?",
+                        (now, session_id))
+                    _db().commit()
             _FR_PENDING_CALLS.pop(to_user, None)
+        elif sig_type == "reject":
+            pending = _FR_PENDING_CALLS.pop(to_user, None)
+            session_id = (pending or {}).get("session_id")
+            if not session_id:
+                # caller gets the reject; look it up by (callee=username, caller=to_user) in sessions
+                for sid, s in list(_FR_CALL_SESSIONS.items()):
+                    if s["caller"] == to_user and s["callee"] == username:
+                        session_id = sid
+                        break
+            if session_id:
+                with _DB_LOCK:
+                    _db().execute(
+                        "UPDATE fr_call_log SET status='rejected', ended_at=? WHERE session_id=? AND status='ringing'",
+                        (now, session_id))
+                    _db().commit()
+                _FR_CALL_SESSIONS.pop(session_id, None)
+        elif sig_type == "hangup":
+            pending = _FR_PENDING_CALLS.pop(to_user, None)
+            # find session where either party hung up
+            session_id = (pending or {}).get("session_id")
+            if not session_id:
+                for sid, s in list(_FR_CALL_SESSIONS.items()):
+                    if (s["caller"] == username and s["callee"] == to_user) or \
+                       (s["caller"] == to_user and s["callee"] == username):
+                        session_id = sid
+                        break
+            if session_id:
+                s = _FR_CALL_SESSIONS.get(session_id, {})
+                answered_at_val = s.get("answered_at")
+                dur = int(now - answered_at_val) if answered_at_val else None
+                with _DB_LOCK:
+                    _db().execute(
+                        "UPDATE fr_call_log SET status='ended', ended_at=?, duration_sec=? WHERE session_id=?",
+                        (now, dur, session_id))
+                    _db().commit()
+                _FR_CALL_SESSIONS.pop(session_id, None)
         return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
                                     headers=_CORS_HEADERS)
     except Exception as e:
@@ -8984,6 +8947,161 @@ async def _fr_call_pending(request):
                                     content_type="application/json", headers=_CORS_HEADERS)
     return aiohttp_web.Response(text='null', content_type="application/json",
                                 headers=_CORS_HEADERS)
+
+async def _fr_call_history(request):
+    username = _fr_auth(request)
+    if not username:
+        return aiohttp_web.Response(status=401, text="Unauthorized", headers=_CORS_HEADERS)
+    import time as _time
+    now = _time.time()
+    cutoff = now - 48 * 3600
+    with _DB_LOCK:
+        c = _db()
+        c.execute("DELETE FROM fr_call_log WHERE started_at < ?", (cutoff,))
+        c.commit()
+        rows = c.execute(
+            """SELECT session_id, caller, callee, call_type, status,
+                      started_at, answered_at, ended_at, duration_sec
+               FROM fr_call_log
+               WHERE caller=? OR callee=?
+               ORDER BY started_at DESC LIMIT 200""",
+            (username, username)).fetchall()
+    # resolve display names
+    def _disp(u):
+        r = _fr_user(u)
+        return r["display_name"] if r else u
+    result = []
+    for row in rows:
+        sid, caller, callee, ctype, status, started, answered, ended, dur = row
+        if caller == username:
+            peer, direction = callee, "outgoing"
+        else:
+            peer, direction = caller, "incoming"
+        result.append({
+            "session_id":   sid,
+            "peer":         peer,
+            "peer_display": _disp(peer),
+            "call_type":    ctype,
+            "status":       status,
+            "direction":    direction,
+            "started_at":   started,
+            "answered_at":  answered,
+            "ended_at":     ended,
+            "duration_sec": dur,
+        })
+    return aiohttp_web.Response(text=json.dumps(result, ensure_ascii=False),
+                                content_type="application/json", headers=_CORS_HEADERS)
+
+# ── Text chat ─────────────────────────────────────────────────────────────────
+async def _fr_messages(request):
+    username = _fr_auth(request)
+    if not username:
+        return aiohttp_web.Response(status=401, text='{"error":"Unauthorized"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    import time as _t
+    now = _t.time()
+    cutoff = now - 48 * 3600
+
+    if request.method == "POST":
+        body = await request.json()
+        to_user = body.get("to_user", "").strip()
+        text    = body.get("text", "").strip()[:2000]
+        if not to_user or not text:
+            return aiohttp_web.Response(status=400, text='{"error":"missing fields"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        with _DB_LOCK:
+            c = _db()
+            c.execute("INSERT INTO fr_messages (from_user,to_user,text,created_at) VALUES (?,?,?,?)",
+                      (username, to_user, text, now))
+            msg_id = c.lastrowid
+            c.commit()
+        disp = _fr_user(username)
+        disp = disp["display_name"] if disp else username
+        evt = json.dumps({"type": "fr_message", "id": msg_id, "from_user": username,
+                          "from_display": disp, "to_user": to_user,
+                          "text": text, "created_at": now}, ensure_ascii=False)
+        _fr_sse_broadcast(evt)
+        return aiohttp_web.Response(text=json.dumps({"ok": True, "id": msg_id}),
+                                    content_type="application/json", headers=_CORS_HEADERS)
+
+    # GET /messages/{peer} or GET /messages (conversations list)
+    peer = request.match_info.get("peer", "")
+    if peer:
+        rows = _db().execute(
+            "SELECT id,from_user,to_user,text,created_at,read_at FROM fr_messages "
+            "WHERE created_at>? AND ((from_user=? AND to_user=?) OR (from_user=? AND to_user=?)) "
+            "ORDER BY created_at ASC LIMIT 200",
+            (cutoff, username, peer, peer, username)).fetchall()
+        with _DB_LOCK:
+            c = _db()
+            c.execute("UPDATE fr_messages SET read_at=? WHERE to_user=? AND from_user=? AND read_at IS NULL",
+                      (now, username, peer))
+            c.commit()
+        return aiohttp_web.Response(
+            text=json.dumps([{"id": r["id"], "from_user": r["from_user"],
+                              "text": r["text"], "created_at": r["created_at"],
+                              "mine": r["from_user"] == username} for r in rows], ensure_ascii=False),
+            content_type="application/json", headers=_CORS_HEADERS)
+    else:
+        # conversations: last message per peer with unread count
+        rows = _db().execute(
+            "SELECT CASE WHEN from_user=:u THEN to_user ELSE from_user END as peer, "
+            "text, created_at, from_user, "
+            "(SELECT COUNT(*) FROM fr_messages m2 WHERE m2.to_user=:u "
+            " AND m2.from_user=(CASE WHEN m.from_user=:u THEN m.to_user ELSE m.from_user END) "
+            " AND m2.read_at IS NULL) as unread "
+            "FROM fr_messages m WHERE (from_user=:u OR to_user=:u) AND created_at>:cut "
+            "GROUP BY peer ORDER BY MAX(created_at) DESC LIMIT 50",
+            {"u": username, "cut": cutoff}).fetchall()
+        def _dn(u):
+            r = _fr_user(u); return r["display_name"] if r else u
+        return aiohttp_web.Response(
+            text=json.dumps([{"peer": r["peer"], "peer_display": _dn(r["peer"]),
+                              "text": r["text"], "created_at": r["created_at"],
+                              "mine": r["from_user"] == username,
+                              "unread": r["unread"]} for r in rows], ensure_ascii=False),
+            content_type="application/json", headers=_CORS_HEADERS)
+
+# ── Live location ──────────────────────────────────────────────────────────────
+async def _fr_location(request):
+    username = _fr_auth(request)
+    if not username:
+        return aiohttp_web.Response(status=401, text='{"error":"Unauthorized"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    import time as _t
+    now = _t.time()
+
+    if request.method == "POST":
+        body = await request.json()
+        if body.get("stop"):
+            with _DB_LOCK:
+                _db().execute("DELETE FROM fr_locations WHERE username=?", (username,))
+                _db().commit()
+            _fr_sse_broadcast(json.dumps({"type": "location_stopped", "username": username}, ensure_ascii=False))
+            return aiohttp_web.Response(text='{"ok":true}', content_type="application/json", headers=_CORS_HEADERS)
+        lat = float(body.get("lat", 0))
+        lon = float(body.get("lon", 0))
+        dur = min(int(body.get("duration_min", 30)), 120)
+        exp = now + dur * 60
+        with _DB_LOCK:
+            c = _db()
+            c.execute("INSERT OR REPLACE INTO fr_locations (username,lat,lon,expires_at,updated_at) VALUES (?,?,?,?,?)",
+                      (username, lat, lon, exp, now))
+            c.commit()
+        _fr_sse_broadcast(json.dumps({"type": "location_update", "username": username,
+                                      "lat": lat, "lon": lon, "expires_at": exp}, ensure_ascii=False))
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json", headers=_CORS_HEADERS)
+
+    # GET — all active shared locations visible to this user
+    rows = _db().execute(
+        "SELECT username,lat,lon,expires_at,updated_at FROM fr_locations WHERE expires_at>?", (now,)
+    ).fetchall()
+    def _dn(u): r = _fr_user(u); return r["display_name"] if r else u
+    return aiohttp_web.Response(
+        text=json.dumps([{"username": r["username"], "display_name": _dn(r["username"]),
+                          "lat": r["lat"], "lon": r["lon"],
+                          "expires_at": r["expires_at"]} for r in rows], ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS)
 
 # ── Admin ─────────────────────────────────────────────────────────────────────
 async def _fr_admin_users(request):
@@ -9127,6 +9245,41 @@ async def _fr_admin_invites(request):
                           "use_count": r["use_count"] if "use_count" in r.keys() else 0} for r in rows], ensure_ascii=False),
         content_type="application/json", headers=_CORS_HEADERS)
 
+async def _fr_prayers(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    """GET /friends/api/prayers — prayer times from HA entities (same source as HA app)."""
+    username = _fr_auth(request)
+    if not username:
+        return aiohttp_web.Response(status=401, text='{"error":"Unauthorized"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    timings = await get_prayer_times()
+    if not timings:
+        return aiohttp_web.Response(status=503, text='{"error":"Prayer times unavailable"}',
+                                    content_type="application/json", headers=_CORS_HEADERS)
+    now_msk = datetime.now(MSK)
+    now_min = now_msk.hour * 60 + now_msk.minute
+    prayer_order = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
+    prayers_ru   = {"Fajr": "Фаджр", "Dhuhr": "Зухр", "Asr": "Аср",
+                    "Maghrib": "Магриб", "Isha": "Иша"}
+    prayer_icons = {"Fajr": "🌅", "Dhuhr": "☀️", "Asr": "🌇", "Maghrib": "🌆", "Isha": "🌙"}
+    items, next_idx = [], -1
+    for i, key in enumerate(prayer_order):
+        t = timings.get(key, "")
+        if not t:
+            continue
+        parts = t.split(":")
+        total_min = int(parts[0]) * 60 + int(parts[1]) if len(parts) >= 2 else 0
+        if next_idx == -1 and total_min > now_min:
+            next_idx = i
+        items.append({"key": key, "name": prayers_ru[key], "icon": prayer_icons[key],
+                       "time": t[:5], "past": total_min <= now_min})
+    if next_idx == -1 and items:
+        next_idx = 0
+    for i, item in enumerate(items):
+        item["is_next"] = (i == next_idx)
+    return aiohttp_web.Response(
+        text=json.dumps({"prayers": items, "hijri": ""}, ensure_ascii=False),
+        content_type="application/json", headers=_CORS_HEADERS)
+
 async def _fr_sw(request: aiohttp_web.Request) -> aiohttp_web.Response:
     """GET /friends/sw.js — Service Worker для Friends PWA."""
     path = Path("/opt/ha-bot/webapp/friends-sw.js")
@@ -9226,6 +9379,10 @@ async def _fr_my_group(request):
         "SELECT username, display_name, status, last_login FROM fr_users WHERE group_id=? AND status='active' ORDER BY display_name",
         (gid,)
     ).fetchall()
+    pending = _db().execute(
+        "SELECT username, display_name, status FROM fr_users WHERE group_id=? AND status='pending' ORDER BY created_at",
+        (gid,)
+    ).fetchall()
     invites = _db().execute(
         "SELECT id, token, expires_at, use_count FROM fr_invites WHERE group_id=? AND expires_at > datetime('now') ORDER BY created_at DESC",
         (gid,)
@@ -9238,13 +9395,14 @@ async def _fr_my_group(request):
             "group": {"id": group["id"], "name": group["name"]} if group else None,
             "members": [{"username": m["username"], "display_name": m["display_name"],
                          "last_login": m["last_login"]} for m in members],
+            "pending": [{"username": p["username"], "display_name": p["display_name"]} for p in pending],
             "invites": [{"id": i["id"], "token": i["token"],
                          "expires_at": i["expires_at"], "use_count": _uc(i)} for i in invites],
         }, ensure_ascii=False),
         content_type="application/json", headers=_CORS_HEADERS)
 
 async def _fr_my_group_member(request):
-    """DELETE /friends/api/my-group/members/{username} — remove member from group."""
+    """PATCH/DELETE /friends/api/my-group/members/{username} — approve or remove group member."""
     username = _fr_auth(request)
     if not username:
         return aiohttp_web.Response(status=401, text='{"error":"Unauthorized"}',
@@ -9256,20 +9414,44 @@ async def _fr_my_group_member(request):
                                     content_type="application/json", headers=_CORS_HEADERS)
     gid = user["group_id"]
     target = request.match_info.get("username", "")
-    if target == username:
-        return aiohttp_web.Response(status=400, text='{"error":"Нельзя удалить себя"}',
-                                    content_type="application/json", headers=_CORS_HEADERS)
     target_user = _fr_user(target)
     if not target_user or target_user["group_id"] != gid:
         return aiohttp_web.Response(status=404, text='{"error":"Пользователь не в вашей группе"}',
                                     content_type="application/json", headers=_CORS_HEADERS)
-    with _DB_LOCK:
-        c = _db()
-        c.execute("DELETE FROM fr_users WHERE username=?", (target,))
-        c.execute("DELETE FROM fr_sessions WHERE username=?", (target,))
-        c.commit()
-    return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
-                                headers=_CORS_HEADERS)
+
+    if request.method == "PATCH":
+        body = await request.json()
+        new_status = body.get("status", "")
+        if new_status not in ("active", "suspended"):
+            return aiohttp_web.Response(status=400, text='{"error":"Неверный статус"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        with _DB_LOCK:
+            c = _db()
+            c.execute("UPDATE fr_users SET status=? WHERE username=?", (new_status, target))
+            c.commit()
+        if new_status == "active":
+            # notify the approved user via SSE
+            try:
+                _fr_sse_broadcast(json.dumps({"type": "fr_approved"}, ensure_ascii=False))
+            except Exception:
+                pass
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+
+    if request.method == "DELETE":
+        if target == username:
+            return aiohttp_web.Response(status=400, text='{"error":"Нельзя удалить себя"}',
+                                        content_type="application/json", headers=_CORS_HEADERS)
+        with _DB_LOCK:
+            c = _db()
+            c.execute("DELETE FROM fr_users WHERE username=?", (target,))
+            c.execute("DELETE FROM fr_sessions WHERE username=?", (target,))
+            c.commit()
+        return aiohttp_web.Response(text='{"ok":true}', content_type="application/json",
+                                    headers=_CORS_HEADERS)
+
+    return aiohttp_web.Response(status=405, text='{"error":"Method not allowed"}',
+                                content_type="application/json", headers=_CORS_HEADERS)
 
 async def _fr_my_group_invite(request):
     """POST/DELETE /friends/api/my-group/invite[/{token}] — manage group invites."""
@@ -9577,6 +9759,9 @@ async def _start_web():
     app.router.add_get("/ha-app/api/chat/voice/{filename}",   _web_chat_voice_serve)
     app.router.add_get("/ha-app/api/call-history",            _web_call_history)
     app.router.add_get("/ha-app/api/timeline",                _web_timeline)
+    app.router.add_get("/ha-app/api/thresholds",              _web_thresholds)
+    app.router.add_put("/ha-app/api/thresholds",              _web_thresholds)
+    app.router.add_route("OPTIONS", "/ha-app/api/thresholds", _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/chat/voice", _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/photos/upload", _web_options)
     app.router.add_route("OPTIONS", "/ha-app/api/photos",     _web_options)
@@ -9599,7 +9784,14 @@ async def _start_web():
     app.router.add_get("/friends/api/contacts",                   _fr_contacts)
     app.router.add_post("/friends/api/call/signal",               _fr_call_signal)
     app.router.add_get("/friends/api/call/pending",               _fr_call_pending)
+    app.router.add_get("/friends/api/call/history",               _fr_call_history)
     app.router.add_get("/friends/api/turn-creds",                 _fr_turn_creds)
+    app.router.add_get("/friends/api/prayers",                    _fr_prayers)
+    app.router.add_get("/friends/api/messages",                   _fr_messages)
+    app.router.add_post("/friends/api/messages",                  _fr_messages)
+    app.router.add_get("/friends/api/messages/{peer}",            _fr_messages)
+    app.router.add_get("/friends/api/location",                   _fr_location)
+    app.router.add_post("/friends/api/location",                  _fr_location)
     app.router.add_get("/friends/api/admin/users",                _fr_admin_users)
     app.router.add_patch("/friends/api/admin/users/{username}",   _fr_admin_users)
     app.router.add_delete("/friends/api/admin/users/{username}",  _fr_admin_users)
@@ -9614,6 +9806,7 @@ async def _start_web():
     app.router.add_post("/friends/api/avatar",                    _fr_avatar_upload)
     app.router.add_get("/friends/api/my-group",                   _fr_my_group)
     app.router.add_delete("/friends/api/my-group/members/{username}", _fr_my_group_member)
+    app.router.add_patch("/friends/api/my-group/members/{username}",  _fr_my_group_member)
     app.router.add_post("/friends/api/my-group/invite",           _fr_my_group_invite)
     app.router.add_delete("/friends/api/my-group/invite/{token}", _fr_my_group_invite)
     app.router.add_get("/friends/sw.js",                          _fr_sw)
@@ -9622,12 +9815,15 @@ async def _start_web():
     app.router.add_post("/friends/api/push-subscribe",            _fr_push_subscribe)
     for path in ["/friends/api/login", "/friends/api/register", "/friends/api/me",
                  "/friends/api/contacts", "/friends/api/call/signal",
-                 "/friends/api/call/pending", "/friends/api/turn-creds",
+                 "/friends/api/call/pending", "/friends/api/call/history",
+                 "/friends/api/turn-creds", "/friends/api/prayers",
+                 "/friends/api/messages", "/friends/api/messages/{peer}",
+                 "/friends/api/location",
                  "/friends/api/admin/users", "/friends/api/admin/users/{username}",
                  "/friends/api/admin/groups", "/friends/api/admin/groups/{id}",
                  "/friends/api/admin/invites", "/friends/api/admin/invites/{id}",
                  "/friends/api/ha-sso", "/friends/api/avatar",
-                 "/friends/api/my-group", "/friends/api/my-group/members/{username}",
+                 "/friends/api/my-group", "/friends/api/my-group/members/{username}", "/friends/api/my-group/approve/{username}",
                  "/friends/api/my-group/invite", "/friends/api/my-group/invite/{token}",
                  "/friends/api/push-subscribe"]:
         app.router.add_route("OPTIONS", path, _web_options)
@@ -9864,16 +10060,7 @@ async def cb_namaz_ok(cb: CallbackQuery):
     except Exception:
         pass
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ██  БЛОК 13: ТОЧКА ВХОДА — ЗАПУСК БОТА
-# ───────────────────────────────────────────────────────────────────────────────
-# Функция main() — главная точка входа. Запускается через asyncio.run(main()).
-#
-# ✏️ ЧТО МЕНЯТЬ:
-#   Сообщение при старте (send_message в main) — можно изменить приветственный текст.
-#   Порт веб-сервера — ищи _start_web() ниже в коде (по умолчанию 8766).
-#   Если нужен другой порт — измени его там и в nginx конфиге.
-# ═══════════════════════════════════════════════════════════════════════════════
+# ── Точка входа — запуск бота ─────────────────────────────────────────────────
 async def main():
     """Главная функция: инициализация и запуск бота.
 
