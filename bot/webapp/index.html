@@ -2684,20 +2684,9 @@ body.fab-open .fab-backdrop { display: block; }
 }
 
 /* ── Family cards redesign ─────────────────────────────────────────────────── */
-/* ── Family Cards — horizontal portrait scroll ─────────────────────────── */
-.family-cards {
-  display: flex;
-  flex-direction: row;
-  gap: 10px;
-  overflow-x: auto;
-  padding: 2px 0 12px;
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
-}
-.family-cards::-webkit-scrollbar { display: none; }
+/* ── Family Cards ─────────────────────────────────────────────────────── */
+.family-cards { display: flex; flex-direction: column; gap: 10px; }
 .family-card {
-  flex-shrink: 0;
-  width: 178px;
   border-radius: 22px;
   position: relative;
   overflow: hidden;
@@ -2706,11 +2695,7 @@ body.fab-open .fab-backdrop { display: block; }
   border-top-color: rgba(255,255,255,0.13);
   backdrop-filter: blur(40px) saturate(1.8) brightness(1.08);
   -webkit-backdrop-filter: blur(40px) saturate(1.8) brightness(1.08);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 18px 12px 12px;
-  gap: 4px;
+  padding: 14px;
   box-shadow:
     0 0 0 0.5px rgba(255,255,255,0.08) inset,
     0 4px 12px rgba(0,0,0,0.42),
@@ -2730,33 +2715,32 @@ body.fab-open .fab-backdrop { display: block; }
 .family-card::before {
   content: '';
   position: absolute;
-  width: 150px; height: 150px;
+  width: 120px; height: 120px;
   border-radius: 50%;
-  top: -55px; left: 50%; transform: translateX(-50%);
-  background: radial-gradient(circle, rgba(99,102,241,0.26) 0%, transparent 68%);
+  top: -20px; left: -20px;
+  background: radial-gradient(circle, rgba(99,102,241,0.22) 0%, transparent 70%);
   pointer-events: none;
 }
 .family-card.home::before {
-  background: radial-gradient(circle, rgba(16,185,129,0.26) 0%, transparent 68%);
+  background: radial-gradient(circle, rgba(16,185,129,0.22) 0%, transparent 70%);
 }
 /* Top shimmer line */
 .family-card::after {
   content: '';
   position: absolute;
-  top: 0; left: 12%; right: 12%;
+  top: 0; left: 8%; right: 8%;
   height: 1px;
   background: linear-gradient(90deg, transparent, rgba(255,255,255,0.16), transparent);
   pointer-events: none;
 }
-.family-card-top { display: contents; }
+.family-card-top { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; }
 .family-avatar {
-  width: 66px; height: 66px; border-radius: 50%;
+  width: 58px; height: 58px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  font-size: 23px; font-weight: 700; color: #fff;
+  font-size: 21px; font-weight: 700; color: #fff;
   flex-shrink: 0; position: relative;
   background: linear-gradient(145deg, #3730a3, #6366f1);
   box-shadow: 0 0 0 3px rgba(99,102,241,0.32), 0 0 24px rgba(99,102,241,0.22);
-  margin-bottom: 6px;
 }
 .family-avatar.home {
   background: linear-gradient(145deg, #065f46, #10b981);
@@ -2772,14 +2756,14 @@ body.fab-open .fab-backdrop { display: block; }
   70%  { transform:scale(1.28); opacity:0;  }
   100% { transform:scale(1.28); opacity:0;  }
 }
-.family-info { text-align: center; width: 100%; }
-.family-card-name { font-size: 14px; font-weight: 600; color: #e2e8f0; text-align: center; }
-.family-card-status { font-size: 11px; color: #64748b; text-align: center; margin-top: 1px; }
-.family-card-badge { font-size: 11px; font-weight: 600; padding: 2px 10px; border-radius: 20px; }
+.family-info { flex: 1; min-width: 0; }
+.family-card-name { font-size: 16px; font-weight: 600; color: #e2e8f0; }
+.family-card-status { font-size: 12px; color: #64748b; margin-top: 2px; }
+.family-card-badge { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 20px; }
 .family-card-badge.home { background: rgba(52,211,153,0.15); color: #34d399; }
 .family-card-badge.away { background: rgba(100,116,139,0.15); color: #94a3b8; }
-.family-emoji-status { font-size: 19px; cursor: pointer; }
-.family-reactions { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; width: 100%; margin-top: 4px; }
+.family-emoji-status { font-size: 22px; flex-shrink: 0; cursor: pointer; }
+.family-reactions { display: flex; gap: 6px; flex-wrap: wrap; }
 .family-ping-btn {
   padding: 4px 8px; border-radius: 20px; border: 1px solid rgba(99,102,241,0.25);
   background: rgba(99,102,241,0.08); color: #c4b5fd; font-size: 11px; font-weight: 600;
@@ -2801,10 +2785,10 @@ body.fab-open .fab-backdrop { display: block; }
 }
 .family-call-btn.video { background:rgba(99,102,241,0.12); border-color:rgba(99,102,241,0.28); color:#818cf8; }
 .family-call-btn:active { transform:scale(0.88); }
-.family-card-footer { display: flex; align-items: center; justify-content: center; margin-top: 6px; width: 100%; }
+.family-card-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
 .family-last-seen { font-size: 11px; color: #475569; }
 /* Phone data chips */
-.family-phone-row { display: flex; flex-wrap: wrap; gap: 3px; justify-content: center; margin-top: 3px; }
+.family-phone-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .phone-chip {
   display: inline-flex; align-items: center; gap: 2px;
   padding: 2px 6px; border-radius: 20px; font-size: 10px;
@@ -8131,21 +8115,27 @@ function renderFamilyCards() {
       ? `<button onclick="openFamilyMemberConfig('${escapeAttr(username)}','${escapeAttr(name)}')" title="Настроить" style="background:none;border:none;color:rgba(100,100,160,0.5);font-size:14px;cursor:pointer;padding:2px 4px;line-height:1">⚙️</button>`
       : '';
     return `<div class="family-card ${isHome?'home':''}">
-      <div class="family-avatar ${isHome?'home':''}" style="${isUnknown?'opacity:0.7':''}" data-av="${escapeAttr(username)}">${pulse}<span class="fav-init">${initials}</span></div>
-      <div class="family-card-name">${escapeHtml(name)}<span style="font-size:10px;margin-left:3px;opacity:0.7">${roleLabel}</span></div>
-      <div class="family-card-status">${escapeHtml(statusText)}</div>
-      ${badgeHtml}
-      <div style="display:flex;align-items:center;gap:5px;justify-content:center;margin-top:2px">
-        <span class="family-emoji-status" onclick="${isSelf?'familySetStatus()':''}" title="${isSelf?'Изменить статус':''}" style="${isSelf?'cursor:pointer':'cursor:default'}">${emojiStatus}</span>
-        ${configBtn}
-        ${mapLink}
+      <div class="family-card-top">
+        <div class="family-avatar ${isHome?'home':''}" style="${isUnknown?'opacity:0.7':''}" data-av="${escapeAttr(username)}">${pulse}<span class="fav-init">${initials}</span></div>
+        <div class="family-info">
+          <div class="family-card-name">${escapeHtml(name)} <span style="font-size:12px">${roleLabel}</span></div>
+          <div class="family-card-status">${escapeHtml(statusText)}</div>
+        </div>
+        ${badgeHtml}
+        <div style="display:flex;align-items:center;gap:2px">
+          ${configBtn}
+          <span class="family-emoji-status" onclick="${isSelf?'familySetStatus()':''}" title="${isSelf?'Изменить статус':''}" style="${isSelf?'cursor:pointer':'cursor:default'}">${emojiStatus}</span>
+        </div>
       </div>
       <div id="phone-chips-${escapeAttr(username)}" class="family-phone-row">${_renderPhoneChips(_familyPhone[username])}</div>
-      <div class="family-reactions">
-        ${isSelf ? '' : pings.map(p =>
-          `<button class="family-ping-btn ${p.cls||''}" onclick="familySendReaction('${escapeAttr(name)}','${escapeAttr(p.msg)}')" title="${escapeAttr(p.msg)}">${p.t}</button>`
-        ).join('')}
-        ${callBtns}
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
+        <div class="family-reactions" style="display:flex;flex-wrap:wrap;gap:5px;align-items:center">
+          ${isSelf ? '' : pings.map(p =>
+            `<button class="family-ping-btn ${p.cls||''}" onclick="familySendReaction('${escapeAttr(name)}','${escapeAttr(p.msg)}')" title="${escapeAttr(p.msg)}">${p.t}</button>`
+          ).join('')}
+          ${callBtns}
+        </div>
+        ${mapLink}
       </div>
     </div>`;
   }).join('');
