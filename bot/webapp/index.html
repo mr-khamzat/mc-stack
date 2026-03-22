@@ -443,6 +443,225 @@ button:active, .family-ping-btn:active {
   box-shadow: 0 0 20px rgba(167,139,250,0.35) !important;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   ── BUBBLE CARD THEME — полный редизайн в стиле Bubble Card ──
+   ══════════════════════════════════════════════════════════════ */
+
+:root[data-theme="bubble"] {
+  --bg-body:   #0e0e1f;
+  --accent:    #a78bfa;
+  --accent2:   #60a5fa;
+  --r-sm:      12px;
+  --r-md:      16px;
+  --r-lg:      20px;
+  --r-xl:      24px;
+  --bbl-blur:  28px;
+  --bbl-card:  rgba(255,255,255,0.055);
+  --bbl-brd:   rgba(255,255,255,0.10);
+}
+
+/* Background */
+[data-theme="bubble"] body {
+  background: #0e0e1f;
+}
+[data-theme="bubble"] body::before {
+  background:
+    radial-gradient(ellipse 60% 40% at 15% 15%, rgba(167,139,250,0.18) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 40% at 85% 80%, rgba(96,165,250,0.14)  0%, transparent 60%),
+    radial-gradient(ellipse 40% 30% at 55% 50%, rgba(244,114,182,0.07) 0%, transparent 60%);
+  opacity: 1;
+}
+
+/* ── Top bar ── */
+[data-theme="bubble"] .compact-bar {
+  background: rgba(14,14,31,0.82);
+  backdrop-filter: blur(40px) saturate(2);
+  -webkit-backdrop-filter: blur(40px) saturate(2);
+  border-bottom: 1px solid rgba(167,139,250,0.12);
+}
+[data-theme="bubble"] #user-badge  { background: rgba(167,139,250,0.10) !important; border-color: rgba(167,139,250,0.22) !important; }
+[data-theme="bubble"] #theme-btn   { background: rgba(167,139,250,0.10) !important; border-color: rgba(167,139,250,0.22) !important; }
+[data-theme="bubble"] .last-updated { color: rgba(167,139,250,0.4) !important; }
+
+/* ── Sections (main cards) ── */
+[data-theme="bubble"] .section {
+  background: var(--bbl-card);
+  backdrop-filter: blur(var(--bbl-blur)) saturate(2);
+  -webkit-backdrop-filter: blur(var(--bbl-blur)) saturate(2);
+  border-radius: 26px;
+  border: 1px solid var(--bbl-brd);
+  border-top-color: rgba(255,255,255,0.18);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.08) inset,
+    0 20px 60px rgba(0,0,0,0.45),
+    0 4px 16px rgba(0,0,0,0.25);
+  margin-bottom: 14px;
+  border-left: none;
+  animation-name: bubbleSectionIn;
+}
+@keyframes bubbleSectionIn {
+  from { opacity: 0; transform: translateY(18px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+
+/* ── Section headers ── */
+[data-theme="bubble"] .section-header {
+  padding: 18px 20px 14px;
+  font-size: 16px;
+  font-weight: 700;
+  color: rgba(235,230,255,0.96);
+  letter-spacing: -0.3px;
+}
+[data-theme="bubble"] .section-header:active { background: rgba(167,139,250,0.08); }
+[data-theme="bubble"] .section-header > span:first-child {
+  display: flex; align-items: center; gap: 10px;
+  filter: none !important;
+}
+[data-theme="bubble"] .chevron { color: rgba(167,139,250,0.45); }
+/* Убираем левый accent strip */
+[data-theme="bubble"] .section { border-left: none !important; }
+
+/* ── Bottom navigation — Bubble pill style ── */
+[data-theme="bubble"] .bottom-nav {
+  background: rgba(10,10,24,0.88);
+  backdrop-filter: blur(40px) saturate(2);
+  -webkit-backdrop-filter: blur(40px) saturate(2);
+  border-top: 1px solid rgba(167,139,250,0.14);
+  padding: 6px 10px;
+  gap: 4px;
+}
+[data-theme="bubble"] .bnav-tab {
+  border-radius: 20px;
+  padding: 8px 6px;
+  transition: background 0.22s ease, color 0.22s ease, transform 0.22s cubic-bezier(0.34,1.56,0.64,1);
+  position: relative;
+}
+[data-theme="bubble"] .bnav-tab.active {
+  background: linear-gradient(135deg, rgba(167,139,250,0.22), rgba(96,165,250,0.15));
+  color: #a78bfa;
+}
+[data-theme="bubble"] .bnav-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: 3px; left: 50%; transform: translateX(-50%);
+  width: 18px; height: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(167,139,250,0.7);
+}
+[data-theme="bubble"] .bnav-tab.active .bnav-ic { transform: scale(1.2) translateY(-2px); }
+[data-theme="bubble"] .bnav-tab .bnav-ic { font-size: 22px; }
+
+/* ── Light buttons — circle icon style ── */
+[data-theme="bubble"] .light-btn {
+  border-radius: 22px;
+  padding: 14px 6px;
+  gap: 8px;
+  border: 1px solid rgba(255,255,255,0.07);
+  transition: all 0.28s cubic-bezier(0.34,1.56,0.64,1);
+}
+[data-theme="bubble"] .light-btn .light-icon {
+  display: flex; align-items: center; justify-content: center;
+  width: 46px; height: 46px;
+  border-radius: 50%;
+  font-size: 22px;
+  background: rgba(255,255,255,0.05);
+  transition: all 0.28s ease;
+  margin: 0 auto;
+}
+[data-theme="bubble"] .light-btn.on {
+  background: linear-gradient(135deg, rgba(251,191,36,0.18), rgba(245,158,11,0.09)) !important;
+  border-color: rgba(251,191,36,0.38) !important;
+  box-shadow: 0 4px 24px rgba(251,191,36,0.22), 0 0 0 1px rgba(251,191,36,0.22) inset !important;
+}
+[data-theme="bubble"] .light-btn.on .light-icon {
+  background: rgba(251,191,36,0.22);
+  box-shadow: 0 0 18px rgba(251,191,36,0.45);
+}
+[data-theme="bubble"] .light-btn.off {
+  background: rgba(255,255,255,0.03) !important;
+  border-color: rgba(255,255,255,0.07) !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2) !important;
+}
+[data-theme="bubble"] .light-btn.off .light-icon { background: rgba(255,255,255,0.04); }
+[data-theme="bubble"] .light-btn:active { transform: scale(0.88); }
+
+/* ── Climate cards ── */
+[data-theme="bubble"] .clim-card {
+  border-radius: 20px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+}
+
+/* ── Quick Actions ── */
+[data-theme="bubble"] .qa-btn {
+  border-radius: 20px;
+  padding: 14px 8px;
+  background: rgba(167,139,250,0.08);
+  border: 1px solid rgba(167,139,250,0.18);
+  min-width: 72px;
+  transition: all 0.25s cubic-bezier(0.34,1.56,0.64,1);
+}
+[data-theme="bubble"] .qa-btn:active { transform: scale(0.88); }
+[data-theme="bubble"] .qa-btn .qa-icon { font-size: 26px; }
+
+/* ── Energy section ── */
+[data-theme="bubble"] .energy-box,
+[data-theme="bubble"] .phase-box {
+  border-radius: 20px;
+  background: rgba(167,139,250,0.07);
+  border: 1px solid rgba(167,139,250,0.16);
+  backdrop-filter: blur(16px);
+}
+
+/* ── FAB button ── */
+[data-theme="bubble"] .fab-main {
+  background: linear-gradient(135deg, #a78bfa 0%, #60a5fa 100%) !important;
+  box-shadow: 0 8px 32px rgba(167,139,250,0.55), 0 0 0 4px rgba(167,139,250,0.15) !important;
+  width: 60px !important; height: 60px !important;
+  border-radius: 50% !important;
+}
+
+/* ── Loading screen ── */
+[data-theme="bubble"] #loading { background: #0e0e1f !important; }
+[data-theme="bubble"] .spinner {
+  border-top-color: #a78bfa !important;
+  border-color: rgba(167,139,250,0.18) !important;
+  box-shadow: 0 0 20px rgba(167,139,250,0.35) !important;
+}
+
+/* ── Login ── */
+[data-theme="bubble"] .login-screen { background: #0e0e1f !important; }
+[data-theme="bubble"] .login-card {
+  background: rgba(167,139,250,0.07) !important;
+  border: 1px solid rgba(167,139,250,0.25) !important;
+  border-top-color: rgba(167,139,250,0.40) !important;
+  border-radius: 28px !important;
+  backdrop-filter: blur(var(--bbl-blur)) !important;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 0 40px rgba(167,139,250,0.12) !important;
+}
+[data-theme="bubble"] .login-title {
+  background: linear-gradient(110deg, #a78bfa 0%, #60a5fa 60%, #f472b6 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+[data-theme="bubble"] .login-btn {
+  background: linear-gradient(135deg, rgba(167,139,250,0.35), rgba(96,165,250,0.25)) !important;
+  border: 1px solid rgba(167,139,250,0.4) !important;
+  border-radius: 18px !important;
+}
+
+/* ── Theme dot ── */
+.theme-dot-bubble {
+  background: conic-gradient(from 45deg, #a78bfa, #60a5fa, #f472b6, #a78bfa);
+  box-shadow: 0 0 10px rgba(167,139,250,0.6);
+}
+
+/* ── Section content padding ── */
+[data-theme="bubble"] .section-content { padding: 4px 16px 20px; }
+
 /* Login */
 [data-theme="aurora"] .login-screen { background: #060818 !important; }
 [data-theme="aurora"] .login-card {
@@ -3036,6 +3255,7 @@ body.fab-open .fab-backdrop { display: block; }
       <div class="theme-dot theme-dot-oled"   title="OLED"     onclick="themeSet('oled')"></div>
       <div class="theme-dot theme-dot-cyber"  title="Кибер"    onclick="themeSet('cyber')"></div>
       <div class="theme-dot theme-dot-aurora" title="Аврора"   onclick="themeSet('aurora')"></div>
+      <div class="theme-dot theme-dot-bubble" title="Bubble"   onclick="themeSet('bubble')"></div>
       <button id="auto-theme-btn" onclick="autoThemeToggle()" title="Авто по времени"
         style="padding:4px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);
                background:rgba(255,255,255,0.05);cursor:pointer;font-size:12px;color:rgba(200,200,230,0.7);
@@ -10884,6 +11104,7 @@ const THEMES = {
   oled:   { color: '#6366f1' },
   cyber:  { color: '#00ff9f' },
   aurora: { color: '#a78bfa' },
+  bubble: { color: '#a78bfa' },
 };
 
 function themeApply(name) {
