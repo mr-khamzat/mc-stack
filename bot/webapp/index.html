@@ -7702,9 +7702,7 @@ async function saveSceneEdit(id) {
 // Бот выполняет все действия сцены в HA и возвращает { scene, actions }.
 // Во время выполнения кнопка заблокирована (opacity 0.5, pointerEvents none).
 async function runScene(id, btn) {
-  const origHTML = btn.innerHTML;
-  btn.style.opacity = '0.5';
-  btn.style.pointerEvents = 'none';
+  if (btn) { btn.style.opacity = '0.5'; btn.style.pointerEvents = 'none'; }
   try {
     const res = await api(`/scenes/${encodeURIComponent(id)}/run`, 'POST', {});
     showToast(`✅ Сцена "${res.scene}" запущена (${res.actions} действий)`);
@@ -7712,8 +7710,7 @@ async function runScene(id, btn) {
   } catch(e) {
     showToast('❌ ' + e.message);
   } finally {
-    btn.style.opacity = '';
-    btn.style.pointerEvents = '';
+    if (btn) { btn.style.opacity = ''; btn.style.pointerEvents = ''; }
   }
 }
 

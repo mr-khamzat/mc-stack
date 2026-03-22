@@ -5432,24 +5432,39 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
 
         # Все три периода — из одного источника (dom_energiia_vsego), параллельно
         import calendar as _cal
-        kwh_today, kwh_week, kwh_month = await asyncio.gather(
+        kwh_today, kwh_week, kwh_month, ha_month_s = await asyncio.gather(
             _ha_today_kwh(),
             _ha_week_kwh(),
             _ha_month_kwh(),
+            ha_state("sensor.elektroenergiia_stoimost_za_mesiats"),
         )
 
         cost_day_val   = f"{kwh_today * tariff:.0f}" if kwh_today else "—"
         cost_week_val  = f"{kwh_week  * tariff:.0f}" if kwh_week  else None
-        cost_month_val = f"{kwh_month * tariff:.0f}" if kwh_month else None
 
-        # Прогноз на месяц: (kWh_month / дней_прошло) × дней_в_месяце × тариф
+        # Месяц: сначала из kwh-истории, fallback — HA-сенсор stoimost_za_mesiats
+        cost_month_val = None
+        if kwh_month:
+            cost_month_val = f"{kwh_month * tariff:.0f}"
+        else:
+            try:
+                v = float(ha_month_s)
+                if v > 0:
+                    cost_month_val = f"{v:.0f}"
+            except Exception:
+                pass
+
+        # Прогноз на месяц: (month_cost / дней_прошло) × дней_в_месяце
         cost_forecast_val = None
         try:
             now_msk   = datetime.now(MSK)
             day_num   = now_msk.day
             days_in_m = _cal.monthrange(now_msk.year, now_msk.month)[1]
-            if kwh_month and day_num > 0:
-                cost_forecast_val = f"{kwh_month / day_num * days_in_m * tariff:.0f}"
+            if day_num > 0:
+                if kwh_month:
+                    cost_forecast_val = f"{kwh_month / day_num * days_in_m * tariff:.0f}"
+                elif cost_month_val and day_num > 1:
+                    cost_forecast_val = f"{float(cost_month_val) / day_num * days_in_m:.0f}"
         except Exception:
             pass
 
