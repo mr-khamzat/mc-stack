@@ -2498,26 +2498,112 @@ async def _ha_kwh_since(start_dt) -> float | None:
         return None
 
 async def _ha_today_kwh() -> float | None:
-    """kWh за сегодня (с полуночи МСК)."""
+    """kWh за сегодня (с полуночи МСК) — через LTS, history retention слишком короткий."""
     now_msk = datetime.now(MSK)
-    return await _ha_kwh_since(now_msk.replace(hour=0, minute=0, second=0, microsecond=0))
+    today_start = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
+    return await _ha_lts_kwh_since(today_start)
 
 async def _ha_week_kwh() -> float | None:
-    """kWh за последние 7 дней."""
+    """kWh за последние 7 дней — через LTS, history retention слишком короткий."""
     from datetime import timedelta
     now_msk = datetime.now(MSK)
-    week_ago = (now_msk - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
-    return await _ha_kwh_since(week_ago)
+    week_start = (now_msk - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return await _ha_lts_kwh_since(week_start)
 
 async def _ha_month_kwh() -> float | None:
-    """kWh с 1-го числа текущего месяца (МСК)."""
+    """kWh с 1-го числа текущего месяца (МСК).
+    Сначала пробует Long-Term Statistics (хранятся вечно),
+    если не получилось — fallback на history API (~10 дней)."""
     now_msk = datetime.now(MSK)
     month_start = now_msk.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    result = await _ha_lts_kwh_since(month_start)
+    if result is not None:
+        return result
     return await _ha_kwh_since(month_start)
+
+
+async def _ha_lts_kwh_since(start_dt) -> float | None:
+    """kWh через HA Long-Term Statistics API (WebSocket) для одного периода."""
+    result = await _ha_lts_all_kwh(_single_start=start_dt)
+    return result[2]  # month slot reused; see _ha_lts_all_kwh
+
+async def _ha_lts_all_kwh(
+    _single_start=None,
+) -> tuple:
+    """Один WS-запрос к HA LTS — возвращает (today_kwh, week_kwh, month_kwh).
+    Если передан _single_start, возвращает (None, None, kwh_since_start_dt) —
+    используется из _ha_lts_kwh_since для обратной совместимости."""
+    from datetime import timedelta
+    try:
+        now_msk = datetime.now(MSK)
+        month_start = now_msk.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        today_start = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start  = (now_msk - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        # Если вызван из _ha_lts_kwh_since — используем переданную дату
+        custom_start = _single_start
+        # Самая ранняя точка для запроса: месяц назад - 1 день (чтобы получить baseline)
+        earliest = min(month_start, week_start, today_start) - timedelta(days=1)
+        if custom_start is not None:
+            earliest = min(earliest, custom_start - timedelta(days=1))
+
+        ssl_ctx = _ssl.create_default_context()
+        ha_ws = HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
+        q_start_utc = earliest.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        end_utc     = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+        async with websockets.connect(ha_ws, ssl=ssl_ctx, ping_interval=None,
+                                      open_timeout=10, family=socket.AF_INET) as ws:
+            await ws.recv()  # auth_required
+            await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
+            msg = json.loads(await asyncio.wait_for(ws.recv(), 5))
+            if msg.get("type") != "auth_ok":
+                return (None, None, None)
+            await ws.send(json.dumps({
+                "id": 1,
+                "type": "recorder/statistics_during_period",
+                "start_time": q_start_utc,
+                "end_time":   end_utc,
+                "statistic_ids": ["sensor.dom_energiia_vsego"],
+                "period": "day",
+                "units": {"energy": "kWh"},
+            }))
+            msg = json.loads(await asyncio.wait_for(ws.recv(), 15))
+            stats = (msg.get("result") or {}).get("sensor.dom_energiia_vsego", [])
+            if not stats:
+                return (None, None, None)
+
+        # Текущее показание счётчика (REST, после закрытия WS)
+        current_s = await ha_state("sensor.dom_energiia_vsego")
+        current = float(current_s)
+
+        def _baseline(period_start: datetime) -> float | None:
+            ts_ms = int(period_start.astimezone(timezone.utc).timestamp() * 1000)
+            before = [s for s in stats if s.get("start", 0) < ts_ms and s.get("state") is not None]
+            if not before:
+                return None
+            return float(before[-1]["state"])
+
+        if custom_start is not None:
+            b = _baseline(custom_start)
+            v = max(0.0, current - b) if b is not None else None
+            return (None, None, v)
+
+        b_today = _baseline(today_start)
+        b_week  = _baseline(week_start)
+        b_month = _baseline(month_start)
+
+        kwh_today = max(0.0, current - b_today) if b_today is not None else None
+        kwh_week  = max(0.0, current - b_week)  if b_week  is not None else None
+        kwh_month = max(0.0, current - b_month) if b_month is not None else None
+        return (kwh_today, kwh_week, kwh_month)
+    except Exception as e:
+        log.warning(f"_ha_lts_all_kwh error: {e}")
+        return (None, None, None)
 
 async def build_energy_text() -> str:
     import calendar as _cal
-    (power, v1, v2, v3, tariff_s), (kwh_today, kwh_month) = await asyncio.gather(
+    (power, v1, v2, v3, tariff_s), lts_result = await asyncio.gather(
         asyncio.gather(
             ha_state("sensor.moshchnost_vsego_doma"),
             ha_state("sensor.vvod_1_moshchnost"),
@@ -2525,8 +2611,9 @@ async def build_energy_text() -> str:
             ha_state("sensor.vvod_3_moshchnost"),
             ha_state("input_number.tarif_den_kvt_ch"),
         ),
-        asyncio.gather(_ha_today_kwh(), _ha_month_kwh()),
+        _ha_lts_all_kwh(),
     )
+    kwh_today, _kwh_week, kwh_month = lts_result
     power_alert = ""
     try:
         if float(power) > 3000:
@@ -5430,29 +5517,13 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
         except Exception:
             tariff = TARIFF_FALLBACK
 
-        # Все три периода — из одного источника (dom_energiia_vsego), параллельно
+        # Все три периода — один LTS запрос к HA (экономия WS-соединений)
         import calendar as _cal
-        kwh_today, kwh_week, kwh_month, ha_month_s = await asyncio.gather(
-            _ha_today_kwh(),
-            _ha_week_kwh(),
-            _ha_month_kwh(),
-            ha_state("sensor.elektroenergiia_stoimost_za_mesiats"),
-        )
+        kwh_today, kwh_week, kwh_month = await _ha_lts_all_kwh()
 
         cost_day_val   = f"{kwh_today * tariff:.0f}" if kwh_today else "—"
         cost_week_val  = f"{kwh_week  * tariff:.0f}" if kwh_week  else None
-
-        # Месяц: сначала из kwh-истории, fallback — HA-сенсор stoimost_za_mesiats
-        cost_month_val = None
-        if kwh_month:
-            cost_month_val = f"{kwh_month * tariff:.0f}"
-        else:
-            try:
-                v = float(ha_month_s)
-                if v > 0:
-                    cost_month_val = f"{v:.0f}"
-            except Exception:
-                pass
+        cost_month_val = f"{kwh_month * tariff:.0f}" if kwh_month else None
 
         # Прогноз на месяц: (month_cost / дней_прошло) × дней_в_месяце
         cost_forecast_val = None
@@ -5460,11 +5531,8 @@ async def _web_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
             now_msk   = datetime.now(MSK)
             day_num   = now_msk.day
             days_in_m = _cal.monthrange(now_msk.year, now_msk.month)[1]
-            if day_num > 0:
-                if kwh_month:
-                    cost_forecast_val = f"{kwh_month / day_num * days_in_m * tariff:.0f}"
-                elif cost_month_val and day_num > 1:
-                    cost_forecast_val = f"{float(cost_month_val) / day_num * days_in_m:.0f}"
+            if kwh_month and day_num > 0:
+                cost_forecast_val = f"{kwh_month / day_num * days_in_m * tariff:.0f}"
         except Exception:
             pass
 
