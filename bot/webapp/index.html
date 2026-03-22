@@ -11883,9 +11883,12 @@ async function fabAction(act) {
       showToast('🎬 ' + (r && r.scene ? r.scene : 'Сцена') + ' активирована');
     } catch(e) { showToast('❌ Ошибка запуска сцены'); }
   } else if (act === 'lights_off') {
-    for (var eid of Object.keys(LIGHTS_MAP)) {
-      // Исправлен вызов api(): второй аргумент должен быть строкой 'POST', не объектом
-      try { await api('/action', 'POST', { service: (LIGHTS_DOMAIN[eid]||'switch') + '.turn_off', entity_id: eid, extra: {} }); } catch(e) {}
+    var lightsToOff = Object.keys(_lastLights).length ? _lastLights : LIGHTS_MAP;
+    for (var eid of Object.keys(lightsToOff)) {
+      var info2 = _lastLights[eid] || {};
+      var dom2 = (typeof info2 === 'object' && info2.domain) ? info2.domain
+               : (eid.startsWith('switch.') ? 'switch' : 'light');
+      try { await api('/action', 'POST', { service: dom2 + '.turn_off', entity_id: eid, extra: {} }); } catch(e) {}
     }
     showToast('💡 Весь свет выключен');
     setTimeout(loadStatus, 800);
@@ -11994,7 +11997,6 @@ function _qsLoadContent() {
 async function qsToggleLight(entity, btn) {
   var isOn = btn.classList.contains('on');
   btn.classList.toggle('on', !isOn);
-  btn.classList.toggle('', isOn);
   haptic(8);
   try {
     var info = _lastLights[entity] || {};
